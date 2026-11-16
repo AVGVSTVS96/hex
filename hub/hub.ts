@@ -26,17 +26,20 @@ import {
 import * as claude from "./claude.ts";
 import { clock } from "./clock.ts";
 import { holding } from "./holds.ts";
+import { keeping } from "./kept.ts";
 import { STARTUP } from "./loaded.ts";
 import { endpoint, toolList } from "./mcp.ts";
 import type { ChannelServer, Line, Permission, ToolArguments } from "./mcp.ts";
 import { queue } from "./observe.ts";
 import { fileOnly, held as filesIn, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
+import { present } from "./present.ts";
 import { restarts } from "./restarts.ts";
 import { running as sessionsRunning } from "./running.ts";
 import type { Session } from "./running.ts";
 import { schedule } from "./schedule.ts";
 import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
-import type { Author, Kept, MessageId, NewRow, Row, Store } from "./store.ts";
+import type { Author, MessageId, NewRow, Row, Store } from "./store.ts";
+import { openThreads } from "./threads.ts";
 import { wentThrough, whenThrough } from "./through.ts";
 import { zoneOf } from "./zone.ts";
 
@@ -66,27 +69,6 @@ export type Failed = (thread: string, reason: string, turn?: boolean) => void;
 export type Waits = (thread: string, message: Message, still: boolean) => void;
 
 export type Settings = { model?: string | undefined; effort?: string | undefined };
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The choices a client offers for a thread's settings. Models are Claude Code's aliases, so a thread runs the newest model of the family it picked.
-export const MODELS = [
-  { value: "opus", name: "Opus" },
-  { value: "sonnet", name: "Sonnet" },
-  { value: "haiku", name: "Haiku" },
-  { value: "fable", name: "Fable" },
-];
-
-export const EFFORTS = [
-  { value: "low", name: "Low" },
-  { value: "medium", name: "Medium" },
-  { value: "high", name: "High" },
-  { value: "xhigh", name: "Extra High" },
-  { value: "max", name: "Max" },
-];
-
-export function family(model: string) {
-  return MODELS.find(({ value }) => model.startsWith(`claude-${value}-`))?.value ?? model;
-}
 
 const PreviewFields = z.record(z.string(), z.json());
 
@@ -172,10 +154,6 @@ export type Limits = {
   handoffAbove: number;
 };
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// fork: the session the thread continues as a fork with its first message, until it has its own.
-type Saved = Omit<Kept, "link">;
-
 type Timer = ReturnType<typeof setTimeout>;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -219,9 +197,6 @@ type Run = {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The owner's Stop pressing Esc in the session, until the transcript shows it landed.
   interrupting?: Promise<void> | undefined;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A new session whose conversation Claude hasn't saved yet.
-  unsaved?: string | undefined;
   held: (() => void)[];
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A call waited for the session now connected to start, so it is as new as the call.
@@ -659,10 +634,6 @@ function startupFiles(hex: string | undefined) {
 
 const ignore = (): void => undefined;
 
-function present(text: string | undefined): text is string {
-  return text !== undefined && text !== "";
-}
-
 function toMessageWithKeyFirstForTheHook(row: Row): Message {
   return { content: row.body, author: row.author, meta: { key: row.key, ...row.meta } };
 }
@@ -751,53 +722,15 @@ export function startHub({
   const path = `/${plugin.split("@")[0]}`;
   const app = path.slice(1);
   const db = open(storeDir);
-  const threads: Map<string, Saved> = openThreads();
+  const kept = keeping(db, storeDir);
+  const threads = openThreads({ app, db, kept, hexDir, link });
   mkdirSync(sessionsDir, { recursive: true, mode: 0o700 });
-  save();
   const token = tokenOf(stateDir);
   const inherited = claude.inherited();
   let closed = false;
   const closing = new AbortController();
   const serving = () => !closed;
   const zone = () => zoneOf(hexDir) ?? Temporal.Now.timeZoneId();
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The app's open threads, from hex.db: the hub starts only once it can read them, so no save closes threads it never loaded.
-  function openThreads(): Map<string, Saved> {
-    return new Map(
-      db.threads
-        .list({ app, open: true })
-        .map(({ app: _app, open: _open, link: _link, thread, model, ...known }) => [
-          thread,
-          { ...known, ...(present(model) && { model: family(model) }) },
-        ]),
-    );
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // hex.db keeps a closed thread's row, with its name, for whatever reads one. The app gives each thread's link as it knows it now; one it can't give keeps the last it gave.
-  function save() {
-    kept((store) => {
-      store.threads.keep(
-        app,
-        Object.fromEntries(
-          [...threads].map(([thread, known]) => [thread, { ...known, ...linkOf(thread) }]),
-        ),
-      );
-    }, undefined);
-  }
-
-  function linkOf(thread: string) {
-    try {
-      const given = link?.(thread);
-
-      return given === undefined ? {} : { link: given };
-    } catch (error) {
-      process.stderr.write(`hub: no link for ${app} thread ${thread}: ${String(error)}\n`);
-
-      return {};
-    }
-  }
 
   function runOf(thread: string): Run {
     let run = runs.get(thread);
@@ -840,7 +773,7 @@ export function startHub({
   function setState(thread: string, working: boolean, background = false) {
     const run = runOf(thread);
     state(thread, working, background);
-    claim(thread);
+    threads.claim(thread);
     run.turn = working ? "busy" : background ? "background" : "done";
     clock.clearTimeout(run.starting);
     run.starting = undefined;
@@ -863,7 +796,7 @@ export function startHub({
   // A thread renews at its next rest: the main thread and a fresh thread start over as soon as the process exits, any other when its next message resumes it. A keep (a call started) cancels it. When the session asked for it, a rest the Stop hook reported with no agents working is taken as it is: Claude's own status lags the hook and counts a running shell as busy, so checking it could put the renew off for good, and a session that asked is done with what its shells were for.
   async function renew(thread: string, rested = false) {
     const run = runOf(thread);
-    const session = current(thread);
+    const session = threads.current(thread);
 
     if (!present(session)) {
       return;
@@ -954,13 +887,13 @@ export function startHub({
 
   // A fresh thread keeps one session running, which takes its messages while its context has room and its cache is warm. Once either is spent, a new session built from the chat takes over at the old one's rest, so the next message finds it running: after the cache expires, the old session would send its whole context uncached, and a new one costs no more. warmFor is how long a session stays worth its messages, undefined before its first request: cacheWarm of an hour's cache, or as much of a shorter one (claude.cacheLife). https://docs.claude.com/en/docs/build-with-claude/prompt-caching
   function warmFor(thread: string) {
-    const session = current(thread);
+    const session = threads.current(thread);
 
     const {
       sent: context,
       at,
       short,
-    } = present(session) ? claude.usage(cwdOf(thread), session) : { sent: 0 };
+    } = present(session) ? claude.usage(threads.cwd(thread), session) : { sent: 0 };
 
     if (!context) {
       return;
@@ -982,7 +915,7 @@ export function startHub({
   async function handOff(thread: string, rested = false) {
     const run = runOf(thread);
     run.rest = undefined;
-    const running = await claude.agent(current(thread) ?? "", serving);
+    const running = await claude.agent(threads.current(thread) ?? "", serving);
 
     if (running && run.turn !== "busy" && (rested || running.status === "idle") && spent(thread)) {
       void cycle(thread, running);
@@ -994,7 +927,7 @@ export function startHub({
   async function stopIfIdle(thread: string) {
     const run = runOf(thread);
     run.rest = undefined;
-    const session = current(thread);
+    const session = threads.current(thread);
 
     if (!present(session)) {
       return;
@@ -1006,7 +939,7 @@ export function startHub({
       return;
     }
 
-    const { sent: context, failed: failedAt } = claude.usage(cwdOf(thread), session);
+    const { sent: context, failed: failedAt } = claude.usage(threads.cwd(thread), session);
 
     if (running && !run.leaving && !fresh(thread) && !onCall.has(run) && context > compactAbove) {
       if (failedAt === undefined) {
@@ -1030,13 +963,13 @@ export function startHub({
 
   async function recompact() {
     for (const [thread, run] of runs) {
-      const session = current(thread);
+      const session = threads.current(thread);
 
       if (run.compacting === undefined || !present(session)) {
         continue;
       }
 
-      const { sent: context, failed: failedAt } = claude.usage(cwdOf(thread), session);
+      const { sent: context, failed: failedAt } = claude.usage(threads.cwd(thread), session);
 
       if (context <= compactAbove) {
         run.compacting = undefined;
@@ -1071,7 +1004,7 @@ export function startHub({
     const run = runOf(thread);
     clock.clearTimeout(run.rest);
     run.rest = undefined;
-    const session = running?.sessionId ?? current(thread);
+    const session = running?.sessionId ?? threads.current(thread);
 
     if (!present(session)) {
       return Promise.resolve();
@@ -1136,9 +1069,7 @@ export function startHub({
 
   function forget(thread: string, leaving: (session: string) => void) {
     const run = runOf(thread);
-    const session = threads.get(thread)?.session ?? "";
-    threads.delete(thread);
-    save();
+    const session = threads.close(thread);
     become(run, { is: "stopped" });
     clock.clearTimeout(run.rest);
     runs.delete(thread);
@@ -1149,69 +1080,11 @@ export function startHub({
   }
 
   function adopt(thread: string, name: string, session: string, prompt?: string, cwd?: string) {
-    threads.set(thread, { name, session, ...(present(cwd) && { cwd }) });
-    save();
+    threads.open(thread, { name, session, ...(present(cwd) && { cwd }) });
 
     if (present(prompt)) {
       void launch(thread, name, { prompt });
     }
-  }
-
-  function find(nameOrThread: string) {
-    if (threads.has(nameOrThread)) {
-      return nameOrThread;
-    }
-
-    const wanted = nameOrThread.trim().toLowerCase();
-
-    const matches = [...threads].flatMap(([thread, known]) =>
-      known.name.toLowerCase() === wanted ? [thread] : [],
-    );
-
-    const [only] = matches;
-
-    if (matches.length > 1) {
-      throw new Error(`more than one thread is named "${nameOrThread}"`);
-    }
-
-    if (only === undefined) {
-      throw new Error(`no thread named "${nameOrThread}"`);
-    }
-
-    return only;
-  }
-
-  function savedOf(thread: string) {
-    const known = threads.get(thread);
-
-    if (!known) {
-      throw new Error(`${app} thread ${thread} isn't open in this hub`);
-    }
-
-    return known;
-  }
-
-  function rename(thread: string, name: string) {
-    const known = threads.get(thread);
-
-    if (!known || known.name === name) {
-      return;
-    }
-
-    known.name = name;
-    save();
-  }
-
-  function follow(thread: string, name: string, session: string, cwd?: string) {
-    threads.set(thread, { name, fork: session, ...(present(cwd) && { cwd }) });
-    save();
-  }
-
-  function register(thread: string, name: string, cwd?: string) {
-    const known = threads.get(thread) ?? { name, ...(present(cwd) && { cwd }) };
-    threads.set(thread, known);
-
-    return known;
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1236,8 +1109,8 @@ export function startHub({
     }
 
     const { prompt, fork, quiet = false } = run.opening ?? {};
-    const known = register(thread, name, cwd);
-    claim(thread);
+    threads.register(thread, name, cwd);
+    threads.claim(thread);
 
     if ((present(prompt) && !quiet) || run.queue.length > 0) {
       setState(thread, true);
@@ -1273,8 +1146,10 @@ export function startHub({
     cut(thread);
     const daemonChecked = claude.restartStaleDaemon();
 
-    if (!present(fork) && present(known.session) && !fresh(thread)) {
-      await claude.rm(known.session);
+    const session = threads.get(thread)?.session;
+
+    if (!present(fork) && present(session) && !fresh(thread)) {
+      await claude.rm(session);
     }
 
     if (run.phase === phase) {
@@ -1288,7 +1163,7 @@ export function startHub({
     const running = await claude.agents(serving);
 
     return (
-      running.find((agent) => agent.sessionId === current(thread)) ??
+      running.find((agent) => agent.sessionId === threads.current(thread)) ??
       running.find((agent) => boundTo(agent) === thread)
     );
   }
@@ -1300,7 +1175,7 @@ export function startHub({
   }
 
   function chosen(thread: string) {
-    const { model, effort } = savedOf(thread);
+    const { model, effort } = threads.of(thread);
 
     return [
       ...(present(model) ? ["--model", model] : []),
@@ -1321,25 +1196,12 @@ export function startHub({
   }
 
   function configure(thread: string, settings: Settings) {
-    const known = savedOf(thread);
+    const { model, effort } = { ...threads.of(thread), ...settings };
 
-    if ("model" in settings) {
-      if (present(settings.model)) {
-        known.model = settings.model;
-      } else {
-        delete known.model;
-      }
-    }
-
-    if ("effort" in settings) {
-      if (present(settings.effort)) {
-        known.effort = settings.effort;
-      } else {
-        delete known.effort;
-      }
-    }
-
-    save();
+    threads.update(thread, {
+      model: present(model) ? model : undefined,
+      effort: present(effort) ? effort : undefined,
+    });
   }
 
   function envOf(thread: string) {
@@ -1401,11 +1263,11 @@ export function startHub({
     fork?: string,
     daemonChecked?: Promise<void>,
   ) {
-    const known = savedOf(thread);
-
     if (!present(fork)) {
       await rewound(thread);
     }
+
+    const known = threads.of(thread);
 
     const takesOverFrom = present(prompt) || present(fork) ? undefined : expired(thread);
     writeSettings(thread, {}, takesOverFrom);
@@ -1433,10 +1295,7 @@ export function startHub({
     const launchArgs = extra(thread);
     const launched = stamp(launchArgs, server, startup);
 
-    if (known.launched !== launched) {
-      known.launched = launched;
-      save();
-    }
+    threads.update(thread, { launched });
 
     const source = fork ?? (present(known.session) ? undefined : known.fork);
 
@@ -1474,53 +1333,46 @@ export function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A saved session whose last reply the model's safeguards refused would be resumed into the same refusal, so the thread goes on, on its own model, from a copy of the conversation that ends before what that turn was given, or from a new session when nothing came before it or the copy fails.
   async function rewound(thread: string) {
-    const known = savedOf(thread);
-    const session = current(thread);
+    const session = threads.current(thread);
 
     if (!present(session) || fresh(thread)) {
       return;
     }
 
-    const refusal = claude.refused(claude.transcript(cwdOf(thread), session));
+    const refusal = claude.refused(claude.transcript(threads.cwd(thread), session));
 
     if (!refusal) {
       return;
     }
 
-    runOf(thread).unsaved = undefined;
+    threads.dropUnsaved(thread);
 
     const copy = present(refusal.at)
-      ? await claude.rewind(cwdOf(thread), session, refusal.at, chosen(thread))
+      ? await claude.rewind(threads.cwd(thread), session, refusal.at, chosen(thread))
       : undefined;
 
-    if (present(copy)) {
-      known.session = copy;
-    } else {
-      delete known.session;
-    }
-
+    threads.update(thread, { session: present(copy) ? copy : undefined });
     process.stderr.write(
-      `hub: ${thread}'s session ${session} ended on a refused turn, so it goes on ${present(known.session) ? `from ${known.session}, a copy that ends before it` : "in a new session"}\n`,
+      `hub: ${thread}'s session ${session} ended on a refused turn, so it goes on ${present(copy) ? `from ${copy}, a copy that ends before it` : "in a new session"}\n`,
     );
-    save();
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The transcript of a thread's saved session that a new session takes over from instead of resuming: one this machine doesn't have, like after a restore from hex.db, or one whose prompt cache has expired when it holds more than a new session costs to start and catch up. A start with a prompt, like /compact, needs the old conversation itself, so it resumes.
   function expired(thread: string) {
-    const session = savedOf(thread).session;
+    const session = threads.of(thread).session;
 
     if (!present(session) || fresh(thread)) {
       return;
     }
 
-    const file = claude.transcript(cwdOf(thread), session);
+    const file = claude.transcript(threads.cwd(thread), session);
 
     if (!claude.saved(session)) {
       return file;
     }
 
-    const { sent: context, at, short } = claude.usage(cwdOf(thread), session);
+    const { sent: context, at, short } = claude.usage(threads.cwd(thread), session);
 
     return context > handoffAbove && at !== undefined && clock.now() - at > claude.cacheLife(short)
       ? file
@@ -1561,7 +1413,7 @@ export function startHub({
   // Claude Code can pause a session mid-turn on a choice for someone at its terminal, like a reply its model's safeguards stopped or a permission prompt, and no hook says so: its job record says it needs something and Claude lists it as waiting. The turn ends in hex's record, so what went unanswered isn't given to another session to pause on again, and the chat hears why. No shell command answers the dialog (https://code.claude.com/docs/en/agent-view#manage-sessions-from-the-shell), and its choices are a terminal's: another model, which the owner's settings can rule out, or editing the prompt in the terminal. So the session keeps running, with any agents it started, until the thread's next message starts it again, past a refused turn when the safeguards stopped it (rewound).
   async function pause(thread: string, phase: Phase, needs: string | undefined) {
     const run = runOf(thread);
-    const session = current(thread);
+    const session = threads.current(thread);
 
     const running =
       present(needs) && present(session) ? await claude.agent(session, serving) : undefined;
@@ -1592,8 +1444,8 @@ export function startHub({
       store.turns.handled(session);
     }, undefined);
     setState(thread, false);
-    const refusal = claude.refused(claude.transcript(cwdOf(thread), session));
-    const { model } = savedOf(thread);
+    const refusal = claude.refused(claude.transcript(threads.cwd(thread), session));
+    const { model } = threads.of(thread);
 
     failed(
       thread,
@@ -1617,7 +1469,7 @@ export function startHub({
     become(run, { is: "stopped" });
 
     if (lost(thread, reason)) {
-      return void launch(thread, savedOf(thread).name, { again: phase.again });
+      return void launch(thread, threads.of(thread).name, { again: phase.again });
     }
 
     if (run.renew === "underway") {
@@ -1711,35 +1563,16 @@ export function startHub({
       `hub: ${thread} lets go of session ${session}, which Claude Code can't find, and starts a new one\n`,
     );
 
-    if (known.session === session) {
-      delete known.session;
-    }
-
-    if (known.fork === session) {
-      delete known.fork;
-    }
+    threads.update(thread, {
+      ...(known.session === session && { session: undefined }),
+      ...(known.fork === session && { fork: undefined }),
+    });
 
     if (run.opening?.fork === session) {
       delete run.opening.fork;
     }
 
-    save();
-
     return true;
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The store while it opens and writes; without it the hub goes on from memory, as it did before it had one, so a failing disk never leaves hex deaf.
-  function kept<T>(use: (store: Store) => T, otherwise: T): T {
-    try {
-      return use(db);
-    } catch (error) {
-      process.stderr.write(
-        `hub: ${join(storeDir, "hex.db")} failed, so the hub goes on from memory: ${String(error)}\n`,
-      );
-
-      return otherwise;
-    }
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1796,7 +1629,7 @@ export function startHub({
     };
 
     kept(
-      (store) => store.messages.deliver(row, caller.getStore() ?? current(thread) ?? "hub"),
+      (store) => store.messages.deliver(row, caller.getStore() ?? threads.current(thread) ?? "hub"),
       false,
     );
   }
@@ -1873,7 +1706,7 @@ export function startHub({
   // Claude Code labels a channel message that comes mid-turn as not from its user, so the owner's words wait for the session's next tool call, where hub/held.ts gives them as hook feedback, which Claude Code treats as the user's; the turn's end sends any still waiting (letHeldGo). A turn counts from the message that starts it, not from its hook's report.
   function heldForTheTurn(thread: string, message: Message) {
     const { key } = message.meta;
-    const session = current(thread);
+    const session = threads.current(thread);
     const run = runOf(thread);
 
     return (
@@ -1889,7 +1722,7 @@ export function startHub({
     const rows = kept((store) => store.messages.letHeldGo(thread), []);
 
     for (const row of rows) {
-      forward(thread, savedOf(thread).name, toMessageWithKeyFirstForTheHook(row));
+      forward(thread, threads.of(thread).name, toMessageWithKeyFirstForTheHook(row));
     }
   }
 
@@ -1935,7 +1768,7 @@ export function startHub({
     }
 
     const rows = kept<Row[] | undefined>(
-      (store) => store.messages.untaken([...threads.keys()]),
+      (store) => store.messages.untaken(threads.ids()),
       undefined,
     );
 
@@ -1975,7 +1808,7 @@ export function startHub({
   // Each session running beside a thread, by the row it was started for, if this hub started it.
   const besides = new Map<string, string | undefined>();
 
-  const besideAddresses = () => [...threads.keys()].map(besideOf);
+  const besideAddresses = () => threads.ids().map(besideOf);
   const besideRows = () => kept((store) => store.messages.beside(besideAddresses()), []);
   const besideLog = (session: string) => join(sessionsDir, `beside-${session}.log`);
 
@@ -2018,7 +1851,7 @@ export function startHub({
         besidePrompt(app, row, zone()),
       ],
       {
-        cwd: cwdOf(thread),
+        cwd: threads.cwd(thread),
         env: {
           HEX_CHANNEL: channel,
           HEX_THREAD: thread,
@@ -2234,10 +2067,10 @@ export function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Claude Code runs a slash command like /compact only as a session's first prompt, and reads its launch arguments only at start, so a running session stops and resumes for either.
   async function restart(thread: string, prompt?: string) {
-    const session = current(thread);
+    const session = threads.current(thread);
 
     if (!present(session)) {
-      await launch(thread, savedOf(thread).name, { prompt });
+      await launch(thread, threads.of(thread).name, { prompt });
 
       return;
     }
@@ -2250,10 +2083,10 @@ export function startHub({
   async function refresh(thread: string, message: Message) {
     const run = runOf(thread);
     const phase = run.phase;
-    const running = await claude.agent(current(thread) ?? "", serving);
+    const running = await claude.agent(threads.current(thread) ?? "", serving);
 
     if (run.phase !== phase || phase.is !== "live") {
-      forward(thread, savedOf(thread).name, message);
+      forward(thread, threads.of(thread).name, message);
 
       return;
     }
@@ -2291,7 +2124,7 @@ export function startHub({
       become(run, { is: "stopped" });
     }
 
-    void launch(thread, savedOf(thread).name, { prompt, quiet });
+    void launch(thread, threads.of(thread).name, { prompt, quiet });
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -2318,17 +2151,15 @@ export function startHub({
       run.renew = undefined;
     }
 
-    if (!threads.has(thread)) {
-      threads.set(thread, { name: thread });
-    }
+    threads.register(thread, thread);
 
     const id = present(job) ? claude.record(job).sessionId : undefined;
 
     if (present(id)) {
-      note(thread, id);
+      threads.note(thread, id);
     }
 
-    const record = job ?? current(thread)?.slice(0, 8);
+    const record = job ?? threads.current(thread)?.slice(0, 8);
 
     if (present(record)) {
       watchJob(thread, record);
@@ -2367,18 +2198,13 @@ export function startHub({
       const running = await sessionOf(thread);
 
       if (running && run.phase.is === "live" && run.phase.line === line) {
-        note(thread, running.sessionId);
+        threads.note(thread, running.sessionId);
       }
     })();
 
     if (was.is === "launching") {
       wentThrough("start");
     }
-  }
-
-  function note(thread: string, session: string) {
-    runOf(thread).unsaved = threads.get(thread)?.session === session ? undefined : session;
-    claim(thread);
   }
 
   function drop(thread: string, line: Line) {
@@ -2481,7 +2307,7 @@ export function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A session that died mid-turn ran no Stop hook, so its turn ends in hex's record of it here, and what it took without answering waits for the thread's next session. Only for a thread none of whose sessions runs.
   function cut(thread: string) {
-    const given = new Set(kept((store) => store.turns.cut(thread, current(thread)), []));
+    const given = new Set(kept((store) => store.turns.cut(thread, threads.current(thread)), []));
 
     if (!given.size) {
       return;
@@ -2534,34 +2360,6 @@ export function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session that dies before Claude saves its conversation can't be resumed, so the thread keeps its last saved session until the new one has a conversation on disk.
-  function claim(thread: string) {
-    const run = runOf(thread);
-    const known = threads.get(thread);
-
-    if (
-      !present(run.unsaved) ||
-      !known ||
-      !existsSync(claude.transcript(cwdOf(thread), run.unsaved))
-    ) {
-      return;
-    }
-
-    known.session = run.unsaved;
-    delete known.fork;
-    run.unsaved = undefined;
-    save();
-  }
-
-  function cwdOf(thread: string) {
-    return threads.get(thread)?.cwd ?? hexDir;
-  }
-
-  function current(thread: string) {
-    return runs.get(thread)?.unsaved ?? threads.get(thread)?.session;
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A thread is on a call from its keep until its renew, which starts the next call in a new session. That session starts when the last call ends and can wait hours for the next, so a call that finds it still waiting for its first message starts it over, reading memory and live status as they are now, unless a call waited for it to start. The stop comes first, so a message meanwhile waits for the new session, and the call is on once that session connects, so a restart that never gets there doesn't hold up the hub's own. Resolves once the session the call runs in is connected.
   function keep(thread: string) {
     const run = runOf(thread);
@@ -2570,7 +2368,7 @@ export function startHub({
       run.renew = undefined;
     }
 
-    const session = current(thread);
+    const session = threads.current(thread);
 
     if (
       run.awaited !== true &&
@@ -2624,7 +2422,7 @@ export function startHub({
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
       // A tool can send into another thread: what it sends there is still its caller's session's words.
       call: (thread, tool, toolArgs, by) =>
-        caller.run(by ?? current(thread), () => call(thread, tool, toolArgs)),
+        caller.run(by ?? threads.current(thread), () => call(thread, tool, toolArgs)),
       permission: (thread, request) => permission?.(thread, request),
       open: welcome,
       close: drop,
@@ -2719,7 +2517,7 @@ export function startHub({
       }
 
       case "mirror": {
-        const thread = find(request.thread);
+        const thread = threads.find(request.thread);
 
         void (async () => {
           try {
@@ -2762,7 +2560,7 @@ export function startHub({
 
   async function press(thread: string): Promise<void> {
     const run = runOf(thread);
-    const session = current(thread);
+    const session = threads.current(thread);
 
     if (!present(session) || run.turn === "background") {
       return;
@@ -2790,7 +2588,7 @@ export function startHub({
 
     try {
       how = await claude.interrupt(
-        cwdOf(thread),
+        threads.cwd(thread),
         session,
         AbortSignal.any([deadline.signal, closing.signal]),
       );
@@ -2800,7 +2598,7 @@ export function startHub({
       clock.clearTimeout(timer);
     }
 
-    if (closing.signal.aborted || current(thread) !== session) {
+    if (closing.signal.aborted || threads.current(thread) !== session) {
       return;
     }
 
@@ -2848,27 +2646,33 @@ export function startHub({
       return;
     }
 
-    rename(main, mainName);
+    threads.update(main, { name: mainName });
     void launch(main, mainName, { again: true });
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Sessions that outlived the hub (a hub restart) reconnect, or recover. A fresh main thread's launch never resumes, so one still running waits for its session instead of starting another.
-  if (present(main) || threads.size > 0) {
+  if (present(main) || threads.ids().length > 0) {
     void (async () => {
       const running = await claude.agents(serving);
 
       const outlived = new Set(
-        [...threads.keys()].filter((thread) =>
-          running.some((agent) => agent.sessionId === current(thread) || boundTo(agent) === thread),
-        ),
+        threads
+          .ids()
+          .filter((thread) =>
+            running.some(
+              (agent) => agent.sessionId === threads.current(thread) || boundTo(agent) === thread,
+            ),
+          ),
       );
 
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
       // One that was mid-turn when the hub stopped, with no session running for it (a reboot, or hex moved to another machine), has nothing to reconnect: its next session gets what it left at once. The list is from a supervisor that answered, so a session missing from it isn't running.
-      const cutShort = [...threads.keys()].filter(
-        (thread) => !outlived.has(thread) && kept((store) => store.turns.midTurn(thread), false),
-      );
+      const cutShort = threads
+        .ids()
+        .filter(
+          (thread) => !outlived.has(thread) && kept((store) => store.turns.midTurn(thread), false),
+        );
 
       for (const thread of [...outlived, ...cutShort]) {
         const run = runOf(thread);
@@ -2913,7 +2717,7 @@ export function startHub({
       model: threads.get(thread)?.model,
       effort: threads.get(thread)?.effort,
     }),
-    register: (thread: string, name: string, cwd?: string) => void register(thread, name, cwd),
+    register: threads.register,
     open: (thread: string, name: string, prompt?: string, cwd?: string) =>
       void launch(thread, name, { prompt, cwd }),
     fork: (thread: string, name: string, session: string, prompt: string, cwd?: string) =>
@@ -2925,21 +2729,21 @@ export function startHub({
     adrift: drift,
     synced: () => kept((store) => store.synced(), Promise.resolve()),
     renew: renewAsked,
-    session: current,
+    session: threads.current,
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // A turn cut short, which runs no Stop hook, queues its memory pass here.
     turned: (thread: string) => {
-      const session = current(thread);
+      const session = threads.current(thread);
 
       if (present(session)) {
         queue(storeDir, { session, by: new Date().toISOString(), thread });
       }
     },
     running: sessionOf,
-    threads: () => [...threads.keys()],
+    threads: threads.ids,
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // Saves the threads again, for an app that learned links it couldn't give before.
-    save,
+    save: threads.save,
     name: (thread: string) => threads.get(thread)?.name,
     cwd: (thread: string) => threads.get(thread)?.cwd,
     stop: halt,
@@ -2953,11 +2757,16 @@ export function startHub({
     },
     release,
     adopt,
-    follow,
-    history: (thread: string) => kept((store) => history(store, thread, current(thread)), []),
+    follow: (thread: string, name: string, session: string, cwd?: string) => {
+      threads.open(thread, { name, fork: session, ...(present(cwd) && { cwd }) });
+    },
+    history: (thread: string) =>
+      kept((store) => history(store, thread, threads.current(thread)), []),
     retire,
-    find,
-    rename,
+    find: threads.find,
+    rename: (thread: string, name: string) => {
+      threads.update(thread, { name });
+    },
     close: () => {
       closed = true;
       unwatch();

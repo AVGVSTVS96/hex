@@ -2711,6 +2711,13 @@ test("a thread's model and effort are kept, and a running session takes them by 
   expect(fresh.received[0]).toMatchObject({ type: "inbound", content: "again" });
 });
 
+test("a thread a client opens with its settings is in hex.db before its first message, so a restart still knows it", () => {
+  start();
+  hub.register("chat:7", "Desk anchors", join(dir, "desk"));
+  hub.configure("chat:7", {});
+  expect(registry()["chat:7"]).toEqual({ name: "Desk anchors", cwd: join(dir, "desk") });
+});
+
 test("a thread saved with a full model id runs its family's alias, so it gets the newest model", async () => {
   start({
     registry: { "chat:7": { name: "Desk anchors", session: SESSION, model: "claude-opus-5-5" } },
