@@ -1,4 +1,7 @@
 import { clock } from "./clock.ts";
+import type { Timer } from "./clock.ts";
+import type { Line } from "./mcp.ts";
+import type { Message } from "./waiting.ts";
 
 const TURN_REPORTS_WITHIN = 60_000;
 
@@ -11,7 +14,7 @@ type Turn = {
   untaken?: boolean | undefined;
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A message went to the session while it rested, so a turn is starting that its hook hasn't reported yet; under load that report can take seconds. Ends at the report, or at TURN_REPORTS_WITHIN for a message that ran no turn, like a copy the session already had.
-  starting?: ReturnType<typeof setTimeout> | undefined;
+  starting?: Timer | undefined;
 };
 
 export function sessionTurns({ overdue }: { overdue: (thread: string) => void }) {
@@ -67,9 +70,10 @@ export function sessionTurns({ overdue }: { overdue: (thread: string) => void })
     }, TURN_REPORTS_WITHIN);
   }
 
-  function handed(thread: string) {
+  function handIn(thread: string, line: Line, message: Message) {
     turnOf(thread).untaken = true;
     expect(thread);
+    line.send({ type: "inbound", ...message });
   }
 
   function connected(thread: string, given: boolean) {
@@ -90,5 +94,5 @@ export function sessionTurns({ overdue }: { overdue: (thread: string) => void })
     clock.clearTimeout(turns.get(thread)?.starting);
   }
 
-  return { of, active, began, ended, handed, connected, forget, close };
+  return { of, active, began, ended, handIn, connected, forget, close };
 }

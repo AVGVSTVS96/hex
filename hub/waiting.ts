@@ -77,6 +77,26 @@ export function messagesWaiting({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A session that died mid-turn ran no Stop hook, so its turn ends in hex's record of it here, and what it took without answering waits for the thread's next session. Only for a thread none of whose sessions runs.
+  function cut(thread: string, session: string | undefined) {
+    const given = new Set(kept((store) => store.turns.cut(thread, session), []));
+
+    if (!given.size) {
+      return;
+    }
+
+    process.stderr.write(
+      `hub: ${thread}'s session ended without answering ${given.size} of its messages, so the thread's next session gets them\n`,
+    );
+
+    for (const message of forNext(thread)) {
+      if (given.has(message.meta.key ?? "")) {
+        mark(thread, message);
+      }
+    }
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // What a thread's next session gets: every message no session has taken, and any the store couldn't keep.
   function forNext(thread: string): Message[] {
     const rows = kept((store) => store.messages.untaken(thread), []);
@@ -144,5 +164,5 @@ export function messagesWaiting({
     }
   }
 
-  return { of, hold, mark, markAll, forNext, pass, passed, drain, connected, settle };
+  return { of, hold, mark, markAll, cut, forNext, pass, passed, drain, connected, settle };
 }
