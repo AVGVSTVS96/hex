@@ -2,8 +2,12 @@ import { defineConfig } from "oxlint";
 import antiSlop from "ultracite/oxlint/anti-slop";
 import core from "ultracite/oxlint/core";
 
-const functionLines = (max: number) =>
-  ["error", { max, skipBlankLines: true, skipComments: true }] as const;
+const functionLines = (
+  max: number,
+): ["error", { max: number; skipBlankLines: boolean; skipComments: boolean }] => [
+  "error",
+  { max, skipBlankLines: true, skipComments: true },
+];
 
 const longestFunctionIn = {
   "channels/buzz/activity.ts": 416,
