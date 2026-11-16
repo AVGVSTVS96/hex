@@ -22,6 +22,7 @@ import type { Where } from "./chat.ts";
 import { PORT, STATE_DIR, env } from "./env.ts";
 import { Feed } from "./feed.ts";
 import type { Entry } from "./feed.ts";
+import { Goals } from "./goals.ts";
 import { Ideas } from "./ideas.ts";
 import { jev } from "./jev.ts";
 import { counted, line, Media } from "./media.ts";
@@ -82,6 +83,7 @@ const follows = new Map<string, () => void>();
 let board: Board;
 let yours: Questions;
 let feed: Feed;
+let goals: Goals;
 let chats: Chats;
 let media: Media;
 let ideas: Ideas;
@@ -3748,6 +3750,54 @@ async function ideaRoutes(request: Request, url: URL) {
   });
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* Goals: what the owner asked for and what hex watches (goals.ts). A goal's "Not needed" and "Not
+   what I asked" tell its topic, as words typed in the app would; Undo puts back what was. */
+async function goalRoutes(request: Request, url: URL) {
+  if (url.pathname === "/goals" && request.method === "GET") {
+    const after = url.searchParams.get("after");
+
+    if (after !== null && after !== "") {
+      await goals.changes(Number(after), 25_000);
+    }
+
+    return Response.json(goals.view);
+  }
+
+  const [, watched, act] = /^\/goals\/w\/([^/]+)\/(stop|undo)$/u.exec(url.pathname) ?? [];
+
+  if (filled(watched) && filled(act) && request.method === "POST") {
+    const name = decodeURIComponent(watched);
+
+    return await done(() => {
+      if (act === "stop") {
+        goals.stopWatching(name);
+      } else {
+        goals.undo(name);
+      }
+    });
+  }
+
+  const [, id, verb] = /^\/goals\/(t-\d+)\/(drop|reopen|undo)$/u.exec(url.pathname) ?? [];
+
+  if (!filled(id) || !filled(verb) || request.method !== "POST") {
+    return new Response("404", { status: 404 });
+  }
+
+  return await done(async () => {
+    const run = goals.runOf(id);
+
+    const changed =
+      verb === "drop" ? goals.drop(id) : verb === "reopen" ? goals.reopen(id) : goals.undo(id);
+
+    const where = run === undefined ? undefined : board.find(run);
+
+    if (changed && where) {
+      await chats.send(where, changed.told, `app-goal-${id}-${verb}-${Date.now()}`);
+    }
+  });
+}
+
 async function showPage(url: URL, runs: Board, key: string) {
   const read = () => {
     const found = runs.find(key);
@@ -3924,6 +3974,10 @@ function routes(request: Request) {
     return feedRoutes(request, new URL(request.url));
   }
 
+  if (pathname === "/goals" || pathname.startsWith("/goals/")) {
+    return goalRoutes(request, new URL(request.url));
+  }
+
   if (/^\/(asks|stuck|fresh)(\/|$)/u.test(pathname)) {
     return questionRoutes(request, new URL(request.url));
   }
@@ -4000,6 +4054,7 @@ export function serve(voiceHub: Hub, state: string) {
   yours.listen(() => {
     feed.check();
   });
+  goals = new Goals(state, dirname(state), board, yours);
   recover();
   followWorkPastCallsSentOut();
   void checkCredit();

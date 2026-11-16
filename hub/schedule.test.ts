@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { check, parse } from "./schedule.ts";
+import { check, nextRun, parse } from "./schedule.ts";
 import type { Job } from "./schedule.ts";
 import { open } from "./store.ts";
 
@@ -262,4 +262,28 @@ test("a check job runs beside its thread, where a job with a thread runs in it",
 
   expect(open(dir).messages.get(`schedule:mail@${slot}`)?.to).toBe("beside:topic");
   expect(open(dir).messages.get(`schedule:standup@${slot}`)?.to).toBe("topic");
+});
+
+test("a job's next run is the next minute it would fire, on the owner's clock", () => {
+  const zone = "America/Los_Angeles";
+
+  expect(nextRun({ cron: "0 9 * * *", prompt: "Daily" }, zone, at(18, 10))).toBe(at(19, 9));
+  expect(nextRun({ cron: "20 8-23 * * *", prompt: "Hourly" }, zone, at(18, 23, 30))).toBe(
+    at(19, 8, 20),
+  );
+  expect(nextRun({ cron: "0 10 * * 1", prompt: "Mondays" }, zone, at(18, 10))).toBe(at(19, 10));
+  expect(
+    nextRun({ at: ["2026-10-20 18:30", "2026-10-19 07:00"], prompt: "Twice" }, zone, at(18, 0)),
+  ).toBe(at(19, 7));
+  expect(nextRun({ at: "2026-10-01 09:00", prompt: "Past" }, zone, at(18, 0))).toBeUndefined();
+});
+
+test("a watch is a job with the name the owner knows it by", () => {
+  expect(
+    parse(JSON.stringify({ rail: { cron: "0 9 * * *", prompt: "Look", watch: "Rail strike" } }))
+      .rail?.watch,
+  ).toBe("Rail strike");
+  expect(() =>
+    parse(JSON.stringify({ rail: { cron: "0 9 * * *", prompt: "Look", watch: "" } })),
+  ).toThrow("watch must be");
 });
