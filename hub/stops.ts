@@ -6,6 +6,8 @@ import type { Threads } from "./threads.ts";
 
 type Stop = { ending?: Promise<void> | undefined };
 
+export type SessionStops = ReturnType<typeof sessionStops>;
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // `claude stop` returns before the process exits, and the session keeps its channel until it does, so a message meanwhile waits for the exit (forward). Its process is found while Claude still lists it, before the stop; when Claude can't say, the stop goes ahead without the wait. The hub stops a session only when it's idle or the owner asks, so what it took is handled. stopping: the hub hears first.
 export function sessionStops({

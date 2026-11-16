@@ -4,17 +4,17 @@ import { Cause, Data, Effect, Option } from "effect";
 
 import * as claude from "./claude.ts";
 import { clock } from "./clock.ts";
-import type { failedStarts, Opening } from "./failing.ts";
+import type { FailedStarts, Opening } from "./failing.ts";
 import { ownedWork } from "./fibers.ts";
 import type { Work } from "./fibers.ts";
 import type { SessionFiles } from "./files.ts";
 import type { Keep } from "./kept.ts";
 import type { Line } from "./mcp.ts";
-import type { sessionPauses } from "./pauses.ts";
+import type { SessionPauses } from "./pauses.ts";
 import { present } from "./present.ts";
 import type { Runs } from "./runs.ts";
-import type { sessionStarts } from "./start.ts";
-import type { sessionStops } from "./stops.ts";
+import type { SessionStarts } from "./start.ts";
+import type { SessionStops } from "./stops.ts";
 import type { Threads } from "./threads.ts";
 import type { MessagesWaiting } from "./waiting.ts";
 
@@ -128,6 +128,8 @@ function underway(standing: Standing) {
   return standing.phase.is === "launching" || standing.phase.is === "live";
 }
 
+export type ThreadSessions = ReturnType<typeof threadSessions>;
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Where each thread's session stands, and the starts and restarts that move it: become is the one writer of which phase it's in, and only this file changes what goes with that phase. What the hub does for a phase is that phase's work, an Effect: a start's steps, a wait for a channel, a watch on Claude's job record. A phase ending interrupts its work, so none of it acts for a phase that's over, and work that fails or breaks ends a start as failed. What the hub does about a phase goes up as a fact: a turn began or ended, a start failed.
 export function threadSessions({
@@ -155,10 +157,10 @@ export function threadSessions({
   threads: Threads;
   waiting: MessagesWaiting;
   files: SessionFiles;
-  starts: ReturnType<typeof sessionStarts>;
-  stops: ReturnType<typeof sessionStops>;
-  failing: ReturnType<typeof failedStarts>;
-  pauses: ReturnType<typeof sessionPauses>;
+  starts: SessionStarts;
+  stops: SessionStops;
+  failing: FailedStarts;
+  pauses: SessionPauses;
   kept: Keep;
   serving: () => boolean;
   channel: string;

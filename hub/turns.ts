@@ -17,6 +17,8 @@ type Turn = {
   starting?: Timer | undefined;
 };
 
+export type SessionTurns = ReturnType<typeof sessionTurns>;
+
 export function sessionTurns({ overdue }: { overdue: (thread: string) => void }) {
   const turns = new Map<string, Turn>();
 
