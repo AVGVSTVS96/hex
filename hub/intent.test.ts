@@ -494,7 +494,7 @@ test("the judge asks claude in hex's folder, with no tools, session or hex varia
     "-p": [],
     "--safe-mode": [],
     "--model": ["opus"],
-    "--effort": ["medium"],
+    "--effort": ["high"],
     "--tools": [""],
     "--output-format": ["json"],
     "--no-session-persistence": [],
