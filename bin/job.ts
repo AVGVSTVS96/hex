@@ -380,7 +380,7 @@ if (mode === "--owner") {
   await tell(
     unit,
     owner,
-    `waits for room: no machine has a free slot and room right now. It starts by itself once one does.${readings}`,
+    `waits for room: no machine has a free slot with the CPU, memory and disk a job needs right now. It starts by itself once one does.${readings}`,
     `${process.env.INVOCATION_ID ?? Date.now()}:waiting`,
   );
 } else if (mode === "--tell") {
