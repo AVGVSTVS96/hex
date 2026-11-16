@@ -40,7 +40,7 @@ import type { Call, ChannelServer, Hub, HubLine, Message, Permission } from "./h
 import { pictureId } from "./pictures.ts";
 import { stamp } from "./start.ts";
 import { open } from "./store.ts";
-import type { Author } from "./store.ts";
+import type { Author, Store } from "./store.ts";
 import { ATTACH, hangUpAll, http as channelLine, port } from "./testing.ts";
 import { until } from "./until.ts";
 
@@ -849,8 +849,7 @@ test("a hub that starts after its sessions died (a reboot, or a move to another 
   expect(store.turns.get(SESSION).ended).toBeDefined();
 });
 
-test("a session that died while its background agents still worked (a reboot) gives what it took to its thread's next session", async () => {
-  const store = open(dir);
+const agentsStillWork = async (store: Store) => {
   store.threads.keep("telegram", { "chat:7": { name: "Desk anchors", session: SESSION } });
   store.messages.deliver({
     key: "telegram:1:10",
@@ -862,6 +861,18 @@ test("a session that died while its background agents still worked (a reboot) gi
   });
   store.turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
   store.messages.take("telegram:1:10", SESSION);
+
+  store.messages.deliver(
+    {
+      key: "telegram:1:11",
+      to: "chat:7",
+      from: "telegram",
+      author: "hex",
+      body: "on it",
+      meta: {},
+    },
+    SESSION,
+  );
 
   const hook = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "idle"], {
     env: { ...process.env, HEX_STORE: dir, MEMORY_DIR: "" },
@@ -875,14 +886,51 @@ test("a session that died while its background agents still worked (a reboot) gi
   });
 
   await hook.exited;
+  expect(store.turns.get(SESSION).ended).toBeDefined();
   expect(store.turns.midTurn("chat:7")).toBe(true);
+};
+
+const startsAgainToldItsAgentsEnded = async (store: Store, unanswered: string[] = []) => {
   start({ agents: [], reconnect: 50 });
   await time.lapse(50);
   await launched();
   const next = await session("chat:7");
-  await until(() => next.received.length);
-  expect(heard(next.received)[0]?.content).toBe("research it in the background");
+  await until(() => next.received.length > unanswered.length);
+  await settled();
+  const contents = heard(next.received).map(({ content }) => content);
+  expect(contents.slice(0, -1)).toEqual(unanswered);
+  expect(contents.at(-1)).toContain("background agents");
+  expect(store.messages.get("telegram:1:10")?.taken?.by).toBe(SESSION);
   expect(store.turns.midTurn("chat:7")).toBe(false);
+};
+
+test("a session that died while its background agents still worked (a reboot) starts again, told by the hub that they ended, without the message it already answered", async () => {
+  const store = open(dir);
+  await agentsStillWork(store);
+  await startsAgainToldItsAgentsEnded(store);
+});
+
+test("a session that died in a turn one of its agents' reports began starts again the same way", async () => {
+  const store = open(dir);
+  await agentsStillWork(store);
+  store.turns.turned(SESSION, true);
+  await startsAgainToldItsAgentsEnded(store);
+});
+
+test("a session that died mid-turn after starting background agents gives back that turn's message and is told the agents ended too", async () => {
+  const store = open(dir);
+  await agentsStillWork(store);
+  store.messages.deliver({
+    key: "telegram:1:12",
+    to: "chat:7",
+    from: "telegram",
+    author: "owner",
+    body: "and one more thing",
+    meta: {},
+  });
+  store.turns.turned(SESSION, true);
+  store.messages.take("telegram:1:12", SESSION);
+  await startsAgainToldItsAgentsEnded(store, ["and one more thing"]);
 });
 
 test("a session the hub stops while idle has handled what it took, even with its turn left open (Esc in an attached terminal runs no Stop hook)", async () => {

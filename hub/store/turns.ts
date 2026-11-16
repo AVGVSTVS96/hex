@@ -15,7 +15,9 @@ const TurnRow = z
     ...(handled !== undefined && { handled }),
   }));
 
-const UnfinishedTurnRows = z.array(z.object({ session: z.string(), handled: TextOrNull }));
+const UnfinishedTurnRows = z.array(
+  z.object({ session: z.string(), handled: TextOrNull, waiting: TextOrNull }),
+);
 
 const RepliesRow = z.object({ replies: z.number() });
 
@@ -72,28 +74,38 @@ export class Turns {
     this.db.query("update turns set waiting = ? where session = ?").run(at, session);
   }
 
-  cut(thread: string, session?: string, at = now()): string[] {
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A turn that ended with agents still working answered what it took, as any turn that ends does, so a session cut short gives back only what it took since, however often it is cut. waited: one of them had started agents, and any still working ended with it.
+  cut(thread: string, session?: string, at = now()): { given: string[]; waited: boolean } {
     return this.write(() => {
-      const diedMidTurn = UnfinishedTurnRows.parse(
+      const cutShort = UnfinishedTurnRows.parse(
         this.db
           .query(
-            `select session, handled from turns where (began is not null and ended is null or waiting is not null) and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null and author <> 'hex'))`,
+            `select session, handled, waiting from turns where (began is not null and ended is null or waiting is not null) and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null and author <> 'hex'))`,
           )
           .all(thread, session ?? null),
       );
 
-      return diedMidTurn.flatMap(({ session: died, handled }) => {
+      const given = cutShort.flatMap(({ session: died, handled, waiting }) => {
+        const lastTurnEnded =
+          waiting !== null && (handled === null || waiting > handled) ? waiting : handled;
+
         this.turned(died, false, at);
-        this.db.query("update turns set waiting = null where session = ?").run(died);
+
+        this.db
+          .query("update turns set waiting = null, handled = ? where session = ?")
+          .run(lastTurnEnded, died);
 
         return KeyValues.parse(
           this.db
             .query(
               `update messages set taken_by = null, taken_at = null where taken_by = ? and author <> 'hex' and "from" <> 'terminal' and taken_at > ? returning key`,
             )
-            .values(died, handled),
+            .values(died, lastTurnEnded),
         ).map(([key]) => key);
       });
+
+      return { given, waited: cutShort.some(({ waiting }) => waiting !== null) };
     });
   }
 
