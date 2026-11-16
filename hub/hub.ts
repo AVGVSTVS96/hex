@@ -32,6 +32,7 @@ import { restarts } from "./restarts.ts";
 import { threadRuns } from "./runs.ts";
 import { schedule } from "./schedule.ts";
 import { threadSessions } from "./sessions.ts";
+import { stalledTurns } from "./stalls.ts";
 import { sessionStarts } from "./start.ts";
 import { sessionStops } from "./stops.ts";
 import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
@@ -161,9 +162,6 @@ type Run = {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The owner's Stop pressing Esc in the session, until the transcript shows it landed.
   interrupting?: Promise<void> | undefined;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Its last turn failed on the API, until a turn begins or goes through. waiting: the error clears without a word to this thread (a rate limit, a dropped connection, a login that works again), so it carries on at the next turn anywhere that goes through; resumed: the hub had it carry on, once; told: its chat heard it waits for its next message.
-  stalled?: "waiting" | "resumed" | "told" | undefined;
 };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -243,16 +241,6 @@ class Clients extends Map<string, Client> {
 export const clients = new Clients();
 
 let generalHub: Hub | undefined;
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Claude Code's StopFailure errors that clear on their own, or once an account has room or the login works again; a refused connection reaches the hook as server_error.
-const PASSING_API_ERRORS = new Set([
-  "rate_limit",
-  "overloaded",
-  "server_error",
-  "billing_error",
-  "authentication_failed",
-]);
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Resolves with the hub serving General once General's session first connects to it: from then on, hex works on the code this process runs.
@@ -749,6 +737,7 @@ export async function startHub({
     fresh,
   });
 
+  const stalls = stalledTurns({ runs, threads, turns, inbox, failed });
   const hubRuns = runs.part((): Run => ({}));
   const runOf = hubRuns.of;
 
@@ -819,48 +808,6 @@ export async function startHub({
 
     const by = caller.getStore() ?? threads.current(thread) ?? "hub";
     await must({ kind: "deliver", row, by }, false);
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A turn the API refused ends with what set it off unanswered and nothing to start it again, and the session can't say why when its requests don't go through. So the thread's chat hears the API's error from the hub, and whether it carries on: one that clears does, once, at the next turn anywhere that goes through (resumeStalled), and the chat hears again only when that changes.
-  function stall(thread: string, error = "unknown", said?: string) {
-    const run = runOf(thread);
-    const was = run.stalled;
-    run.stalled = PASSING_API_ERRORS.has(error) && was !== "resumed" ? "waiting" : "told";
-    process.stderr.write(`hub: ${thread}'s turn failed on the API (${error})\n`);
-
-    if (was === run.stalled) {
-      return;
-    }
-
-    const why = (said !== undefined && said !== "" ? said : error).slice(0, 400);
-
-    const next =
-      run.stalled === "waiting"
-        ? "It carries on once turns go through again."
-        : "Its next message starts it again.";
-
-    failed(thread, `${why}\n${next}`, true);
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // One thread for each turn that goes through, so the threads an outage stalled don't all hit the API in the same moment.
-  function resumeStalled() {
-    for (const [thread, run] of hubRuns.all()) {
-      if (run.stalled !== "waiting" || turns.of(thread).is === "busy") {
-        continue;
-      }
-
-      run.stalled = "resumed";
-      void inbox.deliver(thread, threads.get(thread)?.name ?? thread, {
-        content:
-          "[hub] Your last turn here failed on the API, and turns go through again now: carry on with it.",
-        author: "prompt",
-        meta: { user: "hub" },
-      });
-
-      return;
-    }
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -979,12 +926,10 @@ export async function startHub({
       case "state": {
         await inbox.took(request.taken, request.session);
 
-        const run = runOf(request.thread);
-
         if (request.failed === true) {
-          stall(request.thread, request.error, request.said);
-        } else if (!request.busy || run.stalled !== "resumed") {
-          run.stalled = undefined;
+          stalls.stall(request.thread, request.error, request.said);
+        } else {
+          stalls.passed(request.thread, request.busy);
         }
 
         if (request.busy) {
@@ -1259,7 +1204,7 @@ export async function startHub({
 
   whenThrough("start", () => void sessions.retry(), closing.signal);
   whenThrough("turn", () => void rests.recompact(), closing.signal);
-  whenThrough("turn", resumeStalled, closing.signal);
+  whenThrough("turn", stalls.resume, closing.signal);
   whenThrough("turn", () => void besides.release(), closing.signal);
 
   if (present(generalThread)) {
