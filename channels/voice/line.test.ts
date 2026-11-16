@@ -492,6 +492,68 @@ test("on a call, running answers from every thread hex has at work, not only wha
   expect(text).toContain("\n- desk (Telegram), working for 1 minute");
 });
 
+const Fed = z.object({
+  version: z.number(),
+  older: z.number(),
+  entries: z.array(
+    z.looseObject({ id: z.string(), kind: z.string(), title: z.string(), opens: z.string() }),
+  ),
+});
+
+test("the feed lists what hex finished, and Discuss on an entry during a call has hex name it and listen", async () => {
+  let task = "";
+
+  await using call = await lineCall({
+    readyHexStateBeforeTheEngine: (hex) => {
+      const store = open(hex);
+      store.messages.deliver({
+        key: "telegram:-1001234:9",
+        to: "-1001234:7",
+        from: "telegram",
+        author: "owner",
+        body: "fix the done tab",
+      });
+      task = store.tasks.create({
+        title: "Done tab",
+        message: "telegram:-1001234:9",
+        owner: "-1001234:7",
+        project: "Phone app",
+      }).id;
+      store.tasks.edit(task, { status: "done", proof: "https://github.com/x/y/pull/1" });
+    },
+  });
+
+  await until(() => call.steps.find((step) => step.step === "keep"));
+  const fed = Fed.parse(await fetch(`${call.base}/feed`).then((r) => r.json()));
+  expect(fed.entries).toHaveLength(1);
+  expect(fed.entries[0]).toMatchObject({
+    id: `done:${task}`,
+    kind: "done",
+    title: "Done tab",
+    opens: task,
+  });
+  expect(fed.older).toBe(0);
+
+  const talked = await fetch(`${call.base}/feed/${encodeURIComponent(`done:${task}`)}/talk`, {
+    method: "POST",
+  });
+
+  expect(talked.status).toBe(204);
+
+  const asked = await until(() =>
+    call.steps.find(
+      (step) => step.step === "deliver" && step.content?.includes("Discuss on an entry") === true,
+    ),
+  );
+
+  expect(asked.content).toContain(`a task hex finished, ${task} in Phone app: Done tab`);
+  await until(() => call.told.some((line) => line.includes("Done tab")));
+  expect(call.told.find((line) => line.includes("Done tab"))).toStartWith(
+    "The caller tapped Discuss on an entry in the Feed, so name it now in a sentence",
+  );
+  expect((await fetch(`${call.base}/feed/done:t-0/talk`, { method: "POST" })).status).toBe(404);
+});
+
 test("a call opens with the caller's last calls: what each was about and what it left waiting", async () => {
   await using call = await lineCall({
     readyVoiceStateBeforeTheEngine: (state) => {
