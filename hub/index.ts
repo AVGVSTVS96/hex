@@ -63,8 +63,16 @@ export type { Session } from "./running.ts";
 
 export { sinceToday } from "./restarts.ts";
 
+export { checks } from "./ideas.ts";
+
+export type { Check } from "./ideas.ts";
+
+export { parse as parseSchedules } from "./schedule.ts";
+
+export type { Job } from "./schedule.ts";
+
 export { statusPost } from "./status.ts";
 
 export { asked, hexDir, open, shown, stateDir } from "./store.ts";
 
-export type { Author, Kept, NewRow, Row, Store, Thread } from "./store.ts";
+export type { Author, Kept, NewRow, Row, Store, Task, Thread } from "./store.ts";
