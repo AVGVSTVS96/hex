@@ -1,14 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { randomUUID } from "node:crypto";
+import { rmSync } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { createServer } from "node:net";
 import { basename, join } from "node:path";
@@ -25,10 +17,11 @@ import {
 } from "./beside.ts";
 import * as claude from "./claude.ts";
 import { clock } from "./clock.ts";
+import { sessionFiles } from "./files.ts";
 import { holding } from "./holds.ts";
 import { keeping } from "./kept.ts";
 import { STARTUP } from "./loaded.ts";
-import { endpoint, toolList } from "./mcp.ts";
+import { endpoint } from "./mcp.ts";
 import type { ChannelServer, Line, Permission, ToolArguments } from "./mcp.ts";
 import { queue } from "./observe.ts";
 import { fileOnly, held as filesIn, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
@@ -37,6 +30,7 @@ import { restarts } from "./restarts.ts";
 import { running as sessionsRunning } from "./running.ts";
 import type { Session } from "./running.ts";
 import { schedule } from "./schedule.ts";
+import { sessionStarts } from "./start.ts";
 import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
 import type { Author, MessageId, NewRow, Row, Store } from "./store.ts";
 import { openThreads } from "./threads.ts";
@@ -515,67 +509,6 @@ function tokensFrom(name: string, fallback: number) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A window is a number of tokens or "auto", the model's own, which is larger than any the hub sets.
-const Window = z.number().optional().catch(undefined);
-
-const Windows = z.looseObject({
-  autoCompactWindow: Window,
-  modelSettings: z.record(z.string(), z.looseObject({ autoCompactWindow: Window })).optional(),
-});
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The smallest auto-compact window the hex folder's settings set, for every model or one. A thread's settings override the folder's, so the hub sets its window only when it's the smaller.
-function folderWindow(hexDir: string) {
-  const windows = [".claude/settings.json", ".claude/settings.local.json"].flatMap((file) => {
-    try {
-      const settings = Windows.parse(JSON.parse(readFileSync(join(hexDir, file), "utf-8")));
-
-      return [
-        settings.autoCompactWindow,
-        ...Object.values(settings.modelSettings ?? {}).map((model) => model.autoCompactWindow),
-      ];
-    } catch {
-      return [];
-    }
-  });
-
-  return Math.min(...windows.filter((window) => window !== undefined));
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a session reads only as it starts: its launch arguments, its channel's instructions and tools, and the files and folders its launcher loads that way. hex.db keeps a digest of what each thread's session started with.
-export function stamp(args: string[], server?: ChannelServer, startup: string[] = []) {
-  return createHash("sha256")
-    .update(
-      JSON.stringify([
-        args,
-        server ? { ...server, tools: toolList(server.tools) } : null,
-        ...(startup.length ? [startup.map(contentsOf)] : []),
-      ]),
-    )
-    .digest("hex")
-    .slice(0, 16);
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// An update rewrites these while the hub runs, so a file gone midway reads as missing.
-type Read = string | [string, Read][] | null;
-
-function contentsOf(path: string): Read {
-  try {
-    if (!statSync(path).isDirectory()) {
-      return readFileSync(path, "utf-8");
-    }
-
-    return readdirSync(path)
-      .toSorted()
-      .map((name) => [name, contentsOf(join(path, name))]);
-  } catch {
-    return null;
-  }
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A voice call runs in this process (its call engine holds the caller's audio), so a restart waits for every thread on a call to hang up. A call whose engine has lost its link to it runs nothing here, and the next hub's engine picks it back up, so a restart doesn't wait on it.
 const onCall = new Set<Run>();
 const adrift = new Set<Run>();
@@ -610,18 +543,6 @@ export function title(text: string): string {
   }
 
   return word;
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A hub's sessions show it this in a header, since any local user can reach its port.
-function tokenOf(stateDir: string) {
-  const file = join(stateDir, "token");
-
-  if (!existsSync(file)) {
-    writeFileSync(file, randomBytes(32).toString("hex"), { mode: 0o600 });
-  }
-
-  return readFileSync(file, "utf-8").trim();
 }
 
 function startupFiles(hex: string | undefined) {
@@ -713,9 +634,6 @@ export function startHub({
   // The session that made the tool call in progress.
   const caller = new AsyncLocalStorage<string | undefined>();
   const socketPath = join(stateDir, "hub.sock");
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Each thread's session reads its settings, binding and token from here, so none of it shows in a process's arguments, and a respawn reads the thread's current ones.
-  const sessionsDir = join(stateDir, "sessions");
   const runs = new Map<string, Run>();
   const generalThread = general && present(main) ? main : undefined;
   const plugin = channel.replace(/^plugin:/u, "");
@@ -724,9 +642,34 @@ export function startHub({
   const db = open(storeDir);
   const kept = keeping(db, storeDir);
   const threads = openThreads({ app, db, kept, hexDir, link });
-  mkdirSync(sessionsDir, { recursive: true, mode: 0o700 });
-  const token = tokenOf(stateDir);
-  const inherited = claude.inherited();
+
+  const files = sessionFiles({
+    stateDir,
+    channel,
+    plugin,
+    socketPath,
+    port,
+    storeDir,
+    connect,
+    compactWindow,
+    hexDir,
+    generalThread,
+    fresh,
+  });
+
+  const starts = sessionStarts({
+    threads,
+    files,
+    kept,
+    launcher,
+    channel,
+    server,
+    startup,
+    args,
+    handoffAbove,
+    fresh,
+  });
+
   let closed = false;
   const closing = new AbortController();
   const serving = () => !closed;
@@ -1073,9 +1016,7 @@ export function startHub({
     become(run, { is: "stopped" });
     clock.clearTimeout(run.rest);
     runs.delete(thread);
-    rmSync(settingsOf(thread), { force: true });
-    rmSync(besideSettingsOf(thread), { force: true });
-    rmSync(heldOf(thread), { recursive: true, force: true });
+    files.forget(thread);
     leaving(session);
   }
 
@@ -1124,7 +1065,7 @@ export function startHub({
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // A fork's first start has no session to find; after a failed one, the session it started may run on.
     if (present(fork) && !run.failing) {
-      await start(thread, prompt, fork);
+      await watchStart(thread, starts.start(thread, prompt, fork));
 
       return;
     }
@@ -1153,7 +1094,7 @@ export function startHub({
     }
 
     if (run.phase === phase) {
-      await start(thread, prompt, fork, daemonChecked);
+      await watchStart(thread, starts.start(thread, prompt, fork, daemonChecked));
     }
   }
 
@@ -1174,27 +1115,6 @@ export function startHub({
     return env?.HEX_CHANNEL === channel ? env.HEX_THREAD : undefined;
   }
 
-  function chosen(thread: string) {
-    const { model, effort } = threads.of(thread);
-
-    return [
-      ...(present(model) ? ["--model", model] : []),
-      ...(present(effort) ? ["--effort", effort] : []),
-    ];
-  }
-
-  function extra(thread: string) {
-    return [...chosen(thread), ...args(thread)];
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session that started with other arguments or another channel starts over: with its next message for a changed model or effort, and at its next rest after an update, so a crash or a plain restart of the hub leaves every session running. A thread with no record started its session with none of its own arguments, before the hub kept one.
-  function stale(thread: string) {
-    return (
-      (threads.get(thread)?.launched ?? stamp([], server)) !== stamp(extra(thread), server, startup)
-    );
-  }
-
   function configure(thread: string, settings: Settings) {
     const { model, effort } = { ...threads.of(thread), ...settings };
 
@@ -1204,179 +1124,12 @@ export function startHub({
     });
   }
 
-  function envOf(thread: string) {
-    return {
-      HEX_CHANNEL: channel,
-      HEX_THREAD: thread,
-      HEX_PORT: String(port),
-      HEX_TOKEN: token,
-      HEX_STORE: storeDir,
-      ...(thread === generalThread && { HEX_MAIN: "1" }),
-    };
-  }
-
-  function settingsOf(thread: string) {
-    return join(sessionsDir, `${encodeURIComponent(thread)}.json`);
-  }
-
-  function besideSettingsOf(thread: string) {
-    return join(sessionsDir, `beside-${encodeURIComponent(thread)}.json`);
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Where the thread's session keeps the copy of its instruction files it loads (bin/instructions hold).
-  function heldOf(thread: string) {
-    return join(sessionsDir, encodeURIComponent(thread));
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A respawn reads the same file, so it gets the hub's current token too. It runs without the launcher, so the file keeps what the launcher added and renews only the hub's keys.
-  function writeSettings(
-    thread: string,
-    launched: ReturnType<typeof claude.settingsOf> = {},
-    takesOverFrom?: string,
-  ) {
-    const env = {
-      ...envOf(thread),
-      HEX_HUB: socketPath,
-      ...(connect && { MCP_TIMEOUT: String(connect) }),
-      ...(fresh(thread) ? { HEX_FRESH: "1" } : { HEX_HELD: heldOf(thread) }),
-      ...(present(takesOverFrom) && { HEX_HANDOFF: takesOverFrom }),
-    };
-
-    writeFileSync(
-      settingsOf(thread),
-      JSON.stringify({
-        ...(!fresh(thread) &&
-          compactWindow < folderWindow(hexDir) && { autoCompactWindow: compactWindow }),
-        ...launched,
-        enabledPlugins: { ...launched?.enabledPlugins, [plugin]: true },
-        env: { ...launched?.env, ...env },
-      }),
-      { mode: 0o600 },
-    );
-  }
-
-  async function start(
-    thread: string,
-    prompt?: string,
-    fork?: string,
-    daemonChecked?: Promise<void>,
-  ) {
-    if (!present(fork)) {
-      await rewound(thread);
-    }
-
-    const known = threads.of(thread);
-
-    const takesOverFrom = present(prompt) || present(fork) ? undefined : expired(thread);
-    writeSettings(thread, {}, takesOverFrom);
-
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // The session's hooks keep what's typed in it as the owner's; this one is hex's.
-    if (present(prompt)) {
-      kept(
-        (store) =>
-          store.messages.deliver(
-            {
-              key: `hub:${thread}:${Bun.hash(prompt).toString(36)}`,
-              to: thread,
-              from: "hub",
-              author: "prompt",
-              body: prompt,
-              meta: {},
-            },
-            "hub",
-          ),
-        false,
-      );
-    }
-
-    const launchArgs = extra(thread);
-    const launched = stamp(launchArgs, server, startup);
-
-    threads.update(thread, { launched });
-
-    const source = fork ?? (present(known.session) ? undefined : known.fork);
-
-    const resumeArgs = present(source)
-      ? ["--resume", source, "--fork-session"]
-      : present(known.session) && !fresh(thread) && !present(takesOverFrom)
-        ? ["--resume", known.session]
-        : [];
-
+  async function watchStart(thread: string, job: Promise<string>) {
     try {
-      watchJob(
-        thread,
-        await claude.start(
-          launcher,
-          [
-            "--channels",
-            channel,
-            "--name",
-            known.name,
-            ...resumeArgs,
-            ...launchArgs,
-            "--settings",
-            settingsOf(thread),
-            ...(present(prompt) ? [prompt] : []),
-          ],
-          { cwd: known.cwd ?? hexDir, env: inherited },
-          daemonChecked,
-        ),
-      );
+      watchJob(thread, await job);
     } catch (error) {
       fail(thread, error instanceof Error ? error.message : String(error));
     }
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A saved session whose last reply the model's safeguards refused would be resumed into the same refusal, so the thread goes on, on its own model, from a copy of the conversation that ends before what that turn was given, or from a new session when nothing came before it or the copy fails.
-  async function rewound(thread: string) {
-    const session = threads.current(thread);
-
-    if (!present(session) || fresh(thread)) {
-      return;
-    }
-
-    const refusal = claude.refused(claude.transcript(threads.cwd(thread), session));
-
-    if (!refusal) {
-      return;
-    }
-
-    threads.dropUnsaved(thread);
-
-    const copy = present(refusal.at)
-      ? await claude.rewind(threads.cwd(thread), session, refusal.at, chosen(thread))
-      : undefined;
-
-    threads.update(thread, { session: present(copy) ? copy : undefined });
-    process.stderr.write(
-      `hub: ${thread}'s session ${session} ended on a refused turn, so it goes on ${present(copy) ? `from ${copy}, a copy that ends before it` : "in a new session"}\n`,
-    );
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The transcript of a thread's saved session that a new session takes over from instead of resuming: one this machine doesn't have, like after a restore from hex.db, or one whose prompt cache has expired when it holds more than a new session costs to start and catch up. A start with a prompt, like /compact, needs the old conversation itself, so it resumes.
-  function expired(thread: string) {
-    const session = threads.of(thread).session;
-
-    if (!present(session) || fresh(thread)) {
-      return;
-    }
-
-    const file = claude.transcript(threads.cwd(thread), session);
-
-    if (!claude.saved(session)) {
-      return file;
-    }
-
-    const { sent: context, at, short } = claude.usage(threads.cwd(thread), session);
-
-    return context > handoffAbove && at !== undefined && clock.now() - at > claude.cacheLife(short)
-      ? file
-      : undefined;
   }
 
   function watchJob(thread: string, job: string) {
@@ -1665,7 +1418,7 @@ export function startHub({
     }
 
     if (run.phase.is === "live") {
-      if (run.paused === true || (stale(thread) && !onCall.has(run)) || spent(thread)) {
+      if (run.paused === true || (starts.stale(thread) && !onCall.has(run)) || spent(thread)) {
         void refresh(thread, message);
       } else if (!heldForTheTurn(thread, message)) {
         handIn(thread, run.phase.line, message);
@@ -1810,7 +1563,6 @@ export function startHub({
 
   const besideAddresses = () => threads.ids().map(besideOf);
   const besideRows = () => kept((store) => store.messages.beside(besideAddresses()), []);
-  const besideLog = (session: string) => join(sessionsDir, `beside-${session}.log`);
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A row beside a thread starts a session of its own, as hex in the thread's chat, which takes the row itself; one for a session that ran beside it resumes that session once its run is over, where this machine has its conversation. A client that shows only the turns its own messages start can't be spoken into from beside, so there the row goes to the thread.
@@ -1838,16 +1590,16 @@ export function startHub({
 
     const session = resumed !== undefined && claude.saved(resumed) ? resumed : randomUUID();
     besides.set(session, row.key);
-    writeBesideSettings(thread);
+    files.writeBeside(thread);
 
     const code = await runBeside(
       [
         launcher,
         "-p",
         ...(session === resumed ? ["--resume", session] : ["--session-id", session]),
-        ...extra(thread),
+        ...starts.launchArgs(thread),
         "--settings",
-        besideSettingsOf(thread),
+        files.besideSettingsOf(thread),
         besidePrompt(app, row, zone()),
       ],
       {
@@ -1858,7 +1610,7 @@ export function startHub({
           HEX_BESIDE: session,
           CLAUDE_CODE_SESSION_NAME: `${known.name}/${jobOf(row)}`,
         },
-        log: besideLog(session),
+        log: files.besideLog(session),
       },
     );
 
@@ -1869,7 +1621,7 @@ export function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A run beside a thread that saw its turn through is a turn that went through. One that didn't, as on an API error, waits for one to go through anywhere, as a thread's turn does, and its chat hears once while runs there wait; one that waited already is left, and its chat hears that.
   function besideEnded(thread: string, session: string, key?: string, exit = "its session ended") {
-    const said = lastWords(besideLog(session));
+    const said = lastWords(files.besideLog(session));
 
     if (closed) {
       return;
@@ -1942,13 +1694,7 @@ export function startHub({
       }
     }, undefined);
 
-    for (const file of readdirSync(sessionsDir)) {
-      const session = /^beside-(.+)\.log$/u.exec(file)?.[1];
-
-      if (session !== undefined && !alive.has(session)) {
-        rmSync(join(sessionsDir, file), { force: true });
-      }
-    }
+    files.sweepBesideLogs((session) => alive.has(session));
 
     for (const run of alive.values()) {
       const thread =
@@ -1969,17 +1715,6 @@ export function startHub({
     await claude.exited(run.pid);
     besides.delete(run.id);
     besideEnded(thread, run.id);
-  }
-
-  function writeBesideSettings(thread: string) {
-    writeFileSync(
-      besideSettingsOf(thread),
-      JSON.stringify({
-        enabledPlugins: { [plugin]: true },
-        env: envOf(thread),
-      }),
-      { mode: 0o600 },
-    );
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -2189,7 +1924,7 @@ export function startHub({
     rest(thread);
     letGo(thread);
 
-    if (stale(thread)) {
+    if (starts.stale(thread)) {
       run.renew = "stale";
       void renew(thread);
     }
@@ -2351,7 +2086,7 @@ export function startHub({
     }
 
     const phase = run.phase;
-    writeSettings(thread, claude.settingsOf(running));
+    files.write(thread, claude.settingsOf(running));
     await claude.respawn(running);
 
     if (run.phase === phase) {
@@ -2416,7 +2151,7 @@ export function startHub({
   const serve = endpoint(
     path.slice(1),
     channel,
-    token,
+    files.token,
     server,
     {
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
