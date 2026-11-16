@@ -3764,6 +3764,14 @@ async function goalRoutes(request: Request, url: URL) {
     return Response.json(goals.view);
   }
 
+  const [, one] = /^\/goals\/(t-\d+)$/u.exec(url.pathname) ?? [];
+
+  if (filled(one) && request.method === "GET") {
+    const goal = goals.goal(one);
+
+    return goal ? Response.json(goal) : new Response("404", { status: 404 });
+  }
+
   const [, watched, act] = /^\/goals\/w\/([^/]+)\/(stop|undo)$/u.exec(url.pathname) ?? [];
 
   if (filled(watched) && filled(act) && request.method === "POST") {
