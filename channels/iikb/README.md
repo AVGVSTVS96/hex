@@ -23,9 +23,10 @@ door.ts ── state/iikb/chats.sock ──► the hub's channel
 
 - A request goes to the hub, and its answer back, as they are.
 - One that finds no hub, or whose hub stops before answering, waits at the door for the next hub: a read gets the chat as it is now, and a send goes once, by its `id`.
+- A chat's read the hub hasn't answered in 30 seconds, slow or away, gets the hub's last answer for that chat again. The keyboard finds nothing new in it and asks again, so however long the hub takes, the chat stays open and a reply shows as soon as a hub can say it.
 - The door is replaced only when `door.ts` or `IIKB_PORT` changes, and stops with hex. The address refuses then, as it does while hex runs on another machine.
 
-The keyboard waits 60 seconds for an answer (40 on Android), so a hub away longer than that still fails the read.
+The keyboard waits 60 seconds for an answer (40 on Android). A chat's first read, the list and a send have no earlier answer to fall back on, so they still fail when the hub takes longer than that.
 
 ## Set up
 
