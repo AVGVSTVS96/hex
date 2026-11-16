@@ -2,9 +2,9 @@ import { connect } from "node:net";
 
 import { z } from "zod";
 
-import type { HubLine } from "./hub.ts";
 import { followed } from "./kept.ts";
 import { local } from "./mcp.ts";
+import type { HubLine } from "./socket.ts";
 import { stateDir, UnaskedError, unclaimed, UnreachedError } from "./store.ts";
 import type { Store } from "./store.ts";
 import type { Row } from "./store/messages.ts";

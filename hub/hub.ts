@@ -1,7 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
-import { rmSync } from "node:fs";
-import { createServer } from "node:net";
 import { basename, join } from "node:path";
 
 import { z } from "zod";
@@ -15,14 +13,12 @@ import { sessionFiles } from "./files.ts";
 import { holding } from "./holds.ts";
 import { threadInbox } from "./inbox.ts";
 import { turnInterrupts } from "./interrupt.ts";
-import { keeping, landed, OwedRow } from "./kept.ts";
-import type { Owing } from "./kept.ts";
+import { keeping, landed } from "./kept.ts";
 import { STARTUP } from "./loaded.ts";
 import { endpoint } from "./mcp.ts";
 import type { ChannelServer, Line, Permission, ToolArguments } from "./mcp.ts";
 import { cantStart, tellOwner } from "./notice.ts";
-import { PASS, queue } from "./observe.ts";
-import { ordered } from "./ordered.ts";
+import { queue } from "./observe.ts";
 import { sessionPauses } from "./pauses.ts";
 import { fileOnly, held as filesIn, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
 import { present } from "./present.ts";
@@ -32,11 +28,13 @@ import { restarts } from "./restarts.ts";
 import { threadRuns } from "./runs.ts";
 import { schedule } from "./schedule.ts";
 import { threadSessions } from "./sessions.ts";
+import { hubSocket } from "./socket.ts";
+import type { Questions } from "./socket.ts";
 import { stalledTurns } from "./stalls.ts";
 import { sessionStarts } from "./start.ts";
 import { sessionStops } from "./stops.ts";
-import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
-import type { Author, MessageId, NewRow, Store } from "./store.ts";
+import { asked, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
+import type { NewRow, Store } from "./store.ts";
 import { openThreads } from "./threads.ts";
 import { wentThrough, whenThrough } from "./through.ts";
 import { sessionTurns } from "./turns.ts";
@@ -70,77 +68,6 @@ export function preview({ input_preview, description }: Permission): string {
     return input_preview;
   }
 }
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What another process (the voice app, hex's check) can do with a question the client asked with buttons: answer it for the owner, settle it as no longer asked, or take an answer back.
-export type Questions = {
-  answer: (thread: string, message: MessageId, label: string, via: string) => void;
-  settle: (thread: string, message: MessageId, note: string) => void;
-  reopen: (thread: string, message: MessageId, via: string) => void;
-};
-
-const messageId = z.union([z.number(), z.string()]);
-
-const HubRequestLine = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("state"),
-    thread: z.string(),
-    busy: z.boolean(),
-    background: z.boolean().optional(),
-    failed: z.boolean().optional(),
-    error: z.string().optional(),
-    said: z.string().optional(),
-    taken: z.array(z.string()).optional(),
-    session: z.string().optional(),
-  }),
-  z.object({
-    type: z.literal("open"),
-    thread: z.string(),
-    name: z.string(),
-    prompt: z.string().optional(),
-  }),
-  z.object({
-    type: z.literal("answer"),
-    thread: z.string(),
-    message: messageId,
-    label: z.string(),
-    via: z.string(),
-  }),
-  z.object({ type: z.literal("settle"), thread: z.string(), message: messageId, note: z.string() }),
-  z.object({ type: z.literal("reopen"), thread: z.string(), message: messageId, via: z.string() }),
-  z.object({
-    type: z.literal("inbound"),
-    thread: z.string(),
-    content: z.string(),
-    meta: z.record(z.string(), z.string()).optional(),
-    key: z.string().optional(),
-    author: z.custom<Author>(isAuthor).catch("prompt"),
-  }),
-  z.object({
-    type: z.literal("mirror"),
-    thread: z.string(),
-    to: z.string(),
-    where: z.string().optional(),
-  }),
-  z.object({ type: z.literal("tookHeld"), thread: z.string(), keys: z.array(z.string()) }),
-  z.object({
-    type: z.literal("owed"),
-    thread: z.string(),
-    said: z
-      .array(
-        z.object({
-          row: OwedRow,
-          by: z.string(),
-        }),
-      )
-      .optional(),
-    pass: PASS.optional(),
-  }),
-]);
-
-type HubRequest = z.output<typeof HubRequestLine>;
-
-export type HubLine = z.input<typeof HubRequestLine>;
 
 export type Hub = Awaited<ReturnType<typeof startHub>>;
 
@@ -455,21 +382,6 @@ function startupFiles(hex: string | undefined) {
 }
 
 const ignore = (): void => undefined;
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a session's hooks couldn't keep while hex's store didn't answer, which the hub keeps once it does.
-function owedByHooks(
-  owing: Owing,
-  { said = [], pass: turn }: Extract<HubRequest, { type: "owed" }>,
-) {
-  for (const { row, by } of said) {
-    owing.owe({ kind: "deliver", row, by });
-  }
-
-  if (turn) {
-    owing.owe({ kind: "pass", pass: turn });
-  }
-}
 
 export async function startHub({
   stateDir,
@@ -878,133 +790,18 @@ export async function startHub({
 
   channels.set(path, serve);
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Where a session's hooks and hex's own tools reach the hub, one JSON line each.
-  rmSync(socketPath, { force: true });
-
-  const sock = createServer((socket) => {
-    let buffer = "";
-    socket.setEncoding("utf-8");
-    socket.on("data", (chunk: string) => {
-      buffer += chunk;
-
-      for (let end = buffer.indexOf("\n"); end >= 0; end = buffer.indexOf("\n")) {
-        const raw = buffer.slice(0, end);
-        buffer = buffer.slice(end + 1);
-
-        try {
-          inOrder(HubRequestLine.parse(JSON.parse(raw)));
-        } catch (error) {
-          process.stderr.write(`hub: dropped a bad line: ${String(error)}\n`);
-        }
-      }
-    });
-    socket.on("error", ignore);
-  }).listen(socketPath);
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A thread's lines are handled one at a time, in the order they came, each once the store has answered what the one before it asked.
-  const handling = ordered();
-
-  function inOrder(request: HubRequest) {
-    void handling(request.thread, async () => {
-      try {
-        await handle(request);
-      } catch (error) {
-        process.stderr.write(
-          `hub: a ${request.type} line for ${request.thread} failed: ${String(error)}\n`,
-        );
-      }
-    });
-  }
-
-  async function handle(request: HubRequest) {
-    switch (request.type) {
-      case "state": {
-        await inbox.took(request.taken, request.session);
-
-        if (request.failed === true) {
-          stalls.stall(request.thread, request.error, request.said);
-        } else {
-          stalls.passed(request.thread, request.busy);
-        }
-
-        if (request.busy) {
-          turnBegan(request.thread);
-        } else {
-          await turnEnded(request.thread, request.background === true);
-        }
-
-        if (!request.busy && request.failed !== true) {
-          wentThrough("turn");
-        }
-
-        return;
-      }
-
-      case "open": {
-        sessions.launch(request.thread, request.name, { prompt: request.prompt });
-
-        return;
-      }
-
-      case "answer": {
-        questions?.answer(request.thread, request.message, request.label, request.via);
-
-        return;
-      }
-
-      case "settle": {
-        questions?.settle(request.thread, request.message, request.note);
-
-        return;
-      }
-
-      case "reopen": {
-        questions?.reopen(request.thread, request.message, request.via);
-
-        return;
-      }
-
-      case "inbound": {
-        await inbox.inbound(request.thread, {
-          content: request.content,
-          meta: request.meta ?? {},
-          ...(request.key !== undefined && { key: request.key }),
-          author: request.author,
-        });
-
-        return;
-      }
-
-      case "tookHeld": {
-        inbox.tookHeld(request.thread, request.keys);
-
-        return;
-      }
-
-      case "owed": {
-        owedByHooks(owing, request);
-
-        return;
-      }
-
-      case "mirror": {
-        const thread = threads.find(request.thread);
-
-        void (async () => {
-          try {
-            const mirrored = await mirror(api, thread, request.to, request.where);
-            process.stderr.write(`hub: mirrored ${request.thread} to ${mirrored}\n`);
-          } catch (error) {
-            process.stderr.write(
-              `hub: couldn't mirror ${request.thread} to ${request.to}: ${String(error)}\n`,
-            );
-          }
-        })();
-      }
-    }
-  }
+  const sock = hubSocket({
+    socketPath,
+    threads,
+    sessions,
+    inbox,
+    stalls,
+    owing,
+    questions,
+    turnBegan,
+    turnEnded,
+    mirror: (thread, to, where) => mirror(api, thread, to, where),
+  });
 
   function halt(thread: string) {
     failing.halted(thread);

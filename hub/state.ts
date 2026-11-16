@@ -2,8 +2,8 @@ import { connect } from "node:net";
 
 import { z } from "zod";
 
-import type { HubLine } from "./hub.ts";
 import { followed } from "./kept.ts";
+import type { HubLine } from "./socket.ts";
 import { MovedError, stateDir, UnreachedError } from "./store.ts";
 import type { NewRow } from "./store.ts";
 
