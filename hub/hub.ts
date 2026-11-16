@@ -294,7 +294,31 @@ export type Client = {
   file?: (id: string) => Promise<string>;
 };
 
-export const clients = new Map<string, Client>();
+class Clients extends Map<string, Client> {
+  private readonly awaited = new Map<string, (() => void)[]>();
+
+  override set(app: string, joining: Client) {
+    super.set(app, joining);
+    this.awaited.get(app)?.forEach((tell) => {
+      tell();
+    });
+    this.awaited.delete(app);
+
+    return this;
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Once the app's client runs in this process, for a channel that shows another's threads: the channels load in no order.
+  joined(app: string): Promise<void> {
+    return this.has(app)
+      ? Promise.resolve()
+      : new Promise((resolve) => {
+          this.awaited.set(app, [...(this.awaited.get(app) ?? []), resolve]);
+        });
+  }
+}
+
+export const clients = new Clients();
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Each hub's restart of its threads whose session failed to start, run whenever a session this process started connects: a start just went through, so theirs can too.

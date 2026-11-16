@@ -156,7 +156,22 @@ case "${1:-}" in
     export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord" BUZZ_STATE_DIR="$home/state/buzz" T3_STATE_DIR="$home/state/t3"
     # A stop ends the hub the way a restart does, once no call is live, and waits for it to exit.
     trap '[ -z "${hub:-}" ] || { kill -TERM "$hub" 2>/dev/null; wait "$hub"; }; rm -f "$pidfile"; exit 0' INT TERM
+    # iikb's door takes the keyboard's requests through the hub's restarts (channels/iikb/door.ts), so it runs for as long
+    # as hex runs here. A restart finds it by HEX_DOOR, its file as it started, and replaces it only when the file has
+    # changed, as after an update or a rollback, or when it's gone.
+    door_file="$hex/channels/iikb/door.ts"
+    doors() { pgrep -P $$ -f "$door_file" >/dev/null; }
+    door() {
+      now=$(cksum "$door_file" 2>/dev/null) || now=
+      [ "$now" != "${HEX_DOOR:-}" ] || ! doors || return 0
+      pkill -P $$ -f "$door_file" || :
+      while doors; do sleep 0.1; done
+      export HEX_DOOR="$now"
+      if [ -n "$now" ]; then (. "$hex/bin/settings"; exec bun "$door_file" "$home/state") & fi
+    }
+    trap 'pkill -P $$ -f "$door_file" || :' EXIT
     start() {
+      door
       bun install --no-summary --cwd "$hex" >/dev/null || :
       # Read at every start, so a restart takes the settings as they are now.
       (. "$hex/bin/settings"; exec bun "$hex/hub/serve.ts") &

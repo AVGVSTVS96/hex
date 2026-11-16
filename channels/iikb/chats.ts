@@ -11,7 +11,7 @@ export type File = { name: string; url: string; type?: string; width?: number; h
 
 export type Message = { from: "me" | "hex"; text: string; pending?: true; files?: File[] };
 
-const APP = "telegram";
+export const APP = "telegram";
 const LATEST_MESSAGES = 40;
 const HELD_FOR_A_CHANGE = 25_000;
 
