@@ -1,8 +1,11 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { transcript } from "./claude.ts";
+import { study } from "./ideas.ts";
+import type { Session } from "./running.ts";
 import { check, nextRun, parse } from "./schedule.ts";
 import type { Job } from "./schedule.ts";
 import { open } from "./store.ts";
@@ -40,9 +43,20 @@ function jobs(file: Record<string, Job>) {
   schedulesJson(JSON.stringify(file));
 }
 
+const nobody = () => new Map<string, Session>();
+
+function checkWith(minute: number, sessions: () => Map<string, Session> = nobody) {
+  check(dir, hexDir, "general", minute, study, sessions);
+}
+
+const working = () =>
+  new Map<string, Session>([["run-1", { id: "run-1", pid: 1, status: "busy", started: 0 }]]);
+
+const runs = () => fired().filter((key) => key.startsWith("schedule:"));
+
 function checkEachMinuteAndListFired(from: number, to: number) {
   for (let minute = from; minute <= to; minute++) {
-    check(dir, hexDir, "general", minute);
+    checkWith(minute);
   }
 
   return fired();
@@ -195,8 +209,12 @@ test("a schedules.json gone for a while leaves its jobs to catch up once it is b
 test("a job needs a prompt and a cron or an at it can read", () => {
   expect(() => parse(JSON.stringify({ a: { cron: "* * * * *" } }))).toThrow("a: prompt is missing");
   expect(() => parse(JSON.stringify({ a: { prompt: "x" } }))).toThrow(
-    "a: it needs a cron or an at",
+    "a: it needs a cron, an at or an on",
   );
+  expect(() => parse(JSON.stringify({ a: { on: [], prompt: "x" } }))).toThrow("on must list");
+  expect(parse(JSON.stringify({ a: { on: ["job-failed"], prompt: "x" } }))).toEqual({
+    a: { on: ["job-failed"], prompt: "x" },
+  });
   expect(() => parse(JSON.stringify({ a: { at: "tomorrow", prompt: "x" } }))).toThrow("at must be");
   expect(() => parse(JSON.stringify({ a: { at: "2026-02-30 10:00", prompt: "x" } }))).toThrow(
     "at must be",
@@ -298,4 +316,123 @@ test("a watch is a job with the name the owner knows it by", () => {
   expect(() =>
     parse(JSON.stringify({ rail: { cron: "0 9 * * *", prompt: "Look", watch: "" } })),
   ).toThrow("watch must be");
+});
+
+test("signals that come in a burst fire a job that runs on them once, beside the main thread, saying why", () => {
+  jobs({ "catch-up": { on: ["job-failed", "pace"], cron: "4 7 * * *", prompt: "Catch up." } });
+  checkWith(at(19, 8, 0));
+
+  for (const unit of ["a", "b", "c"]) {
+    open(dir).scheduler.signal("job-failed", `[job] ${unit} ended: failed (exit 1).\nits output`);
+  }
+
+  open(dir).scheduler.signal("nobody-listens", "x");
+  checkWith(at(19, 8, 1));
+
+  const [run, ...more] = open(dir).messages.untaken();
+  expect(more).toEqual([]);
+  expect(run).toMatchObject({ to: "beside:general", meta: { schedule: "catch-up" } });
+  expect(run?.body).toBe(
+    "[catch-up] Catch up.\n\nWhy now:\n- [job] a ended: failed (exit 1).\n- [job] b ended: failed (exit 1).\n- [job] c ended: failed (exit 1).",
+  );
+  expect(open(dir).scheduler.signals()).toEqual([]);
+});
+
+test("signals that come while a run waits or works fold into one run after it", () => {
+  jobs({ "catch-up": { on: ["stalled"], prompt: "Catch up." } });
+  checkWith(at(19, 8, 0));
+  open(dir).scheduler.signal("stalled", "one");
+  checkWith(at(19, 8, 1));
+  open(dir).scheduler.signal("stalled", "two");
+  checkWith(at(19, 8, 2));
+  expect(runs()).toHaveLength(1);
+
+  const [first] = open(dir).messages.untaken();
+  open(dir).messages.take(first?.key ?? "", "run-1");
+  open(dir).turns.turned("run-1", true);
+  open(dir).scheduler.signal("stalled", "three");
+
+  checkWith(at(19, 8, 3), working);
+  expect(runs()).toEqual([]);
+
+  open(dir).turns.turned("run-1", false);
+  checkWith(at(19, 8, 4), working);
+  const [next, ...others] = open(dir).messages.untaken();
+  expect(others).toEqual([]);
+  expect(next?.body).toBe("[catch-up] Catch up.\n\nWhy now:\n- two\n- three");
+});
+
+test("a run whose session died mid-turn doesn't hold signals back", () => {
+  jobs({ "catch-up": { on: ["stalled"], prompt: "Catch up." } });
+  checkWith(at(19, 8, 0));
+  open(dir).scheduler.signal("stalled", "one");
+  checkWith(at(19, 8, 1));
+  takeAll();
+  open(dir).turns.turned("session", true);
+  open(dir).scheduler.signal("stalled", "two");
+  checkWith(at(19, 8, 2));
+  expect(
+    open(dir)
+      .messages.untaken()
+      .map((row) => row.body),
+  ).toEqual(["[catch-up] Catch up.\n\nWhy now:\n- two"]);
+});
+
+test("a session of hex's mid-turn that writes nothing for half an hour signals stalled once each quiet stretch", () => {
+  const claude = join(dir, "claude");
+  const before = process.env.CLAUDE_CONFIG_DIR;
+  process.env.CLAUDE_CONFIG_DIR = claude;
+
+  try {
+    const file = transcript("/work", "quiet");
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(file, "{}\n");
+    const minute = at(19, 8, 0);
+
+    const wrote = (minutesBefore: number) => {
+      const when = (minute - minutesBefore) * 60;
+      utimesSync(file, when, when);
+    };
+
+    const session: Session = {
+      id: "quiet",
+      pid: 1,
+      status: "busy",
+      cwd: "/work",
+      started: 0,
+      thread: "telegram:topic",
+      name: "Topic",
+    };
+
+    const sessions = () => new Map([["quiet", session]]);
+    jobs({ "catch-up": { on: ["stalled"], prompt: "Catch up." } });
+
+    wrote(29);
+    checkWith(minute, sessions);
+    expect(fired()).toEqual([]);
+
+    wrote(31);
+    checkWith(minute + 1, sessions);
+    checkWith(minute + 2, sessions);
+    takeAll();
+    checkWith(minute + 3, sessions);
+    expect(fired()).toEqual([]);
+
+    expect(
+      open(dir)
+        .messages.since()
+        .filter((row) => row.to === "signal:stalled"),
+    ).toHaveLength(1);
+
+    checkWith(minute + 4, () => new Map([["quiet", { ...session, status: "idle" }]]));
+    wrote(40);
+    checkWith(minute + 5, () => new Map([["quiet", { ...session, thread: undefined }]]));
+    expect(fired()).toEqual([]);
+  } finally {
+    if (before === undefined) {
+      delete process.env.CLAUDE_CONFIG_DIR;
+    } else {
+      process.env.CLAUDE_CONFIG_DIR = before;
+    }
+  }
 });

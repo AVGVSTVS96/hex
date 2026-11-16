@@ -492,10 +492,35 @@ const told = (like: string) =>
     .array(z.string())
     .parse(
       new Database(join(home, "state/hex.db"))
-        .query(`select body from messages where "from" = 'job' and body like ? order by rowid`)
+        .query(
+          `select body from messages where "from" = 'job' and "to" not like 'signal:%' and body like ? order by rowid`,
+        )
         .values(like)
         .flat(),
     );
+
+const signaled = (name: string, like: string) =>
+  z
+    .array(z.string())
+    .parse(
+      new Database(join(home, "state/hex.db"))
+        .query(`select body from messages where "to" = ? and body like ? order by rowid`)
+        .values(`signal:${name}`, like)
+        .flat(),
+    );
+
+test("a job that fails signals job-failed, for a schedule that runs on it, and one stopped or ended doesn't", async () => {
+  for (const [unit, how] of [
+    ["broke", { SERVICE_RESULT: "exit-code", EXIT_CODE: "exited", EXIT_STATUS: "1" }],
+    ["halted", { SERVICE_RESULT: "success", EXIT_CODE: "killed", EXIT_STATUS: "TERM" }],
+    ["fine", { SERVICE_RESULT: "success", EXIT_CODE: "exited", EXIT_STATUS: "0" }],
+  ] as const) {
+    await Bun.spawn(["bun", job, "--ended", unit, "t3:stray-key"], { env: { ...env, ...how } })
+      .exited;
+  }
+
+  expect(signaled("job-failed", "%")).toEqual(["[job] broke ended: exit-code (exit 1)."]);
+});
 
 test("a job that was killed ends as stopped, not as a success", async () => {
   await Bun.spawn(["bun", job, "--ended", "axed", "t3:stray-key"], {
@@ -645,6 +670,9 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
       ),
     ),
   ]);
+  expect(signaled("job-stopped", "%stopped because%").toSorted()).toEqual(
+    told("%stopped because%").toSorted(),
+  );
   rmSync(join(home, "active.txt"));
 });
 

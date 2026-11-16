@@ -17,6 +17,7 @@ import { zoneOf } from "./zone.ts";
 
 const USAGE = `usage:
   hex deliver <from>[:<id>] --to <thread> [--beside] [--user <name>] <words…>
+  hex signal <name>[:<id>] <why…>
   hex task new <message key> --title '<what the owner wants, in a few plain words>' [--quote <part of it>] [--owner <thread>] [--project <name>] [--done-when <outcome>] [--idea]
   hex task add <task> <message key> [--quote <part of it>]
   hex task quote <task> <message key> --quote <part of it>
@@ -96,6 +97,7 @@ const taskWordsBeforeFlags = new Map([
 
 const wordsBeforeFlags = new Map([
   ["deliver", Infinity],
+  ["signal", Infinity],
   ["message", 1],
   ["recall", 1],
   ["log", 1],
@@ -779,6 +781,18 @@ try {
         body: words.join(" "),
         meta: { user: flags.user ?? from },
       });
+      break;
+    }
+
+    case "signal": {
+      const [given, ...words] = args;
+      const [name, ...id] = given?.split(":") ?? [];
+
+      if (!filled(name) || words.length === 0) {
+        usage();
+      }
+
+      store.scheduler.signal(name, words.join(" "), id.length > 0 ? id.join(":") : undefined);
       break;
     }
 

@@ -22,7 +22,7 @@ import { besideOf, besideWhat } from "../hub/beside.ts";
 import { saved } from "../hub/claude.ts";
 import { origin } from "../hub/origin.ts";
 import { served } from "../hub/running.ts";
-import { hexDir, open, stateDir, StopReasonColumn } from "../hub/store.ts";
+import { hexDir, open, signalTo, stateDir, StopReasonColumn } from "../hub/store.ts";
 import type { Job, JobSpec, StopReason } from "../hub/store.ts";
 import { zoneOf } from "../hub/zone.ts";
 
@@ -367,13 +367,21 @@ if (mode === "--owner") {
     ? `That's the agent's own account, not proof: check what it says against the real thing (files, commits, links, what's live) before you pass any of it on. Its conversation, if it ran here: \`${join(import.meta.dir, "hex")} log -- ${session}\``
     : "Check what it shows against the real thing before you report it.";
 
-  await tell(
-    unit,
-    owner,
-    `ended: ${result} (exit ${status}).\n${output}\n${check}`,
-    process.env.INVOCATION_ID ?? `${Date.now()}`,
-    { machine: hostname(), run },
-  );
+  const invocation = process.env.INVOCATION_ID ?? `${Date.now()}`;
+
+  await tell(unit, owner, `ended: ${result} (exit ${status}).\n${output}\n${check}`, invocation, {
+    machine: hostname(),
+    run,
+  });
+
+  if (service !== "success" && service !== "unknown") {
+    await tell(
+      unit,
+      signalTo("job-failed"),
+      `ended: ${result} (exit ${status}).`,
+      `${invocation}:failed`,
+    );
+  }
 } else if (mode === "--waiting") {
   const [unit = "", owner = "", readings = ""] = rest;
 
@@ -446,6 +454,12 @@ if (mode === "--owner") {
 
   const here = hostname();
   const at = new Date().toISOString();
+
+  const stopped = async (unit: string, owner: string, said: string) => {
+    await tell(unit, owner, said, `${at}:again`);
+    await tell(unit, signalTo("job-stopped"), said, `${at}:stopped`);
+  };
+
   const zone = zoneOf(hexDir());
 
   const when = (time: string) =>
@@ -522,11 +536,10 @@ if (mode === "--owner") {
 
     if (now.state === "unknown" && stillThere && machine !== here) {
       store.jobs.ended(unit, machine, run);
-      await tell(
+      await stopped(
         unit,
         kept.owner,
         `stopped on ${machine} without a word of how, and ${machine} is up, so it isn't started again on ${here}. Start it again if its work still needs doing: ${command}`,
-        `${at}:again`,
       );
       continue;
     }
@@ -566,11 +579,10 @@ if (mode === "--owner") {
 
     if (leftToItsOwner !== undefined) {
       store.jobs.ended(unit, machine, run);
-      await tell(
+      await stopped(
         unit,
         kept.owner,
         `stopped because ${why}, and hasn't run since: ${leftToItsOwner}. Start it again if its work still needs doing: ${command}`,
-        `${at}:again`,
       );
       continue;
     }
@@ -611,7 +623,7 @@ if (mode === "--owner") {
           : `started over from the beginning ${where}: ${command}`
         : `couldn't start again on ${here}. Start it again if its work still needs doing: ${command}`;
 
-    await tell(unit, kept.owner, `stopped because ${why}, and ${said}`, `${at}:again`);
+    await stopped(unit, kept.owner, `stopped because ${why}, and ${said}`);
   }
 
   rmSync(machinesGone, { force: true });
