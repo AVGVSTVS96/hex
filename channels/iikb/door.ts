@@ -3,7 +3,7 @@ import { connect } from "node:net";
 import { dirname, join } from "node:path";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The keyboard has no clock to try a refused read again on, and the hub restarts many times a day. So bin/hex keeps this door on the port for as long as hex runs on the machine: it hands each request to the hub at `chats`, and one that finds no hub, or whose hub goes before answering, waits here until the next hub says it's up at `door`. A hub gets a request once, so one it can't answer never goes round. It takes the port before `door`, so a second door fails on the port and leaves the first one hearing. This file imports nothing of hex's, since bin/hex replaces a running door only when this file changes.
+// The keyboard has no clock to try a refused read again on, and the hub restarts many times a day. So bin/hex keeps this door on the port for as long as hex runs on the machine: it hands each request to the hub at `chats`, and one that finds no hub, or whose hub goes before answering, waits here until the next hub says it's up at `door`, while a chat's reads go on being answered with what the hub last said. A hub gets a request once, so one it can't answer never goes round. It takes the port before `door`, so a second door fails on the port and leaves the first one hearing. This file imports nothing of hex's, since bin/hex replaces a running door only when this file changes.
 export const socketsIn = (state: string) => ({
   chats: join(state, "iikb", "chats.sock"),
   door: join(state, "iikb", "door.sock"),
@@ -17,14 +17,22 @@ export function arrived(state: string) {
   }).on("error", ignore);
 }
 
-export function open(state: string, port: number) {
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The hub holds a chat's read 25 seconds for a change, and iikb gives one up after 40 (Android) or 60 (iOS).
+const HELD_FOR_THE_HUB = 30_000;
+
+const chatOf = (request: Request, url: URL) =>
+  `${request.headers.get("authorization") ?? ""} ${url.pathname}`;
+
+export function open(state: string, port: number, heldForTheHub = HELD_FOR_THE_HUB) {
   const sockets = socketsIn(state);
   let arrival = Promise.withResolvers<undefined>();
 
+  const last = new Map<string, { said: ArrayBuffer; headers: Headers }>();
+
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A request that waited for a hub goes to it without `after`: the hub that held it to that version is gone, and the keyboard has waited long enough, so the next hub answers with the chat as it is now.
-  async function answer(request: Request): Promise<Response> {
-    const url = new URL(request.url);
+  async function fromHub(request: Request, url: URL, left: AbortSignal): Promise<Response> {
     const sent = request.body === null ? null : await request.arrayBuffer();
 
     for (;;) {
@@ -37,15 +45,53 @@ export function open(state: string, port: number) {
           headers: request.headers,
           body: sent,
           keepalive: false,
+          signal: left,
         });
 
         const said = await answered.arrayBuffer();
 
+        if (
+          request.method === "GET" &&
+          answered.ok &&
+          answered.headers.get("content-type")?.includes("json") === true
+        ) {
+          last.set(chatOf(request, url), { said, headers: answered.headers });
+        }
+
         return new Response(said.byteLength > 0 ? said : null, answered);
-      } catch {
+      } catch (error) {
+        if (left.aborted) {
+          throw error;
+        }
+
         await next;
         url.searchParams.delete("after");
       }
+    }
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A read with `after` asks what's new since an answer this keyboard has, and every answer it has came through here, so the hub's last one for its chat and token is never older than that. It goes out again when the hub hasn't answered in time, slow or away: the keyboard finds nothing new in it and asks again instead of giving the chat up, so a reply shows as soon as a hub can say it.
+  async function answer(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const known = url.searchParams.has("after") ? last.get(chatOf(request, url)) : undefined;
+    const left = new AbortController();
+
+    if (known === undefined) {
+      return await fromHub(request, url, left.signal);
+    }
+
+    const again = Promise.withResolvers<Response>();
+
+    const held = setTimeout(() => {
+      again.resolve(new Response(known.said, { headers: known.headers }));
+    }, heldForTheHub);
+
+    try {
+      return await Promise.race([fromHub(request, url, left.signal), again.promise]);
+    } finally {
+      clearTimeout(held);
+      left.abort();
     }
   }
 
