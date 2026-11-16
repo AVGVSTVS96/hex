@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -51,37 +51,30 @@ test("a Mac slowed by heat has no room, on power or not", () => {
   expect(mac("hot-battery", { battery: true, heat: true }).exitCode).toBe(1);
 });
 
-function linux(name: string, waiting: number) {
-  const bin = join(home, name);
-  const sessions = join(home, `${name}-sessions`);
-  mkdirSync(bin);
-  mkdirSync(sessions);
-
-  for (const kind of ["cpu", "memory", "io"]) {
-    const avg60 = kind === "io" ? waiting : 1;
-
-    writeFileSync(
-      join(sessions, `${kind}.pressure`),
-      `some avg10=0.00 avg60=${avg60}.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1\n`,
-    );
-  }
-
-  writeFileSync(join(bin, "systemctl"), `#!/bin/sh\necho /../../..${sessions}\n`);
-  chmodSync(join(bin, "systemctl"), 0o755);
-
-  return Bun.spawnSync(["sh", room, "100"], {
-    env: { HOME: home, PATH: `${bin}:${process.env.PATH}` },
-  }).stdout.toString();
-}
+const machineWaits = () =>
+  Math.max(
+    ...["cpu", "memory", "io"].map((kind) =>
+      Number(
+        /^some .*avg60=(\d+)/mu.exec(readFileSync(`/proc/pressure/${kind}`, "utf-8"))?.[1] ?? 0,
+      ),
+    ),
+  );
 
 test.skipIf(process.platform !== "linux")(
-  "sessions kept waiting on the disk leave no room, and sessions that barely wait do",
+  "the machine kept waiting over a fifth of the last minute leaves no room, wherever hex's sessions run",
   () => {
-    const stalled = linux("stalled", 35);
+    const before = machineWaits();
 
-    expect(stalled).toContain("sessions waiting 35% of the time");
-    expect(stalled).toContain("sessions waiting over 20% of the time");
-    expect(linux("calm", 5)).not.toContain("sessions waiting over");
+    const reading = Bun.spawnSync(["sh", room, "100"], {
+      env: { HOME: home, PATH: process.env.PATH },
+    }).stdout.toString();
+
+    const after = machineWaits();
+    const waits = Number(/waiting (\d+)% of the time/u.exec(reading)?.[1]);
+
+    expect(waits).toBeGreaterThanOrEqual(Math.min(before, after));
+    expect(waits).toBeLessThanOrEqual(Math.max(before, after));
+    expect(reading.includes("waiting over 20% of the time")).toBe(waits > 20);
   },
   10_000,
 );
