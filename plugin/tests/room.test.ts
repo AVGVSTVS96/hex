@@ -50,3 +50,38 @@ test("a Mac slowed by heat has no room, on power or not", () => {
   expect(mac("hot", { battery: false, heat: true }).exitCode).toBe(1);
   expect(mac("hot-battery", { battery: true, heat: true }).exitCode).toBe(1);
 });
+
+function linux(name: string, waiting: number) {
+  const bin = join(home, name);
+  const sessions = join(home, `${name}-sessions`);
+  mkdirSync(bin);
+  mkdirSync(sessions);
+
+  for (const kind of ["cpu", "memory", "io"]) {
+    const avg60 = kind === "io" ? waiting : 1;
+
+    writeFileSync(
+      join(sessions, `${kind}.pressure`),
+      `some avg10=0.00 avg60=${avg60}.00 avg300=0.00 total=1\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=1\n`,
+    );
+  }
+
+  writeFileSync(join(bin, "systemctl"), `#!/bin/sh\necho /../../..${sessions}\n`);
+  chmodSync(join(bin, "systemctl"), 0o755);
+
+  return Bun.spawnSync(["sh", room, "100"], {
+    env: { HOME: home, PATH: `${bin}:${process.env.PATH}` },
+  }).stdout.toString();
+}
+
+test.skipIf(process.platform !== "linux")(
+  "sessions kept waiting on the disk leave no room, and sessions that barely wait do",
+  () => {
+    const stalled = linux("stalled", 35);
+
+    expect(stalled).toContain("sessions waiting 35% of the time");
+    expect(stalled).toContain("sessions waiting over 20% of the time");
+    expect(linux("calm", 5)).not.toContain("sessions waiting over");
+  },
+  10_000,
+);

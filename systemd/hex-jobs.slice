@@ -1,7 +1,7 @@
 [Unit]
-Description=hex's jobs, apart from its sessions and the hub, so a job that outgrows the machine is stopped instead of freezing it, and gives way to the sessions when the CPU is full
+Description=hex's jobs, apart from its sessions and the hub: they give way to the sessions when the CPU is full, and systemd-oomd stops the one that stalls the machine on memory
 
 [Slice]
-MemoryMax=40%
-MemorySwapMax=2G
 CPUWeight=20
+ManagedOOMMemoryPressure=kill
+ManagedOOMSwap=kill

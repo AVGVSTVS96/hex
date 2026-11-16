@@ -63,14 +63,14 @@ beforeEach(() => {
   const log = `echo "$(basename "$0") $*" >> ${root}/calls`;
   script(
     join(bin, "systemctl"),
-    `${log}\ncase "$*" in *show-environment*) ;; *"-q is-active"*) exit 3 ;; *is-active*) echo inactive; exit 3 ;; *is-failed*) exit 1 ;; esac`,
+    `${log}\ncase "$*" in *show-environment*) ;; "cat systemd-oomd.service") [ -e ${root}/oomd ] ;; *"-q is-active"*) exit 3 ;; *is-active*) echo inactive; exit 3 ;; *is-failed*) exit 1 ;; esac`,
   );
   script(join(bin, "loginctl"), `${log}\ncase "$*" in show-user*) echo no ;; esac`);
   script(
     join(bin, "claude"),
     `${log}\ncase "$*" in *--json*) echo '[]' ;; auth*) echo '{}' ;; esac`,
   );
-  script(join(bin, "sudo"), `${log}\ncat > ${root}/managed.json`);
+  script(join(bin, "sudo"), `${log}\n[ "$1" != sh ] || cat > ${root}/managed.json`);
   script(join(bin, "bun"), log);
   const claudeWroteItsConfigAsItFirstRan = join(root, "claude/.claude.json");
   mkdirSync(join(root, "claude"));
@@ -153,6 +153,21 @@ test("restore installs what's missing once, links the units of both lists, and e
   expect(calls()).toContain("systemctl --user enable --now --no-block hex.service mail.service\n");
   expect(calls()).toContain(`bun install --no-summary --cwd ${hex}\n`);
   expect(calls()).toContain("loginctl enable-linger");
+});
+
+test("restore turns on systemd-oomd where the machine has it off, and doctor says when it's still off", () => {
+  writeFileSync(join(root, "oomd"), "");
+
+  const run = restore();
+
+  expect(calls()).toContain("sudo systemctl enable --now systemd-oomd.service\n");
+  expect(run.out).toContain("fix  nothing stops a job that runs the machine out of memory");
+});
+
+test("restore leaves oomd alone on a machine whose systemd has none", () => {
+  restore();
+
+  expect(calls()).not.toContain("enable --now systemd-oomd");
 });
 
 test("restore leaves the hub of a hex.service still starting to it, without waiting for it to serve", () => {

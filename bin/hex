@@ -53,6 +53,8 @@ managed=/etc/claude-code/managed-settings.json
 managed=${HEX_MANAGED_SETTINGS:-$managed}
 units_dir=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 systemd() { systemctl --user show-environment >/dev/null 2>&1; }
+# A machine whose systemd has oomd, with it off.
+oomd_off() { systemctl cat systemd-oomd.service >/dev/null 2>&1 && ! systemctl is-active -q systemd-oomd.service; }
 
 # What a machine needs to run hex: hex's own services.json, then the owner's, in their hex folder.
 lists() { echo "$hex/services.json"; [ ! -f "$home/services.json" ] || echo "$home/services.json"; }
@@ -337,6 +339,8 @@ case "${1:-}" in
       # Services keep running once the user logs out, and start as the machine boots.
       user=$(id -un)
       [ "$(loginctl show-user "$user" -p Linger --value 2>/dev/null)" = yes ] || loginctl enable-linger "$user" 2>/dev/null || sudo loginctl enable-linger "$user" || :
+      # systemd-oomd stops the unit that stalls the machine on memory, before the machine stops answering.
+      ! oomd_off || sudo systemctl enable --now systemd-oomd.service || :
     else
       set --
       [ ! -f "$home/services.json" ] || eval "set -- $(units "$home/services.json")"
@@ -415,6 +419,8 @@ case "${1:-}" in
       [ "$problems" -gt "$before" ] || ok "$# unit files linked, none failed"
       [ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" = yes ] && ok "services run while you're logged out" \
         || fix "services stop when you log out: run \`sudo loginctl enable-linger $(id -un)\`"
+      oomd_off && fix "nothing stops a job that runs the machine out of memory: run \`sudo systemctl enable --now systemd-oomd\`" \
+        || ok "systemd-oomd stops what stalls the machine on memory"
     fi
     if running; then
       ok "hub running (pid $(cat "$pidfile"))"
