@@ -1356,7 +1356,7 @@ function dayAgo() {
   return new Date(Date.now() - DAY).toISOString();
 }
 
-function home(task: { owner: string; project?: string }, runs: Run[], workedIn?: Run) {
+export function home(task: { owner: string; project?: string }, runs: Run[], workedIn?: Run) {
   const owner = runs.find((run) => run.thread === task.owner);
 
   if (owner && ofOneProject(owner)) {

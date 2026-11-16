@@ -53,6 +53,8 @@ const MessageRow = z
 
 export const MessageRows = z.array(MessageRow);
 
+const RunRows = z.array(z.object({ at: z.string(), said: z.string() }));
+
 const withColumns = <Columns extends z.ZodObject>(columns: Columns) =>
   z.array(
     z
@@ -411,6 +413,20 @@ export class Messages {
            order by at desc, n desc limit 50`,
         )
         .all(beside, thread, schedule, session),
+    );
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A timed job's last runs, newest first: when each fired and the words its session ended that turn with ("" for none yet).
+  runsOf(schedule: string, last: number): { at: string; said: string }[] {
+    return RunRows.parse(
+      this.db
+        .query(
+          `select f.at, coalesce((select m.body from messages m indexed by taken where m.author = 'hex' and m.taken_by = f.taken_by
+             and m.at >= f.at and json_extract(m.meta, '$.unsent') is not null order by m.at, m.n limit 1), '') as said
+           from messages f where f.key >= ?1 and f.key < ?2 order by f.at desc limit ?3`,
+        )
+        .all(`schedule:${schedule}@`, `schedule:${schedule}@~`, last),
     );
   }
 

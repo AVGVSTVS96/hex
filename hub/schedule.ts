@@ -77,6 +77,10 @@ const JobSchema = z
         .regex(/^t-\d+$/u, { error: notIdea })
         .optional(),
       check: z.boolean({ error: "check must be true or false" }).optional(),
+      watch: z
+        .string({ error: "watch must be the name the owner knows it by" })
+        .min(1, { error: "watch must be the name the owner knows it by" })
+        .optional(),
     },
     { error: "prompt is missing" },
   )
@@ -179,6 +183,42 @@ function onCron(cron: string, at: WallClock) {
 
 function minuteOf(at: string, zone = Temporal.Now.timeZoneId()) {
   return Temporal.PlainDateTime.from(at).toZonedDateTime(zone).epochMilliseconds / MINUTE;
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* The next minute a job fires after `from`, looking no further than a year ahead: an hour its
+   cron can't fire in is passed over whole. */
+export function nextRun(
+  job: Job,
+  zone: string | undefined,
+  from = Math.floor(Date.now() / MINUTE),
+) {
+  const ats = [job.at ?? []]
+    .flat()
+    .map((at) => minuteOf(at, zone))
+    .filter((minute) => minute > from);
+
+  const next = ats.length > 0 ? Math.min(...ats) : undefined;
+
+  if (job.cron === undefined) {
+    return next;
+  }
+
+  const cron = job.cron;
+  const anyMinute = `* ${cron.trim().split(/\s+/u).slice(1).join(" ")}`;
+  const end = Math.min(next ?? Infinity, from + 366 * 24 * 60);
+
+  for (let minute = from + 1; minute <= end;) {
+    const at = wall(minute, zone);
+
+    if (onCron(cron, at)) {
+      return minute;
+    }
+
+    minute += onCron(anyMinute, at) ? 1 : 60 - at.minute;
+  }
+
+  return next;
 }
 
 export function check(

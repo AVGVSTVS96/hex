@@ -333,6 +333,23 @@ An app starting a call with `"about": "<run id>"` in its `/session` body gets
 the same: the voice opens with the run, and Claude's "call started" message
 names it, so `send` can reach that thread.
 
+## Goals
+
+What you asked hex for and how far each is, and what it keeps watch on for you, for an app's
+Goals page (`goals.ts`). A goal is a task (`hex task new`): every open one, those reached in
+the last week, and those dropped in the last day, so an Undo has them. A watch is a `schedules.json` job with a `watch`, the name you know it by; hex's
+own jobs have none, and an idea's checks belong to the idea.
+
+| Route | What it does |
+|---|---|
+| `GET /goals` | `{ version, goals, watching }`. Each goal's `id` (`t-12`), `title`, `group` (its project, else its topic), `topic`, `app`, its `run` on the board and `link`, `state` (`working`, `needs`, `idle`, `unstarted`, `done`, `dropped`), one `line` of where it stands (its run's or agent's line, its question, or its proof), the `ask` it waits on, your `words`, `doneWhen`, `proof`, when it was `asked`, and `at` its last change. A topic's question and its work go to its newest open goal unless an agent says which; General's and a DM's go to none. Each watch's `id` (the job's name), whether it was just `stopped` (until Undo or a restart), `title`, `topic`, `run`, how often it runs (`every`, in words), `next`, what you `asked` (the words of the task its prompt names), what it `does` (its prompt), and its last `runs`, newest first, each with the words its run ended on (`said`, "" when it hasn't ended yet) |
+| `GET /goals?after=<version>` | the same, once anything in it changes (or after 25 seconds) |
+| `POST /goals/<id>/drop` | "Not needed": drops the goal and tells its topic to stop |
+| `POST /goals/<id>/reopen` | "Not what I asked": opens a reached goal again and tells its topic |
+| `POST /goals/<id>/undo` | puts back what the last of those changed, and tells its topic |
+| `POST /goals/w/<name>/stop` | stops watching: takes the job out of `schedules.json` |
+| `POST /goals/w/<name>/undo` | puts the job back |
+
 ## Questions
 
 Everything waiting on you, in one list the app answers in place. The Telegram
