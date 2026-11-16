@@ -508,6 +508,7 @@ test("the judge asks claude in hex's folder, with no tools, session or hex varia
     entrypoint: "hex",
   });
   expect(call?.env.filter((name) => /^(?:HEX_|CLAUDECODE)/u.test(name))).toEqual(["HEX_HELPER"]);
+  expect(call?.env).toContain("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC");
 });
 
 test("a judge whose claude fails throws", async () => {

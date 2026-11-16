@@ -102,6 +102,7 @@ export async function ask<T>({ helper, input, flags, schema, cwd, timeout }: Que
           Object.entries(inherited()).filter(([name]) => !name.startsWith("CLAUDECODE")),
         ),
         CLAUDE_CODE_ENTRYPOINT: "hex",
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
         HEX_HELPER: helper,
       },
       stdin: new Blob([input]),
