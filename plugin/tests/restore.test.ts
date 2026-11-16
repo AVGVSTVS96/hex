@@ -195,16 +195,56 @@ test("restore installs each channel that has a server, turned off, allows it, an
   expect(read(Config, "claude/.claude.json").projects[home]?.hasTrustDialogAccepted).toBe(true);
 });
 
-test("a hub that hex.service's ExecCondition keeps off this machine waits, and doctor says so", () => {
+function unit(shown: Record<string, string>) {
+  const show = Object.entries(shown)
+    .map(([property, value]) => `*"-p ${property} "*) echo '${value}' ;;`)
+    .join(" ");
+
   script(
     join(bin, "systemctl"),
-    `case "$*" in *show-environment*) ;; *"-p Result"*) echo exec-condition ;; *"-q is-active"*) exit 3 ;; *is-active*) echo inactive; exit 3 ;; *is-failed*) exit 1 ;; esac`,
+    `case "$*" in *show-environment*) ;; ${show} *"-q is-active"*) exit 3 ;; *is-active*) echo inactive; exit 3 ;; *is-failed*) exit 1 ;; esac`,
   );
+}
+
+const waits = "ok   hub waits: a condition of hex.service keeps it off this machine";
+const tokenless = "fix  TELEGRAM_BOT_TOKEN";
+
+test("a hub that hex.service's ExecCondition keeps off this machine waits, and doctor says so", () => {
+  unit({ Result: "exec-condition" });
   const run = restore();
-  expect(run.out).toContain(
-    "ok   hub waits: hex.service's ExecCondition keeps it off this machine",
-  );
+  expect(run.out).toContain(waits);
   expect(run.out).not.toContain("the hub isn't running");
+});
+
+test("a hub that a Condition of hex.service skipped waits, and one never started isn't running", () => {
+  unit({ Result: "success", ConditionResult: "no", ConditionTimestampMonotonic: "123" });
+  expect(restore().out).toContain(waits);
+
+  unit({ Result: "success", ConditionResult: "no", ConditionTimestampMonotonic: "0" });
+  const run = restore();
+  expect(run.out).toContain("fix  the hub isn't running");
+  expect(run.out).not.toContain("hub waits");
+});
+
+test("the Telegram token comes from hex.service's environment files too, and a waiting hub's unwritten one is checked as it starts", () => {
+  const env = join(root, "run/hex.env");
+  const files = { EnvironmentFiles: `${env} (ignore_errors=yes)` };
+  script(join(bin, "curl"), `echo "curl $*" >> ${root}/calls`);
+
+  unit({ ...files, Result: "success", ConditionResult: "no", ConditionTimestampMonotonic: "123" });
+  let run = restore();
+  expect(run.out).toContain(`ok   Telegram bot token: checked once hex.service writes ${env}`);
+  expect(run.out).not.toContain(tokenless);
+
+  unit({ ...files, Result: "success", ConditionResult: "yes", ConditionTimestampMonotonic: "123" });
+  expect(restore().out).toContain(tokenless);
+
+  mkdirSync(join(root, "run"));
+  writeFileSync(env, "TELEGRAM_BOT_TOKEN=from-the-vault\n");
+  writeFileSync(join(home, ".env"), "HEX_MAIN_THREAD=1\n");
+  run = restore();
+  expect(run.out).toContain("ok   Telegram bot token works");
+  expect(calls()).toContain("https://api.telegram.org/botfrom-the-vault/getMe");
 });
 
 test("a folder other than ~/hex gets a drop-in that has hex.service run it, gone once it moves to ~/hex", () => {
