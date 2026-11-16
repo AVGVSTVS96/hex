@@ -98,3 +98,13 @@ test("a hub that arrives while nothing waits is found by the next request", asyn
   expect(await (await ask("/telegram:1?after=7")).json()).toEqual({ from: "new" });
   expect(asked).toEqual(["new GET /telegram:1?after=7"]);
 });
+
+test("a second door on the port fails and leaves the first hearing the hubs that arrive", async () => {
+  const list = ask("/");
+  await Bun.sleep(100);
+
+  expect(() => open(state, door.port ?? 0)).toThrow();
+  startHub("next");
+
+  expect(await (await list).json()).toEqual({ from: "next" });
+});

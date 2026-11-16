@@ -3,7 +3,7 @@ import { connect } from "node:net";
 import { dirname, join } from "node:path";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The keyboard has no clock to try a refused read again on, and the hub restarts many times a day. So bin/hex keeps this door on the port for as long as hex runs on the machine: it hands each request to the hub at `chats`, and one that finds no hub, or whose hub goes before answering, waits here until the next hub says it's up at `door`. A hub gets a request once, so one it can't answer never goes round. This file imports nothing of hex's, since bin/hex replaces a running door only when this file changes.
+// The keyboard has no clock to try a refused read again on, and the hub restarts many times a day. So bin/hex keeps this door on the port for as long as hex runs on the machine: it hands each request to the hub at `chats`, and one that finds no hub, or whose hub goes before answering, waits here until the next hub says it's up at `door`. A hub gets a request once, so one it can't answer never goes round. It takes the port before `door`, so a second door fails on the port and leaves the first one hearing. This file imports nothing of hex's, since bin/hex replaces a running door only when this file changes.
 export const socketsIn = (state: string) => ({
   chats: join(state, "iikb", "chats.sock"),
   door: join(state, "iikb", "door.sock"),
@@ -20,21 +20,6 @@ export function arrived(state: string) {
 export function open(state: string, port: number) {
   const sockets = socketsIn(state);
   let arrival = Promise.withResolvers<undefined>();
-
-  mkdirSync(dirname(sockets.door), { recursive: true });
-  rmSync(sockets.door, { force: true });
-
-  const bell = Bun.listen({
-    unix: sockets.door,
-    socket: {
-      open() {
-        const { resolve } = arrival;
-        arrival = Promise.withResolvers();
-        resolve(undefined);
-      },
-      data: ignore,
-    },
-  });
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A request that waited for a hub goes to it without `after`: the hub that held it to that version is gone, and the keyboard has waited long enough, so the next hub answers with the chat as it is now.
@@ -65,6 +50,22 @@ export function open(state: string, port: number) {
   }
 
   const server = Bun.serve({ hostname: "127.0.0.1", port, idleTimeout: 0, fetch: answer });
+
+  mkdirSync(dirname(sockets.door), { recursive: true });
+  rmSync(sockets.door, { force: true });
+
+  const bell = Bun.listen({
+    unix: sockets.door,
+    socket: {
+      open() {
+        const { resolve } = arrival;
+        arrival = Promise.withResolvers();
+        resolve(undefined);
+      },
+      data: ignore,
+    },
+  });
+
   const stop = server.stop.bind(server);
 
   server.stop = async (closeActiveConnections) => {

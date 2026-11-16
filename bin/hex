@@ -139,6 +139,9 @@ case "${1:-}" in
     echo "hex is set up in $home"
     ;;
   run)
+    # iikb's door takes the keyboard's requests through the hub's restarts (channels/iikb/door.ts), so it runs for as long
+    # as hex runs here, and goes however this ends.
+    trap 'pkill -P $$ -f channels/iikb/door.ts || :' EXIT
     # Only whatever moved hex away brings it back: it starts hex ahead of its turn.
     if [ -e "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" != "$(uname -n)" ] && [ -z "${HEX_AHEAD:-}" ]; then echo "hex runs on another machine now ($marker), so it starts here only once it's moved back" >&2; exit 1; fi
     shell_path
@@ -156,20 +159,17 @@ case "${1:-}" in
     export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord" BUZZ_STATE_DIR="$home/state/buzz" T3_STATE_DIR="$home/state/t3"
     # A stop ends the hub the way a restart does, once no call is live, and waits for it to exit.
     trap '[ -z "${hub:-}" ] || { kill -TERM "$hub" 2>/dev/null; wait "$hub"; }; rm -f "$pidfile"; exit 0' INT TERM
-    # iikb's door takes the keyboard's requests through the hub's restarts (channels/iikb/door.ts), so it runs for as long
-    # as hex runs here. A restart finds it by HEX_DOOR, its file as it started, and replaces it only when the file has
+    # A restart finds the door by HEX_DOOR, its file and port as it started, and replaces it only when one of them has
     # changed, as after an update or a rollback, or when it's gone.
-    door_file="$hex/channels/iikb/door.ts"
-    doors() { pgrep -P $$ -f "$door_file" >/dev/null; }
+    doors() { pgrep -P $$ -f channels/iikb/door.ts >/dev/null; }
     door() {
-      now=$(cksum "$door_file" 2>/dev/null) || now=
+      now=$(. "$hex/bin/settings"; file=$(cksum "$hex/channels/iikb/door.ts" 2>/dev/null) && echo "$file ${IIKB_PORT:-}") || now=
       [ "$now" != "${HEX_DOOR:-}" ] || ! doors || return 0
-      pkill -P $$ -f "$door_file" || :
+      pkill -P $$ -f channels/iikb/door.ts || :
       while doors; do sleep 0.1; done
       export HEX_DOOR="$now"
-      if [ -n "$now" ]; then (. "$hex/bin/settings"; exec bun "$door_file" "$home/state") & fi
+      if [ -n "$now" ]; then (. "$hex/bin/settings"; exec bun "$hex/channels/iikb/door.ts" "$home/state") & fi
     }
-    trap 'pkill -P $$ -f "$door_file" || :' EXIT
     start() {
       door
       bun install --no-summary --cwd "$hex" >/dev/null || :

@@ -142,7 +142,7 @@ const alive = (pid = 0) => {
   }
 };
 
-test("iikb's door starts with hex, stays up through the hub's restarts, gives way only to a door whose file changed, and stops with hex", async () => {
+test("iikb's door starts with hex, stays up through the hub's restarts, gives way only to a door whose file or port changed, and stops with hex", async () => {
   const door = join(hex, "channels/iikb/door.ts");
   mkdirSync(join(hex, "channels/iikb"), { recursive: true });
   writeFileSync(door, DOOR_THAT_SAYS_IT_STARTED);
@@ -159,9 +159,27 @@ test("iikb's door starts with hex, stays up through the hub's restarts, gives wa
   await until(() => hubs().length === 5 && doors().length === 2);
   expect(alive(doors()[0])).toBe(false);
   expect(alive(doors()[1])).toBe(true);
+  writeFileSync(join(home, ".env"), "TELEGRAM_BOT_TOKEN=test\nIIKB_PORT=2600\n");
+  Bun.spawnSync([join(hex, "bin/hex"), "restart"]);
+  await until(() => hubs().length === 7 && doors().length === 3);
+  expect(alive(doors()[1])).toBe(false);
   running.kill("SIGTERM");
   expect(await running.exited).toBe(0);
-  await until(() => !alive(doors()[1]));
+  await until(() => !alive(doors()[2]));
+});
+
+test("a restart that finds hex moved to another machine stops the door with hex", async () => {
+  const moved = join(home, "moved");
+  mkdirSync(join(hex, "channels/iikb"), { recursive: true });
+  writeFileSync(join(hex, "channels/iikb/door.ts"), DOOR_THAT_SAYS_IT_STARTED);
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  const running = run({ XDG_STATE_HOME: moved });
+  await until(() => hubs().length === 1 && doors().length === 1);
+  mkdirSync(join(moved, "hex"), { recursive: true });
+  writeFileSync(join(moved, "hex/elsewhere"), "another-machine\n");
+  Bun.spawnSync([join(hex, "bin/hex"), "restart"]);
+  expect(await running.exited).toBe(1);
+  await until(() => !alive(doors()[0]));
 });
 
 test("a restart where no hub runs starts none, so a machine that doesn't hold hex, like a standby twin, stays without one", async () => {
