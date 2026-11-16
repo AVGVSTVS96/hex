@@ -39,6 +39,9 @@ const Listed = z
 
 export type Usage = { sent: number; at?: number | undefined; short?: boolean; failed?: number };
 
+// How long Claude Code keeps a conversation in the prompt cache after its last request: an hour on a Claude subscription, five minutes by default on an API key, which the transcript records (Usage.short). https://docs.claude.com/en/docs/build-with-claude/prompt-caching
+export const cacheLife = (shortLived?: boolean) => (shortLived === true ? 5 : 60) * 60_000;
+
 const home = () => process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
 const short = (session: string) => session.slice(0, 8);
 

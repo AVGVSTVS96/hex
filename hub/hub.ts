@@ -746,6 +746,7 @@ export function startHub({
   // Each thread's session reads its settings, binding and token from here, so none of it shows in a process's arguments, and a respawn reads the thread's current ones.
   const sessionsDir = join(stateDir, "sessions");
   const runs = new Map<string, Run>();
+  const generalThread = general && present(main) ? main : undefined;
   const plugin = channel.replace(/^plugin:/u, "");
   const path = `/${plugin.split("@")[0]}`;
   const app = path.slice(1);
@@ -758,6 +759,7 @@ export function startHub({
   let closed = false;
   const closing = new AbortController();
   const serving = () => !closed;
+  const zone = () => zoneOf(hexDir) ?? Temporal.Now.timeZoneId();
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The app's open threads, from hex.db: the hub starts only once it can read them, so no save closes threads it never loaded.
@@ -773,36 +775,28 @@ export function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The app gives each thread's link as it knows it now; one it can't give keeps the last it gave.
-  function keepIn(store: Store, saved: Map<string, Saved>) {
-    store.threads.keep(
-      app,
-      Object.fromEntries(
-        [...saved].map(([thread, known]) => [thread, { ...known, ...withLink(thread) }]),
-      ),
-    );
-  }
-
-  function withLink(thread: string) {
-    const given = linkOf(thread);
-
-    return given === undefined ? {} : { link: given };
+  // hex.db keeps a closed thread's row, with its name, for whatever reads one. The app gives each thread's link as it knows it now; one it can't give keeps the last it gave.
+  function save() {
+    kept((store) => {
+      store.threads.keep(
+        app,
+        Object.fromEntries(
+          [...threads].map(([thread, known]) => [thread, { ...known, ...linkOf(thread) }]),
+        ),
+      );
+    }, undefined);
   }
 
   function linkOf(thread: string) {
     try {
-      return link?.(thread);
+      const given = link?.(thread);
+
+      return given === undefined ? {} : { link: given };
     } catch (error) {
       process.stderr.write(`hub: no link for ${app} thread ${thread}: ${String(error)}\n`);
-    }
-  }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // hex.db keeps a closed thread's row, with its name, for whatever reads one.
-  function save() {
-    kept((store) => {
-      keepIn(store, threads);
-    }, undefined);
+      return {};
+    }
   }
 
   function runOf(thread: string): Run {
@@ -958,7 +952,7 @@ export function startHub({
     }
   }
 
-  // A fresh thread keeps one session running, which takes its messages while its context has room and its cache is warm. Once either is spent, a new session built from the chat takes over at the old one's rest, so the next message finds it running: after the cache expires, the old session would send its whole context uncached, and a new one costs no more. warmFor is how long a session stays worth its messages, undefined before its first request. Its cache lives an hour on a Claude subscription and five minutes by default on an API key; the transcript records which. https://docs.claude.com/en/docs/build-with-claude/prompt-caching
+  // A fresh thread keeps one session running, which takes its messages while its context has room and its cache is warm. Once either is spent, a new session built from the chat takes over at the old one's rest, so the next message finds it running: after the cache expires, the old session would send its whole context uncached, and a new one costs no more. warmFor is how long a session stays worth its messages, undefined before its first request: cacheWarm of an hour's cache, or as much of a shorter one (claude.cacheLife). https://docs.claude.com/en/docs/build-with-claude/prompt-caching
   function warmFor(thread: string) {
     const session = current(thread);
 
@@ -972,12 +966,9 @@ export function startHub({
       return;
     }
 
-    return context >= capacity
-      ? 0
-      : Math.max(
-          0,
-          (at ?? clock.now()) + (short === true ? cacheWarm / 12 : cacheWarm) - clock.now(),
-        );
+    const keepsWarm = (cacheWarm * claude.cacheLife(short)) / claude.cacheLife();
+
+    return context >= capacity ? 0 : Math.max(0, (at ?? clock.now()) + keepsWarm - clock.now());
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1255,9 +1246,7 @@ export function startHub({
     const phase: Phase = { is: "launching", again };
     become(run, phase);
 
-    for (const message of waiting(thread)) {
-      mark(thread, message);
-    }
+    markWaiting(thread);
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // A fork's first start has no session to find; after a failed one, the session it started may run on.
@@ -1353,6 +1342,17 @@ export function startHub({
     save();
   }
 
+  function envOf(thread: string) {
+    return {
+      HEX_CHANNEL: channel,
+      HEX_THREAD: thread,
+      HEX_PORT: String(port),
+      HEX_TOKEN: token,
+      HEX_STORE: storeDir,
+      ...(thread === generalThread && { HEX_MAIN: "1" }),
+    };
+  }
+
   function settingsOf(thread: string) {
     return join(sessionsDir, `${encodeURIComponent(thread)}.json`);
   }
@@ -1375,14 +1375,9 @@ export function startHub({
     takesOverFrom?: string,
   ) {
     const env = {
-      HEX_CHANNEL: channel,
-      HEX_THREAD: thread,
+      ...envOf(thread),
       HEX_HUB: socketPath,
-      HEX_PORT: String(port),
-      HEX_TOKEN: token,
-      HEX_STORE: storeDir,
       ...(connect && { MCP_TIMEOUT: String(connect) }),
-      ...(general && thread === main && { HEX_MAIN: "1" }),
       ...(fresh(thread) ? { HEX_FRESH: "1" } : { HEX_HELD: heldOf(thread) }),
       ...(present(takesOverFrom) && { HEX_HANDOFF: takesOverFrom }),
     };
@@ -1511,7 +1506,7 @@ export function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The transcript of a thread's saved session that a new session takes over from instead of resuming: one this machine doesn't have, like after a restore from hex.db, or one whose prompt cache has expired (an hour, or 5 minutes for a short one) when it holds more than a new session costs to start and catch up. A start with a prompt, like /compact, needs the old conversation itself, so it resumes.
+  // The transcript of a thread's saved session that a new session takes over from instead of resuming: one this machine doesn't have, like after a restore from hex.db, or one whose prompt cache has expired when it holds more than a new session costs to start and catch up. A start with a prompt, like /compact, needs the old conversation itself, so it resumes.
   function expired(thread: string) {
     const session = savedOf(thread).session;
 
@@ -1526,9 +1521,8 @@ export function startHub({
     }
 
     const { sent: context, at, short } = claude.usage(cwdOf(thread), session);
-    const cacheLife = short === true ? 5 * 60_000 : 60 * 60_000;
 
-    return context > handoffAbove && at !== undefined && clock.now() - at > cacheLife
+    return context > handoffAbove && at !== undefined && clock.now() - at > claude.cacheLife(short)
       ? file
       : undefined;
   }
@@ -1642,9 +1636,7 @@ export function startHub({
       `hub: ${thread}'s session failed to start, ${failing.count} in a row: ${reason}\n`,
     );
 
-    for (const message of waiting(thread)) {
-      mark(thread, message);
-    }
+    markWaiting(thread);
 
     if (phase.again !== true || failing.count === 1) {
       failed(thread, reason);
@@ -1657,7 +1649,7 @@ export function startHub({
       failing.told !== true &&
       generalHub &&
       generalMain !== undefined &&
-      !(general && thread === main)
+      thread !== generalThread
     ) {
       failing.told = true;
       const body = `[hub] hex couldn't start the session of ${app} thread "${threads.get(thread)?.name ?? thread}" ${failing.count} times in a row: ${reason}. Its next message starts it again.`;
@@ -1918,6 +1910,12 @@ export function startHub({
     waits?.(thread, message, true);
   }
 
+  function markWaiting(thread: string) {
+    for (const message of waiting(thread)) {
+      mark(thread, message);
+    }
+  }
+
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // What a thread's next session gets: every message no session has taken, and any the store couldn't keep.
   function waiting(thread: string): Message[] {
@@ -2017,7 +2015,7 @@ export function startHub({
         ...extra(thread),
         "--settings",
         besideSettingsOf(thread),
-        besidePrompt(app, row, zoneOf(hexDir) ?? Temporal.Now.timeZoneId()),
+        besidePrompt(app, row, zone()),
       ],
       {
         cwd: cwdOf(thread),
@@ -2145,14 +2143,7 @@ export function startHub({
       besideSettingsOf(thread),
       JSON.stringify({
         enabledPlugins: { [plugin]: true },
-        env: {
-          HEX_CHANNEL: channel,
-          HEX_THREAD: thread,
-          HEX_PORT: String(port),
-          HEX_TOKEN: token,
-          HEX_STORE: storeDir,
-          ...(general && thread === main && { HEX_MAIN: "1" }),
-        },
+        env: envOf(thread),
       }),
       { mode: 0o600 },
     );
@@ -2319,7 +2310,7 @@ export function startHub({
     run.opening = undefined;
     run.paused = undefined;
 
-    if (general && thread === main) {
+    if (thread === generalThread) {
       reached(api);
     }
 
@@ -2406,9 +2397,7 @@ export function startHub({
       return;
     }
 
-    for (const message of waiting(thread)) {
-      mark(thread, message);
-    }
+    markWaiting(thread);
 
     recover(thread);
   }
@@ -2641,7 +2630,7 @@ export function startHub({
       close: drop,
     },
     db,
-    () => zoneOf(hexDir) ?? Temporal.Now.timeZoneId(),
+    zone,
   );
 
   channels.set(path, serve);
@@ -2906,11 +2895,13 @@ export function startHub({
 
   const unwatch = kept((store) => store.watch(wake), ignore);
   besideStart();
-  const unschedule = general && present(main) ? schedule(storeDir, hexDir, main) : ignore;
-  const unhold = general && present(main) ? holding(storeDir) : ignore;
+  const unschedule = present(generalThread) ? schedule(storeDir, hexDir, generalThread) : ignore;
+  const unhold = present(generalThread) ? holding(storeDir) : ignore;
 
   const unrestart =
-    general && present(main) && journal !== undefined ? restarts(storeDir, main, journal) : ignore;
+    present(generalThread) && journal !== undefined
+      ? restarts(storeDir, generalThread, journal)
+      : ignore;
 
   const api = {
     deliver,
@@ -3000,7 +2991,7 @@ export function startHub({
   whenThrough("turn", resumeStalled, closing.signal);
   whenThrough("turn", releaseBeside, closing.signal);
 
-  if (general && present(main)) {
+  if (present(generalThread)) {
     generalHub = api;
   }
 
