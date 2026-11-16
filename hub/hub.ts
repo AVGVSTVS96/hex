@@ -17,7 +17,6 @@ import {
 import { threadCalls } from "./calls.ts";
 import * as claude from "./claude.ts";
 import { clock } from "./clock.ts";
-import type { Timer } from "./clock.ts";
 import { failedStarts } from "./failing.ts";
 import type { Failed } from "./failing.ts";
 import { sessionFiles } from "./files.ts";
@@ -33,6 +32,7 @@ import { ordered } from "./ordered.ts";
 import { sessionPauses } from "./pauses.ts";
 import { fileOnly, held as filesIn, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
 import { present } from "./present.ts";
+import { sessionRests } from "./rest.ts";
 import { restarts } from "./restarts.ts";
 import { live } from "./running.ts";
 import type { Session } from "./running.ts";
@@ -168,8 +168,6 @@ type Run = {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // asked: the session asked to start over (a call ended). stale: it started with what the hub no longer gives a session. underway: it's starting over, and its renewal waits for the new session.
   renew?: "asked" | "stale" | "underway" | undefined;
-  rest?: Timer | undefined;
-  leaving?: ((session: string) => void) | undefined;
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The owner's Stop pressing Esc in the session, until the transcript shows it landed.
   interrupting?: Promise<void> | undefined;
@@ -177,9 +175,6 @@ type Run = {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A call waited for the session now connected to start, so it is as new as the call.
   awaited?: boolean | undefined;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // When the hub last had the session compact, until its context is back under compactAbove.
-  compacting?: number | undefined;
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Its last turn failed on the API, until a turn begins or goes through. waiting: the error clears without a word to this thread (a rate limit, a dropped connection, a login that works again), so it carries on at the next turn anywhere that goes through; resumed: the hub had it carry on, once; told: its chat heard it waits for its next message.
   stalled?: "waiting" | "resumed" | "told" | undefined;
@@ -651,7 +646,15 @@ export async function startHub({
   const serving = () => !closed;
   const zone = () => zoneOf(hexDir) ?? Temporal.Now.timeZoneId();
 
-  const stops = sessionStops({ runs, threads, kept, serving, stopping });
+  const stops = sessionStops({
+    runs,
+    threads,
+    kept,
+    serving,
+    stopping: (thread) => {
+      rests.cancel(thread);
+    },
+  });
 
   const failing = failedStarts({
     runs,
@@ -689,6 +692,24 @@ export async function startHub({
     startFailed,
   });
 
+  const rests = sessionRests({
+    runs,
+    threads,
+    turns,
+    sessions,
+    stops,
+    pauses,
+    calls,
+    serving,
+    main,
+    fresh,
+    idleStop,
+    cacheWarm,
+    compactAbove,
+    capacity,
+    forget,
+  });
+
   const hubRuns = runs.part((): Run => ({ held: [] }));
   const runOf = hubRuns.of;
 
@@ -696,7 +717,7 @@ export async function startHub({
     state(thread, true, false);
     threads.claim(thread);
     turns.began(thread);
-    rest(thread);
+    rests.rest(thread);
     letGo(thread);
   }
 
@@ -713,7 +734,7 @@ export async function startHub({
       void renew(thread, run.renew === "asked");
     }
 
-    rest(thread, turns.of(thread).is === "done");
+    rests.rest(thread, turns.of(thread).is === "done");
     letGo(thread);
   }
 
@@ -794,198 +815,10 @@ export async function startHub({
     }
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A running session that isn't busy stops after a while; its next message resumes it. The main thread keeps running, and compacts before its cache goes cold.
-  function rest(thread: string, rested = false) {
-    const run = runOf(thread);
-    const standing = sessions.of(thread);
-    clock.clearTimeout(run.rest);
-    run.rest = undefined;
-
-    if (turns.of(thread).is === "busy" || standing.phase.is !== "live") {
-      return;
-    }
-
-    if (thread === main) {
-      run.rest = clock.setTimeout(() => void stopIfIdle(thread), cacheWarm);
-    } else if (run.leaving) {
-      void stops.stop(thread);
-    } else if (fresh(thread)) {
-      const left = warmFor(thread);
-
-      if (left === 0 && rested) {
-        void handOff(thread, true);
-      } else if (left !== undefined) {
-        run.rest = clock.setTimeout(() => void handOff(thread), left);
-      }
-    } else {
-      run.rest = clock.setTimeout(() => void stopIfIdle(thread), idleStop);
-    }
-  }
-
-  // A fresh thread keeps one session running, which takes its messages while its context has room and its cache is warm. Once either is spent, a new session built from the chat takes over at the old one's rest, so the next message finds it running: after the cache expires, the old session would send its whole context uncached, and a new one costs no more. warmFor is how long a session stays worth its messages, undefined before its first request: cacheWarm of an hour's cache, or as much of a shorter one (claude.cacheLife). https://docs.claude.com/en/docs/build-with-claude/prompt-caching
-  function warmFor(thread: string) {
-    const session = threads.current(thread);
-
-    const {
-      sent: context,
-      at,
-      short,
-    } = present(session) ? claude.usage(threads.cwd(thread), session) : { sent: 0 };
-
-    if (!context) {
-      return;
-    }
-
-    const keepsWarm = (cacheWarm * claude.cacheLife(short)) / claude.cacheLife();
-
-    return context >= capacity ? 0 : Math.max(0, (at ?? clock.now()) + keepsWarm - clock.now());
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session on a call takes every message of the call, so a call never changes sessions midway.
-  function spent(thread: string) {
-    return fresh(thread) && !calls.of(thread).on && warmFor(thread) === 0;
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // At a rest the Stop hook reported with no agents working, Claude's own status still says busy for about a second, so a session that filled up on that turn hands over without asking it.
-  async function handOff(thread: string, rested = false) {
-    const run = runOf(thread);
-    const turn = turns.of(thread);
-    run.rest = undefined;
-    const running = await claude.agent(threads.current(thread) ?? "", serving);
-
-    if (running && turn.is !== "busy" && (rested || running.status === "idle") && spent(thread)) {
-      void sessions.cycle(thread, running);
-    }
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The Stop hook ends a turn, but background tasks keep a session busy past it, so Claude's own status decides; a busy session reports idle again when it's done. A big conversation compacts first, while its cache is warm: resumed after the cache expires, it would be written to the cache whole again.
-  async function stopIfIdle(thread: string) {
-    const run = runOf(thread);
-    const voice = calls.of(thread);
-    const turn = turns.of(thread);
-    const pause = pauses.of(thread);
-    run.rest = undefined;
-    const session = threads.current(thread);
-
-    if (!present(session)) {
-      return;
-    }
-
-    const running = await claude.agent(session, serving);
-
-    if (turn.is === "busy" || running?.status === "busy" || pause.paused === true) {
-      return;
-    }
-
-    const { sent: context, failed: failedAt } = claude.usage(threads.cwd(thread), session);
-
-    if (running && !run.leaving && !fresh(thread) && !voice.on && context > compactAbove) {
-      if (failedAt === undefined) {
-        compact(thread, running);
-
-        return;
-      }
-
-      run.compacting ??= failedAt;
-    }
-
-    if (thread !== main) {
-      void stops.stop(thread);
-    }
-  }
-
-  function compact(thread: string, running?: claude.Agent) {
-    runOf(thread).compacting = clock.now();
-    void sessions.cycle(thread, running, "/compact", true);
-  }
-
-  async function recompact() {
-    for (const [thread, run] of hubRuns.all()) {
-      const session = threads.current(thread);
-
-      if (run.compacting === undefined || !present(session)) {
-        continue;
-      }
-
-      const { sent: context, failed: failedAt } = claude.usage(threads.cwd(thread), session);
-
-      if (context <= compactAbove) {
-        run.compacting = undefined;
-        continue;
-      }
-
-      const standing = sessions.of(thread);
-      const resting = standing.phase.is === "live" || standing.phase.is === "stopped";
-
-      if (
-        failedAt === undefined ||
-        failedAt < run.compacting ||
-        !resting ||
-        turns.of(thread).is === "busy" ||
-        stops.ending(thread) ||
-        run.leaving ||
-        calls.of(thread).on
-      ) {
-        continue;
-      }
-
-      const running = await claude.agent(session, serving);
-
-      if (running?.status !== "busy") {
-        compact(thread, running);
-      }
-    }
-  }
-
-  function stopping(thread: string) {
-    const run = runOf(thread);
-    clock.clearTimeout(run.rest);
-    run.rest = undefined;
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Resolves with the thread's session once it has stopped and the thread is forgotten, in hex.db too.
-  function retire(thread: string): Promise<string> {
-    if (thread === main) {
-      throw new Error("the main thread stays open");
-    }
-
-    return new Promise((resolve) => {
-      runOf(thread).leaving = resolve;
-
-      if (sessions.of(thread).phase.is !== "live") {
-        forget(thread, resolve);
-
-        return;
-      }
-
-      void stopIfIdle(thread);
-    });
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Like retire, for a thread whose session another client resumes.
-  function release(thread: string) {
-    if (thread === main) {
-      throw new Error("the main thread stays here");
-    }
-
-    if (!present(threads.get(thread)?.session)) {
-      throw new Error("this thread has no session yet");
-    }
-
-    return retire(thread);
-  }
-
   function forget(thread: string, leaving: (session: string) => void) {
-    const run = runOf(thread);
     const session = threads.close(thread);
     sessions.end(thread);
-    clock.clearTimeout(run.rest);
+    rests.cancel(thread);
     runs.forget(thread);
     turns.forget(thread);
     files.forget(thread);
@@ -1102,7 +935,7 @@ export async function startHub({
       if (
         pauses.of(thread).paused === true ||
         (starts.stale(thread) && !calls.of(thread).on) ||
-        spent(thread)
+        rests.spent(thread)
       ) {
         void refresh(thread, message);
       } else {
@@ -1532,7 +1365,7 @@ export async function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Messages that came while the thread's session was stopping resume it once it's gone, unless a restart already took them.
   function resume(thread: string) {
-    if (waiting.of(thread).queue.length && !runOf(thread).leaving) {
+    if (waiting.of(thread).queue.length && !rests.of(thread).leaving) {
       void sessions.cycle(thread);
     }
   }
@@ -1597,7 +1430,7 @@ export async function startHub({
     const given = waiting.connected(thread, line, read);
     turns.connected(thread, given.length > 0);
     run.awaited = run.held.length > 0;
-    rest(thread);
+    rests.rest(thread);
     letGo(thread);
 
     if (starts.stale(thread)) {
@@ -1617,11 +1450,11 @@ export async function startHub({
       return;
     }
 
-    const run = runOf(thread);
+    const resting = rests.of(thread);
     await turnEnded(thread);
 
-    if (run.leaving) {
-      forget(thread, run.leaving);
+    if (resting.leaving) {
+      forget(thread, resting.leaving);
 
       return;
     }
@@ -1647,7 +1480,7 @@ export async function startHub({
       sessions.of(thread).phase.is === "live" &&
       turns.of(thread).is === "done" &&
       !waiting.of(thread).handed.size &&
-      warmFor(thread) === undefined;
+      rests.warmFor(thread) === undefined;
 
     if (
       present(session) &&
@@ -2003,14 +1836,14 @@ export async function startHub({
         phase.line.send({ type: "permission", request_id, behavior });
       }
     },
-    release,
+    release: rests.release,
     adopt,
     follow: (thread: string, name: string, session: string, cwd?: string) => {
       threads.open(thread, { name, fork: session, ...(present(cwd) && { cwd }) });
     },
     history: (thread: string) =>
       kept((store) => history(store, thread, threads.current(thread)), []),
-    retire,
+    retire: rests.retire,
     find: threads.find,
     rename: (thread: string, name: string) => {
       threads.update(thread, { name });
@@ -2036,8 +1869,7 @@ export async function startHub({
 
       for (const thread of runs.threads()) {
         sessions.end(thread);
-        const run = runOf(thread);
-        clock.clearTimeout(run.rest);
+        rests.cancel(thread);
         turns.close(thread);
         calls.hangUp(thread);
       }
@@ -2045,7 +1877,7 @@ export async function startHub({
   };
 
   whenThrough("start", () => void sessions.retry(), closing.signal);
-  whenThrough("turn", () => void recompact(), closing.signal);
+  whenThrough("turn", () => void rests.recompact(), closing.signal);
   whenThrough("turn", resumeStalled, closing.signal);
   whenThrough("turn", () => void releaseBeside(), closing.signal);
 
