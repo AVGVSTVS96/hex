@@ -21,6 +21,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import { free } from "./calls.ts";
 import * as claude from "./claude.ts";
 import { settled as commandsSettled } from "./claude.ts";
 import type { Job as JobRecord } from "./claude.ts";
@@ -28,7 +29,6 @@ import { clock, manual } from "./clock.ts";
 import {
   begin,
   clients,
-  free,
   history,
   mirror,
   move,

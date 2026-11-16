@@ -14,6 +14,7 @@ import {
   prompt as besidePrompt,
   run as runBeside,
 } from "./beside.ts";
+import { threadCalls } from "./calls.ts";
 import * as claude from "./claude.ts";
 import { clock } from "./clock.ts";
 import type { Timer } from "./clock.ts";
@@ -476,33 +477,6 @@ function tokensFrom(name: string, fallback: number) {
   return Number(tokens);
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A voice call runs in this process (its call engine holds the caller's audio), so a restart waits for every thread on a call to hang up. A call whose engine has lost its link to it runs nothing here, and the next hub's engine picks it back up, so a restart doesn't wait on it.
-const onCall = new Set<Run>();
-const adrift = new Set<Run>();
-const hungUp: (() => void)[] = [];
-
-export function free(): Promise<void> {
-  return new Promise((resolve) => {
-    hungUp.push(resolve);
-    settle();
-  });
-}
-
-function settle() {
-  if ([...onCall].every((run) => adrift.has(run))) {
-    for (const resolve of hungUp.splice(0)) {
-      resolve();
-    }
-  }
-}
-
-function hangUp(run: Run) {
-  onCall.delete(run);
-  adrift.delete(run);
-  settle();
-}
-
 export function title(text: string): string {
   const word = text.trim();
 
@@ -611,6 +585,7 @@ export async function startHub({
   const caller = new AsyncLocalStorage<string | undefined>();
   const socketPath = join(stateDir, "hub.sock");
   const runs = threadRuns();
+  const calls = threadCalls(runs);
   const generalThread = general && present(main) ? main : undefined;
   const plugin = channel.replace(/^plugin:/u, "");
   const path = `/${plugin.split("@")[0]}`;
@@ -746,6 +721,7 @@ export async function startHub({
   // A thread renews at its next rest: the main thread and a fresh thread start over as soon as the process exits, any other when its next message resumes it. A keep (a call started) cancels it. When the session asked for it, a rest the Stop hook reported with no agents working is taken as it is: Claude's own status lags the hook and counts a running shell as busy, so checking it could put the renew off for good, and a session that asked is done with what its shells were for.
   async function renew(thread: string, rested = false) {
     const run = runOf(thread);
+    const voice = calls.of(thread);
     const turn = turns.of(thread);
     const session = threads.current(thread);
 
@@ -759,7 +735,7 @@ export async function startHub({
       !(run.renew === "asked" || run.renew === "stale") ||
       turn.is === "busy" ||
       turn.untaken === true ||
-      onCall.has(run) ||
+      voice.on ||
       (!rested && running?.status === "busy")
     ) {
       return;
@@ -869,7 +845,7 @@ export async function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A session on a call takes every message of the call, so a call never changes sessions midway.
   function spent(thread: string) {
-    return fresh(thread) && !onCall.has(runOf(thread)) && warmFor(thread) === 0;
+    return fresh(thread) && !calls.of(thread).on && warmFor(thread) === 0;
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -889,6 +865,7 @@ export async function startHub({
   // The Stop hook ends a turn, but background tasks keep a session busy past it, so Claude's own status decides; a busy session reports idle again when it's done. A big conversation compacts first, while its cache is warm: resumed after the cache expires, it would be written to the cache whole again.
   async function stopIfIdle(thread: string) {
     const run = runOf(thread);
+    const voice = calls.of(thread);
     const turn = turns.of(thread);
     const pause = pauses.of(thread);
     run.rest = undefined;
@@ -906,7 +883,7 @@ export async function startHub({
 
     const { sent: context, failed: failedAt } = claude.usage(threads.cwd(thread), session);
 
-    if (running && !run.leaving && !fresh(thread) && !onCall.has(run) && context > compactAbove) {
+    if (running && !run.leaving && !fresh(thread) && !voice.on && context > compactAbove) {
       if (failedAt === undefined) {
         compact(thread, running);
 
@@ -951,7 +928,7 @@ export async function startHub({
         turns.of(thread).is === "busy" ||
         stops.ending(thread) ||
         run.leaving ||
-        onCall.has(run)
+        calls.of(thread).on
       ) {
         continue;
       }
@@ -1124,7 +1101,7 @@ export async function startHub({
     if (standing.phase.is === "live") {
       if (
         pauses.of(thread).paused === true ||
-        (starts.stale(thread) && !onCall.has(runOf(thread))) ||
+        (starts.stale(thread) && !calls.of(thread).on) ||
         spent(thread)
       ) {
         void refresh(thread, message);
@@ -1656,6 +1633,7 @@ export async function startHub({
   // A thread is on a call from its keep until its renew, which starts the next call in a new session. That session starts when the last call ends and can wait hours for the next, so a call that finds it still waiting for its first message starts it over, reading memory as it is now, unless a call waited for it to start. The stop comes first, so a message meanwhile waits for the new session, and the call is on once that session connects, so a restart that never gets there doesn't hold up the hub's own. Resolves once the session the call runs in is connected.
   async function keep(thread: string) {
     const run = runOf(thread);
+    const callOn = calls.joining(thread);
 
     if (run.renew !== "underway") {
       run.renew = undefined;
@@ -1680,26 +1658,14 @@ export async function startHub({
       run.renew = "underway";
       void stops.stop(thread).then(() => sessions.cycle(thread));
       await renewal(thread);
-      onCall.add(run);
+      callOn();
 
       return;
     }
 
-    onCall.add(run);
+    callOn();
     letGo(thread);
     await renewal(thread);
-  }
-
-  function drift(thread: string, away: boolean) {
-    const run = runOf(thread);
-
-    if (away) {
-      adrift.add(run);
-    } else {
-      adrift.delete(run);
-    }
-
-    settle();
   }
 
   function renewAsked(thread: string) {
@@ -1709,7 +1675,7 @@ export async function startHub({
       run.renew = "asked";
     }
 
-    hangUp(run);
+    calls.hangUp(thread);
   }
 
   const serve = endpoint(
@@ -2000,7 +1966,7 @@ export async function startHub({
     fresh,
     renewal,
     keep,
-    adrift: drift,
+    adrift: calls.drift,
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // Once what this hub and every other in the process wrote can't be lost.
     synced: async () => {
@@ -2073,7 +2039,7 @@ export async function startHub({
         const run = runOf(thread);
         clock.clearTimeout(run.rest);
         turns.close(thread);
-        hangUp(run);
+        calls.hangUp(thread);
       }
     },
   };
