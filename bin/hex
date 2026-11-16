@@ -340,6 +340,15 @@ case "${1:-}" in
     problems=0
     ok() { echo "ok   $1"; }
     fix() { echo "fix  $1"; problems=$((problems + 1)); }
+    hub() { systemctl --user show -p "$1" --value hex.service; }
+    # A condition kept hex.service's last start off this machine; a unit never started has no condition timestamp.
+    waits() {
+      ! running && systemd && { [ "$(hub Result)" = exec-condition ] \
+        || { [ "$(hub ConditionResult)" = no ] && [ "$(hub ConditionTimestampMonotonic)" != 0 ]; }; }
+    }
+    # The hub gets hex.service's environment files, then the settings; a file it writes as it starts may not be there yet.
+    files=$(! systemd || hub EnvironmentFiles | sed 's/ (ignore_errors=[a-z]*)$//')
+    unwritten=$(printf '%s\n' "$files" | while IFS= read -r file; do [ -z "$file" ] || [ -f "$file" ] || echo "$file"; done)
     for tool in git curl jq python3 bun claude; do
       command -v "$tool" >/dev/null && ok "$tool" || fix "$tool isn't on PATH (INSTALL.md step 1)"
     done
@@ -356,8 +365,17 @@ case "${1:-}" in
         && ok "$home is trusted" || fix "$home isn't trusted: run \`$hex/bin/hex restore\`"
       plugins=$(claude plugin list --json 2>/dev/null) || plugins='[]'
     fi
-    (. "$hex/bin/settings"; [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && curl -sf -m 10 "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getMe" >/dev/null) \
-      && ok "Telegram bot token works" || fix "TELEGRAM_BOT_TOKEN in $home/.env is missing or Telegram rejects it (INSTALL.md steps 3-4)"
+    token=$(printf '%s\n' "$files" | {
+      while IFS= read -r file; do [ ! -f "$file" ] || { set -a; . "$file"; set +a; }; done
+      . "$hex/bin/settings"
+      printf %s "${TELEGRAM_BOT_TOKEN:-}"
+    })
+    if [ -z "$token" ] && [ -n "$unwritten" ] && waits; then
+      ok "Telegram bot token: checked once hex.service writes $(echo $unwritten) as it starts"
+    else
+      [ -n "$token" ] && curl -sf -m 10 "https://api.telegram.org/bot$token/getMe" >/dev/null \
+        && ok "Telegram bot token works" || fix "TELEGRAM_BOT_TOKEN in $home/.env is missing or Telegram rejects it (INSTALL.md steps 3-4)"
+    fi
     (. "$hex/bin/settings"; [ -n "${HEX_MAIN_THREAD:-}" ]) && ok "HEX_MAIN_THREAD is set" || fix "HEX_MAIN_THREAD isn't set in $home/.env (INSTALL.md step 4)"
     jq -e '.allowFrom | length > 0' "$home/state/telegram/access.json" >/dev/null 2>&1 \
       && ok "Telegram access list" || fix "nobody may talk to hex: write $home/state/telegram/access.json (INSTALL.md step 4)"
@@ -385,8 +403,8 @@ case "${1:-}" in
     fi
     if running; then
       ok "hub running (pid $(cat "$pidfile"))"
-    elif systemd && [ "$(systemctl --user show -p Result --value hex.service)" = exec-condition ]; then
-      ok "hub waits: hex.service's ExecCondition keeps it off this machine"
+    elif waits; then
+      ok "hub waits: a condition of hex.service keeps it off this machine"
     else
       fix "the hub isn't running: run \`$hex/bin/hex restore\`"
     fi
