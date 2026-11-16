@@ -1,6 +1,7 @@
 [Unit]
-Description=hex's jobs, apart from its sessions and the hub, so a job that outgrows the machine is stopped instead of freezing it
+Description=hex's jobs, apart from its sessions and the hub, so a job that outgrows the machine is stopped instead of freezing it, and gives way to the sessions when the CPU is full
 
 [Slice]
 MemoryMax=40%
 MemorySwapMax=2G
+CPUWeight=20
