@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { asked, brief, check, judge, ruleEdit } from "./intent.ts";
+import { asked, brief, check, judge, message, ruleEdit } from "./intent.ts";
 import type { Kind, Verdict } from "./intent.ts";
 import { open } from "./store.ts";
 import type { Store } from "./store.ts";
@@ -90,7 +90,7 @@ test("a brief is what hands work to another agent", () => {
       tool_name: "Agent",
       tool_input: { prompt: "Read the store and tell me how tasks work." },
     }),
-  ).toBeUndefined();
+  ).toContain("tell me how tasks work");
   expect(
     brief({ tool_name: "Agent", tool_input: { prompt: "Task t-3: fix the login page." } }),
   ).toContain("t-3");
@@ -100,6 +100,72 @@ test("a brief is what hands work to another agent", () => {
       tool_input: { prompt: "Fix it." },
     }),
   ).toContain("Fix it.");
+});
+
+test("a brief carries the brief files it points to", () => {
+  writeFileSync(join(dir, "brief.md"), "Score each design on net lines.");
+  process.env.BRIEFS = dir;
+
+  const agent = brief({
+    tool_name: "Agent",
+    tool_input: { prompt: "Read $BRIEFS/brief.md in full: it is your brief." },
+  });
+
+  expect(agent).toContain("Score each design on net lines.");
+});
+
+test("a message to the owner is what a session sends them", () => {
+  expect(
+    message({
+      tool_name: "mcp__plugin_telegram_telegram__reply",
+      tool_input: { text: "I picked: Feed stays out." },
+    }),
+  ).toBe("I picked: Feed stays out.");
+  expect(
+    message({
+      tool_name: "mcp__plugin_telegram_telegram__poll",
+      tool_input: { question: "Which first?", options: ["Feed", "Goals"] },
+    }),
+  ).toBe("Which first?\nFeed\nGoals");
+  expect(
+    message({
+      tool_name: "mcp__plugin_telegram_telegram__edit_message",
+      tool_input: { message_id: "5" },
+    }),
+  ).toBeUndefined();
+  expect(
+    brief({
+      tool_name: "mcp__plugin_telegram_telegram__reply",
+      tool_input: { text: "Done." },
+    }),
+  ).toBeUndefined();
+});
+
+test("a message to the owner is judged as one, against their newest words in its thread", async () => {
+  const kinds: Kind[] = [];
+  const inputs: string[] = [];
+
+  const result = await check(
+    {
+      session_id: "beside",
+      tool_name: "mcp__plugin_telegram_telegram__reply",
+      tool_input: { text: "I picked: the login page stays slow for now." },
+    },
+    store,
+    (input, kind = "brief") => {
+      inputs.push(input);
+      kinds.push(kind);
+
+      return ok();
+    },
+    [],
+    "telegram:-100:7",
+  );
+
+  expect(result?.kind).toBe("message");
+  expect(kinds).toEqual(["message"]);
+  expect(inputs[0]).toContain("The message to me (mcp__plugin_telegram_telegram__reply)");
+  expect(inputs[0]).toContain("Make the login page load fast.");
 });
 
 test("the words a brief is checked against: its tasks and the newest this session got", () => {
@@ -181,7 +247,7 @@ test("what a session said since its newest ask shows where that work stands", ()
   expect(asked(store, "main", "claude -p 'Make login fast.'")).not.toContain("said since");
 });
 
-test("a job is held to its own task, not to what the owner said to its thread since", () => {
+test("a job is held to its own task, and sees what the owner said to its thread since as maybe other work", () => {
   const task = store.tasks.create({
     title: "Fast login",
     message: "telegram:-100:50",
@@ -202,6 +268,18 @@ test("a job is held to its own task, not to what the owner said to its thread si
   const words = asked(store, "job-session", "SendMessage to its builder: inline the login CSS.");
   expect(words).toContain(`${task.id} (open`);
   expect(words).not.toContain("fan controller");
+
+  const withThread = asked(
+    store,
+    "job-session",
+    "SendMessage to its builder: inline the login CSS.",
+    "telegram:-100:7",
+  );
+
+  expect(withThread).toContain(
+    "the thread this session works for, which may be about other work:\n\n[telegram:-100:50",
+  );
+  expect(withThread).toContain("fan controller");
 });
 
 test("a delivery is checked against the words it cites and the thread it goes to", () => {

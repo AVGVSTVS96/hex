@@ -17,9 +17,9 @@ const REWRITE_WINDOW_MS = 15 * 60_000;
 const SENDBACKS_BEFORE_IT_GOES_THROUGH = 2;
 const CHECKER_AUDIT_LOG = "intent.jsonl";
 
-const SYSTEM = `One of my hex sessions wrote this brief to hand my work to another agent, and you read it before that agent gets it, so the work hex proposes is the work I asked for: my words for the task, the newest of mine this session got and the work hex handed it, my rules below, and what hex's memory says was decided.
+const SYSTEM = `One of my hex sessions wrote this brief to hand my work to another agent, and you read it before that agent gets it, so the work hex proposes is the work I asked for: my words for the task, my newest messages, my rules below, and what hex's memory says was decided.
 
-A session works on what hex hands it too: a request from General or another session, or a job's own prompt, each carrying work of mine. A brief for that work answers to it, even when my newest words there are about something else. What the session has said since shows where that work stands now: an ask it already settled there is done, and its newer facts replace older ones.
+A session also works on what hex hands it: a request from General or another session, or a job's own prompt. That and what the session has said since show where the work stands, and an ask it already carried out is done. But my words are what the brief answers to: a plan, a pick or a standing prompt of hex's never settles away part of what I asked, and my newest words add to the ask or change it unless they're plainly about other work.
 
 The agent that gets it is as capable as you, loads my rules itself, and gets a link to my conversation. Every wall a brief puts up costs it performance: a plan for how to do the work, a guess or lead handed over as where to look, a limit or caution I didn't give for this ask. Those steer a smarter agent away from solving what I asked, even when worded as something to check. So the brief that works carries every part of what I asked, my words where the wording matters, the facts it has checked, and where the result goes, and leaves the how to the agent.
 
@@ -30,6 +30,12 @@ const RULES = `One of my hex sessions is about to change one of my rule files: t
 My rules change when I ask for a change, and then the edit carries my intent into the line it belongs to, editing or cutting what's there before adding. When I point out a mistake, I expect it fixed and hex to reflect on why it happened; that alone doesn't call for a new rule.
 
 Answer ok when my words ask for this change, or it carries out one I asked for, like taking back an edit I objected to; a standing instruction in my rules counts as asking, like adding a word voice transcripts mishear. A command that only reads the file is ok too. Answer revise when the change is the session's own idea or goes past what I asked: a note per problem, a line or two each, quoting my words where they settle it.`;
+
+const SENT = `One of my hex sessions is about to send me this message, and you read it before I do, so what hex proposes, picks and answers is what I asked for: my words for the task, the newest of mine this session got and the work hex handed it, my rules below, and what hex's memory says was decided.
+
+Answer ok when it carries out what I asked, or only tells me where work stands. Answer revise when it drops or changes part of my ask, makes a call for me that cuts what I asked for, answers less than I asked, or goes against my rules or a decision in memory: a note per problem, a line or two each, quoting my words where they settle it.`;
+
+const PROMPTS = { brief: SYSTEM, rules: RULES, message: SENT };
 
 const Judged = z.object({ verdict: z.enum(["ok", "revise"]), notes: z.string() });
 
@@ -49,6 +55,9 @@ const ToolHook = z.object({
       command: textOrNothing,
       prompt: textOrNothing,
       file_path: textOrNothing,
+      text: textOrNothing,
+      question: textOrNothing,
+      options: z.array(z.string()).optional().catch(undefined),
       content: textOrNothing,
       old_string: textOrNothing,
       new_string: textOrNothing,
@@ -82,23 +91,35 @@ export function brief({
       return;
     }
 
-    return [
-      command,
-      ...promptFilesNow(command, cwd).map(([path, text]) => `${path}:\n${text}`),
-    ].join("\n\n");
+    return withFiles(command, cwd);
   }
 
   if (tool === "Agent") {
-    const prompt = input.prompt ?? "";
-    const sentToWorkOnATask = named(prompt).length > 0;
-
-    return sentToWorkOnATask ? prompt : undefined;
+    return withFiles(input.prompt ?? "", cwd);
   }
 
   if (HANDOFF_TOOL.test(tool)) {
-    return JSON.stringify(input, null, 1);
+    return withFiles(JSON.stringify(input, null, 1), cwd);
   }
 }
+
+const TO_OWNER = /^mcp__plugin_[\w-]+__(reply|poll|edit_message)$/u;
+
+export function message({
+  tool_name: tool = "",
+  tool_input: input = {},
+}: Hook): string | undefined {
+  if (!TO_OWNER.test(tool)) {
+    return;
+  }
+
+  const text = [input.text ?? input.question ?? "", ...(input.options ?? [])].join("\n");
+
+  return text.trim() === "" ? undefined : text;
+}
+
+const withFiles = (text: string, cwd: string) =>
+  [text, ...promptFilesNow(text, cwd).map(([path, body]) => `${path}:\n${body}`)].join("\n\n");
 
 const real = (path: string) => {
   try {
@@ -232,9 +253,20 @@ export function ruleEdit(
   return written(command, cwd, rules).length > 0 ? command : undefined;
 }
 
-function promptFilesNow(command: string, cwd: string): [string, string][] {
-  const paths = [...new Set(command.match(/[\w.~-]*\/[\w.~/-]+/gu))].map((path) =>
-    resolve(cwd, path.replace(/^~/u, homedir())),
+function promptFilesNow(text: string, cwd: string): [string, string][] {
+  const expanded = text.replaceAll(
+    /\$\{?([A-Z_][A-Z\d_]*)\}?/gu,
+    (variable, name: string) => process.env[name] ?? variable,
+  );
+
+  const rules = ruleFiles();
+
+  const paths = [...new Set(expanded.match(/[\w.~-]*\/[\w.~/-]+\.(?:md|txt)\b/gu))].flatMap(
+    (mention) => {
+      const path = resolve(cwd, mention.replace(/^~/u, homedir()));
+
+      return rules.includes(real(path)) ? [] : [path];
+    },
   );
 
   return paths.flatMap((path): [string, string][] => {
@@ -278,7 +310,7 @@ const said = (row: Row) =>
 const got = (rows: Row[]) =>
   rows.map((row) => `[${row.key} · ${row.at.slice(0, 16)}Z] ${said(row)}`).join("\n\n");
 
-export function asked(store: Store, session: string, text: string): string {
+export function asked(store: Store, session: string, text: string, thread?: string): string {
   const tasks = [...new Set([...named(text), store.tasks.agentTasks()[session]?.id ?? ""])].flatMap(
     (id) => store.tasks.get(id) ?? [],
   );
@@ -300,6 +332,13 @@ export function asked(store: Store, session: string, text: string): string {
   const toNewest =
     to === undefined || to === "" ? [] : newest(store.messages.said(to, 40), [...cited, ...given]);
 
+  const home = thread === undefined ? undefined : store.threads.key(thread);
+
+  const inThread =
+    home === undefined || home === to
+      ? []
+      : newest(store.messages.said(home, 40), [...cited, ...given]);
+
   return [
     tasks.length > 0
       ? `The tasks it names or this session works on, with my words:\n\n${tasks.map((task) => render(task, store.threads.names())).join("\n\n")}`
@@ -310,6 +349,9 @@ export function asked(store: Store, session: string, text: string): string {
       : "",
     since.length > 0
       ? `What this session has said since, newest last:\n\n${since.map((row) => `[${row.key} · ${row.at.slice(0, 16)}Z]\n${row.body.slice(0, 1000)}`).join("\n\n")}`
+      : "",
+    inThread.length > 0
+      ? `My newest messages in the thread this session works for, which may be about other work:\n\n${quote(inThread)}`
       : "",
     toNewest.length > 0
       ? `My newest messages in the thread it goes to, which that thread's own session answers:\n\n${quote(toNewest)}`
@@ -351,7 +393,7 @@ export async function judge(input: string, kind: Kind = "brief"): Promise<Verdic
       "--tools",
       "",
       "--system-prompt",
-      `${kind === "rules" ? RULES : SYSTEM}\n\n${rules}`,
+      `${PROMPTS[kind]}\n\n${rules}`,
     ],
     schema: Judged,
     cwd: hexDir(),
@@ -370,7 +412,7 @@ const SentBack = z.object({
 
 type Sent = z.infer<typeof SentBack>;
 
-export type Kind = "brief" | "rules";
+export type Kind = keyof typeof PROMPTS;
 
 export type Checked = {
   kind: Kind;
@@ -386,12 +428,12 @@ export async function check(
   store: Store,
   decide = judge,
   rules?: string[],
+  thread?: string,
 ): Promise<Checked | undefined> {
   const edit = ruleEdit(hook, rules);
-  const handoff = brief(hook);
 
   const onRules =
-    edit === undefined ? undefined : await checkAs("rules", edit, hook, store, decide);
+    edit === undefined ? undefined : await checkAs("rules", edit, hook, store, decide, thread);
 
   const sentBack =
     onRules !== undefined &&
@@ -399,10 +441,27 @@ export async function check(
     onRules.verdict.verdict === "revise" &&
     onRules.through !== true;
 
-  return sentBack || handoff === undefined || handoff === ""
+  const handoff = brief(hook);
+  const toOwner = message(hook);
+
+  if (sentBack) {
+    return onRules;
+  }
+
+  if (handoff !== undefined && handoff !== "") {
+    return await checkAs("brief", handoff, hook, store, decide, thread);
+  }
+
+  return toOwner === undefined
     ? onRules
-    : await checkAs("brief", handoff, hook, store, decide);
+    : await checkAs("message", toOwner, hook, store, decide, thread);
 }
+
+const NAMED: Record<Kind, [string, string]> = {
+  brief: ["brief", "The brief"],
+  rules: ["change to my rules", "The change to my rules"],
+  message: ["message to me", "The message to me"],
+};
 
 async function checkAs(
   kind: Kind,
@@ -410,9 +469,11 @@ async function checkAs(
   hook: Hook,
   store: Store,
   decide: typeof judge,
+  thread?: string,
 ): Promise<Checked> {
   const session = hook.session_id ?? "";
-  const key = kind === "rules" ? "intent:rules" : "intent";
+  const key = kind === "brief" ? "intent" : `intent:${kind}`;
+  const [name, what] = NAMED[kind];
   const sent = SentBack.safeParse(JSON.parse(store.seen.get(session, key) || "null")).data;
 
   const last =
@@ -424,13 +485,11 @@ async function checkAs(
 
   const before =
     last !== undefined &&
-    `This session's last ${kind === "rules" ? "change to my rules" : "brief"}, ${Math.round((Date.now() - last.at) / 60_000)} min ago, went back with your notes, and this one may be its rewrite. That one:\n\n${last.brief}\n\nYour notes on it:\n\n${last.notes}`;
+    `This session's last ${name}, ${Math.round((Date.now() - last.at) / 60_000)} min ago, went back with your notes, and this one may be its rewrite. That one:\n\n${last.brief}\n\nYour notes on it:\n\n${last.notes}`;
 
   const words =
-    asked(store, session, text) ||
+    asked(store, session, text, thread) ||
     "No task or message of mine was found for this session; judge it by my rules and memory.";
-
-  const what = kind === "rules" ? "The change to my rules" : "The brief";
 
   try {
     const verdict = await decide(
@@ -473,7 +532,7 @@ if (import.meta.main) {
       process.env.HEX_OWNER;
 
     const began = Date.now();
-    const result = await check(hook, open(stateDir()));
+    const result = await check(hook, open(stateDir()), judge, undefined, thread);
 
     if (result) {
       const { kind, verdict, text, round, through, error } = result;
@@ -502,10 +561,11 @@ if (import.meta.main) {
             ? "The check reads your rewrite next to these notes."
             : "This is its last sendback: your next version goes through whatever the check says, so weigh these notes yourself.";
 
-        const reason =
-          kind === "rules"
-            ? `Intent check: the owner didn't ask for this change to their rules.\n\n${verdict.notes}\n\nWhere their words do ask for it, make the change again. ${next}`
-            : `Intent check: this brief drifts from what the owner asked.\n\n${verdict.notes}\n\nRewrite the brief and start it again. ${next}`;
+        const reason = {
+          rules: `Intent check: the owner didn't ask for this change to their rules.\n\n${verdict.notes}\n\nWhere their words do ask for it, make the change again. ${next}`,
+          brief: `Intent check: this brief drifts from what the owner asked.\n\n${verdict.notes}\n\nRewrite the brief and start it again. ${next}`,
+          message: `Intent check: this message drifts from what the owner asked.\n\n${verdict.notes}\n\nRewrite it and send it again. ${next}`,
+        }[kind];
 
         console.log(
           JSON.stringify({
