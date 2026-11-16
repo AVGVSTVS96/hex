@@ -288,7 +288,9 @@ case "${1:-}" in
     missing=
     for tool in git curl jq python3; do command -v "$tool" >/dev/null || missing="$missing $tool"; done
     [ -z "$missing" ] || { echo "restore: install$missing with the system's package manager first (INSTALL.md step 1)" >&2; exit 1; }
-    # Each thing a list installs is made by its line when it's missing.
+    # Each thing a list installs is made by its line when it's missing. A line that fails is said and fails restore at
+    # its end, once the rest is set up, so one broken install leaves no unit off.
+    failed=
     for list in $(lists); do
       cd "$(dirname "$list")"
       eval "set -- $(jq -r '.install // {} | to_entries | map(.key, .value) | @sh' "$list")"
@@ -297,7 +299,7 @@ case "${1:-}" in
         shift 2
         there "$need" && continue
         echo "installing $need"
-        sh -c "$how" </dev/null && there "$need" || { echo "restore: \`$how\` didn't make $need" >&2; exit 1; }
+        sh -c "$how" </dev/null && there "$need" || { echo "restore: \`$how\` didn't make $need" >&2; failed=1; }
       done
     done
     cd "$home"
@@ -360,7 +362,7 @@ case "${1:-}" in
     # The hub writes its pid as it starts.
     tries=0
     while ! running && [ $((tries += 1)) -le 30 ] && starting; do sleep 1; done
-    exec "$hex/bin/hex" doctor
+    "$hex/bin/hex" doctor && [ -z "$failed" ]
     ;;
   doctor)
     shell_path
