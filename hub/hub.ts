@@ -9,12 +9,12 @@ import { z } from "zod";
 import { sessionsBeside } from "./besides.ts";
 import { threadCalls } from "./calls.ts";
 import * as claude from "./claude.ts";
-import { clock } from "./clock.ts";
 import { failedStarts } from "./failing.ts";
 import type { Failed } from "./failing.ts";
 import { sessionFiles } from "./files.ts";
 import { holding } from "./holds.ts";
 import { threadInbox } from "./inbox.ts";
+import { turnInterrupts } from "./interrupt.ts";
 import { keeping, landed, OwedRow } from "./kept.ts";
 import type { Owing } from "./kept.ts";
 import { STARTUP } from "./loaded.ts";
@@ -156,12 +156,6 @@ export type Limits = {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // How long a hub waits for a store that doesn't answer as it starts before the owner hears.
   tellAfter: number;
-};
-
-type Run = {
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The owner's Stop pressing Esc in the session, until the transcript shows it landed.
-  interrupting?: Promise<void> | undefined;
 };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -415,10 +409,6 @@ export async function transcribe(recording: () => Promise<string>): Promise<stri
 
   return trimmed === undefined || trimmed === "" ? undefined : trimmed;
 }
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Claude Code shows nothing when Esc meets a turn with nothing left to interrupt, so a press gets this long to show in the transcript; a real one shows in under a second.
-const ESC_LANDS_WITHIN = 5000;
 
 // Claude Code keeps a conversation in the prompt cache for an hour after its last request, and compacts a background session only when told to. It retries a dropped HTTP server at about 0, 1, 3, 7 and 15 seconds, then gives up for good. https://docs.claude.com/en/docs/build-with-claude/prompt-caching
 const LIMITS: Limits = {
@@ -738,8 +728,15 @@ export async function startHub({
   });
 
   const stalls = stalledTurns({ runs, threads, turns, inbox, failed });
-  const hubRuns = runs.part((): Run => ({}));
-  const runOf = hubRuns.of;
+
+  const interrupts = turnInterrupts({
+    runs,
+    threads,
+    turns,
+    kept,
+    closing: closing.signal,
+    turnEnded,
+  });
 
   function turnBegan(thread: string) {
     state(thread, true, false);
@@ -1009,78 +1006,6 @@ export async function startHub({
     }
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The owner's Stop ends the turn as Esc does in a terminal: the session and what it started in the background keep running, and the next message continues the conversation. A turn the hooks report over is left alone; one they never reported (the hub restarted) is the daemon's to say. An Esc that doesn't land changes nothing, and the owner can press Stop again.
-  function interrupt(thread: string): Promise<void> {
-    const run = runOf(thread);
-    run.interrupting ??= press(thread).finally(() => (run.interrupting = undefined));
-
-    return run.interrupting;
-  }
-
-  async function press(thread: string): Promise<void> {
-    const turn = turns.of(thread);
-    const session = threads.current(thread);
-
-    if (!present(session) || turn.is === "background") {
-      return;
-    }
-
-    const agent = await claude.listing(session);
-
-    if (!agent) {
-      return;
-    }
-
-    if (turn.is === "done" && agent.state !== "working") {
-      return;
-    }
-
-    const deadline = new AbortController();
-
-    const timer = clock.setTimeout(() => {
-      deadline.abort();
-    }, ESC_LANDS_WITHIN);
-
-    const pressed = new Date().toISOString();
-
-    let how: Awaited<ReturnType<typeof claude.interrupt>> | undefined;
-
-    try {
-      how = await claude.interrupt(
-        threads.cwd(thread),
-        session,
-        AbortSignal.any([deadline.signal, closing.signal]),
-      );
-    } catch (error) {
-      process.stderr.write(`hub: couldn't interrupt ${thread}'s turn: ${String(error)}\n`);
-    } finally {
-      clock.clearTimeout(timer);
-    }
-
-    if (closing.signal.aborted || threads.current(thread) !== session) {
-      return;
-    }
-
-    if (how === "interrupted") {
-      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-      // An interrupt runs no Stop hook, so the hub records the turn's end in hex's record of it, as of the press, settling what the session took: a turn begun since then is left running.
-      await kept((store) => store.turns.handled(session, pressed), undefined);
-      await turnEnded(thread, true);
-
-      if (
-        (await claude.listing(session))?.state !== "working" &&
-        turns.of(thread).is === "background"
-      ) {
-        await turnEnded(thread);
-      }
-
-      return;
-    }
-
-    process.stderr.write(`hub: Esc didn't interrupt ${thread}'s turn\n`);
-  }
-
   function halt(thread: string) {
     failing.halted(thread);
 
@@ -1154,7 +1079,7 @@ export async function startHub({
     name: (thread: string) => threads.get(thread)?.name,
     cwd: (thread: string) => threads.get(thread)?.cwd,
     stop: halt,
-    interrupt,
+    interrupt: interrupts.interrupt,
     answer: (thread: string, request_id: string, behavior: "allow" | "deny") => {
       const { phase } = sessions.of(thread);
 
