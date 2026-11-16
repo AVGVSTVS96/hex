@@ -382,30 +382,7 @@ function startupFiles(hex: string | undefined) {
 
 const ignore = (): void => undefined;
 
-export async function startHub({
-  stateDir,
-  storeDir = storeOf(stateDir),
-  channel,
-  server,
-  port = PORT,
-  main,
-  mainName = "main",
-  general = false,
-  call,
-  state,
-  failed,
-  waits,
-  permission,
-  questions,
-  args = () => [],
-  fresh = () => false,
-  limits,
-  hexDir = process.cwd(),
-  launcher = "claude",
-  startup = startupFiles(process.env.HEX_STARTUP),
-  link,
-  journal,
-}: {
+export type HubOptions = {
   stateDir: string;
   storeDir?: string | undefined;
   channel: string;
@@ -438,7 +415,32 @@ export async function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The systemd journal General follows for units that keep restarting; a hub without one follows none.
   journal?: (() => string[]) | undefined;
-}) {
+};
+
+export async function startHub({
+  stateDir,
+  storeDir = storeOf(stateDir),
+  channel,
+  server,
+  port = PORT,
+  main,
+  mainName = "main",
+  general = false,
+  call,
+  state,
+  failed,
+  waits,
+  permission,
+  questions,
+  args = () => [],
+  fresh = () => false,
+  limits,
+  hexDir = process.cwd(),
+  launcher = "claude",
+  startup = startupFiles(process.env.HEX_STARTUP),
+  link,
+  journal,
+}: HubOptions) {
   const {
     idleStop,
     cacheWarm,
