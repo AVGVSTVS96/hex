@@ -5,7 +5,11 @@ import { z } from "zod";
 
 import { besideOf } from "./beside.ts";
 import { study } from "./ideas.ts";
-import { open } from "./store.ts";
+import { running } from "./running.ts";
+import type { Session } from "./running.ts";
+import { stalled } from "./stalled.ts";
+import { open, signalOf } from "./store.ts";
+import type { Row, Store } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
 const AT = /^\d{4}-\d\d-\d\d[T ]\d\d:\d\d$/u;
@@ -44,6 +48,7 @@ const notCron = (issue: { input: unknown }) =>
 
 const notAt = 'at must be "YYYY-MM-DD HH:MM", or a list of them';
 const notIdea = "idea must be an idea's id, like t-12";
+const notOn = 'on must list the signals it runs on, like ["job-failed"]';
 const At = z.string().refine(isAt, { error: notAt });
 
 const JobSchema = z
@@ -57,6 +62,7 @@ const JobSchema = z
         .string({ error: notIdea })
         .regex(/^t-\d+$/u, { error: notIdea })
         .optional(),
+      on: z.array(z.string().min(1), { error: notOn }).min(1, { error: notOn }).optional(),
       check: z.boolean({ error: "check must be true or false" }).optional(),
       watch: z
         .string({ error: "watch must be the name the owner knows it by" })
@@ -65,8 +71,8 @@ const JobSchema = z
     },
     { error: "prompt is missing" },
   )
-  .refine((job) => job.cron !== undefined || job.at !== undefined, {
-    error: "it needs a cron or an at",
+  .refine((job) => job.cron !== undefined || job.at !== undefined || job.on !== undefined, {
+    error: "it needs a cron, an at or an on",
   })
   .refine(
     (job) =>
@@ -126,12 +132,26 @@ export function nextRun(
   return nexts.length > 0 ? Math.min(...nexts) : undefined;
 }
 
+const WHYS_SHOWN = 20;
+const WHY_LENGTH = 300;
+
+function whyNow(heard: Row[]) {
+  const whys = heard
+    .slice(0, WHYS_SHOWN)
+    .map((row) => `- ${(row.body.split("\n")[0] ?? "").slice(0, WHY_LENGTH)}`);
+
+  const more = heard.length - WHYS_SHOWN;
+
+  return `\n\nWhy now:\n${whys.join("\n")}${more > 0 ? `\n- and ${more} more` : ""}`;
+}
+
 export function check(
   storeDir: string,
   hexDir: string,
   main: string,
   now = Math.floor(Date.now() / MINUTE),
   research = study,
+  sessions: (store: Store) => Map<string, Session> = running,
 ) {
   const store = open(storeDir);
   let text: string;
@@ -191,20 +211,43 @@ export function check(
     }
   }
 
+  const alive = sessions(store);
+  stalled(store, alive.values(), now * MINUTE);
+  const signals = store.scheduler.signals();
+
+  const where = (job: Job) =>
+    job.thread === undefined || job.check === true ? besideOf(job.thread ?? main) : job.thread;
+
   store.write(() => {
     for (const [name, minute] of slots) {
       const job = jobs[name];
 
       if (job !== undefined && job.idea === undefined) {
-        store.scheduler.fire(
-          name,
-          minute,
-          job.thread === undefined || job.check === true
-            ? besideOf(job.thread ?? main)
-            : job.thread,
-          `[${name}] ${job.prompt}`,
-          minute < now,
-        );
+        store.scheduler.fire(name, minute, where(job), `[${name}] ${job.prompt}`, minute < now);
+      }
+    }
+
+    const busy = new Set<string>();
+
+    for (const [name, job] of Object.entries(jobs)) {
+      const heard = signals.filter((row) => job.on?.includes(signalOf(row.to) ?? "") === true);
+
+      if (heard.length === 0 || job.idea !== undefined) {
+        continue;
+      }
+
+      if (store.scheduler.running(name, [...alive.keys()])) {
+        for (const row of heard) {
+          busy.add(row.key);
+        }
+      } else {
+        store.scheduler.fireOn(name, heard, where(job), `[${name}] ${job.prompt}${whyNow(heard)}`);
+      }
+    }
+
+    for (const row of signals) {
+      if (!busy.has(row.key)) {
+        store.messages.take(row.key, "schedule");
       }
     }
 

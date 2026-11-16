@@ -40,6 +40,8 @@ export type { Pin } from "./store/pins.ts";
 
 export { waits } from "./store/questions.ts";
 
+export { signalOf, signalTo } from "./store/scheduler.ts";
+
 export type { Answer, NewQuestion, Question } from "./store/questions.ts";
 
 export type { NewTask, Status, Task, TaskChange, Words } from "./store/tasks.ts";
