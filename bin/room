@@ -12,7 +12,7 @@ if [ "$(uname)" = Darwin ]; then
   free=$(memory_pressure | awk '/free percentage/ { print int($NF) }')
   power=$(pmset -g batt | grep -q "AC Power" && echo "on power" || echo "on battery")
   heat=$(pmset -g therm | awk -F'= *' '/CPU_Speed_Limit/ && $2 < 100 { hot = 1 } /level set to [1-9]/ { hot = 1 } END { if (hot) print "slowed by heat" }')
-  echo "cpu ${busy}% busy, memory ${free}% free, disk ${disk} GB free, $power${heat:+, $heat}"
+  reading="cpu ${busy}% busy, memory ${free}% free, disk ${disk} GB free, $power${heat:+, $heat}"
   [ -z "$heat" ] || room=1
 else
   # The share of CPU time not idle between two reads of /proc/stat, as T3 Code measures a host. Time spent on niced
@@ -22,9 +22,14 @@ else
   sleep 2
   busy=$(stat | awk -v before="$before" '{ split(before, b, " "); print int(100 - 100 * ($1 - b[1]) / ($2 - b[2])) }')
   free=$(awk '/MemTotal/ { t = $2 } /MemAvailable/ { a = $2 } END { print int(100 * a / t) }' /proc/meminfo)
-  echo "cpu ${busy}% busy, memory ${free}% free, disk ${disk} GB free"
+  reading="cpu ${busy}% busy, memory ${free}% free, disk ${disk} GB free"
 fi
-[ "$busy" -le "$busiest" ] && [ "$free" -ge 20 ] && [ "$disk" -ge 25 ] || room=1
+short=
+[ "$busy" -le "$busiest" ] || short="$short, CPU over ${busiest}%"
+[ "$free" -ge 20 ] || short="$short, memory under 20% free"
+[ "$disk" -ge 25 ] || short="$short, disk under 25 GB free"
+[ -z "$short" ] || room=1
+echo "$reading${short:+ (no room:${short#,})}"
 origin=$(sed -n 's/.*"origin":"\([^"]*\)".*/\1/p' "$HOME/.t3-hex/userdata/server-runtime.json" 2>/dev/null)
 [ -n "$origin" ] && curl -fsm 3 -o /dev/null "$origin/.well-known/t3/environment" && echo "t3 $(cat "$HOME/.t3-hex/userdata/environment-id")"
 exit $room
