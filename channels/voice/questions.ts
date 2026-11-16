@@ -211,6 +211,10 @@ const MONEY = "money";
 const BACK = "Back to hex";
 const DECIDED_MS = 7 * 24 * 60 * 60_000;
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A pass reads every record (~$1.60 at API prices) and pinned posts change most turns, so what changes while nobody looks waits until they open Tasks, or an hour.
+const UNSEEN_PASS_MS = 60 * 60_000;
+
 const PICK = /\s*[([]?\s*(?:←\s*)?(?:(?:my|hex[’']s) pick)\s*[)\]]?/iu;
 
 type CallPlace = { stamp: string; title: string | undefined; started: string | undefined };
@@ -233,6 +237,8 @@ export class Questions extends Changes {
   private readonly stops: (() => void)[] = [];
   private readonly t3: T3;
   private readonly check: (why: string) => void;
+  private checked = 0;
+  private due: ReturnType<typeof setTimeout> | undefined;
   private seen?: { pins: string; t3: string };
   private callPlaces = new Map<string, CallPlace>();
   private readonly shots = new Map<string, string[]>();
@@ -294,22 +300,24 @@ export class Questions extends Changes {
     const checked = this.result?.at ?? "";
 
     if (
+      this.due !== undefined ||
       [...this.ledgers.values()].some((questions) =>
         questions.some(
           (question) => !question.answer && !question.settled && question.at > checked,
         ),
       )
     ) {
-      this.check("you opened Tasks");
+      this.checkNow("you opened Tasks");
     }
   }
 
   called() {
-    this.check("a call ended");
+    this.checkNow("a call ended");
   }
 
   close() {
     clearTimeout(this.pending);
+    clearTimeout(this.due);
     this.t3.close();
     this.links.close();
 
@@ -730,7 +738,7 @@ export class Questions extends Changes {
       }
 
       if (!refs.length) {
-        this.check("you took back an answer");
+        this.checkNow("you took back an answer");
       }
     } finally {
       this.taking.delete(id);
@@ -1263,8 +1271,30 @@ export class Questions extends Changes {
     this.seen = current;
 
     if (why) {
-      this.check(why);
+      this.checkUnseen(why);
     }
+  }
+
+  private checkNow(why: string) {
+    clearTimeout(this.due);
+    this.due = undefined;
+    this.checked = Date.now();
+    this.check(why);
+  }
+
+  private checkUnseen(why: string) {
+    if (this.due !== undefined) {
+      return;
+    }
+
+    const last = Math.max(this.checked, Date.parse(this.result?.at ?? "") || 0);
+
+    this.due = setTimeout(
+      () => {
+        this.checkNow(why);
+      },
+      Math.max(0, last + UNSEEN_PASS_MS - Date.now()),
+    );
   }
 
   private half(id: string): Pick<Question, "partly" | "undoing"> {
