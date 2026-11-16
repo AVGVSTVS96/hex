@@ -11,7 +11,8 @@ import { hexDir, open, replied, spoken, stateDir } from "./store.ts";
 import type { Row, Store } from "./store.ts";
 import { render } from "./tasks.ts";
 
-const MODEL = "opus";
+const MODEL = process.env.HEX_INTENT_MODEL ?? "opus";
+const EFFORT = process.env.HEX_INTENT_EFFORT ?? "high";
 const JUDGE_TIMEOUT_MS = 90_000;
 const REWRITE_WINDOW_MS = 15 * 60_000;
 const SENDBACKS_BEFORE_IT_GOES_THROUGH = 2;
@@ -389,7 +390,7 @@ export async function judge(input: string, kind: Kind = "brief"): Promise<Verdic
       "--model",
       MODEL,
       "--effort",
-      "medium",
+      EFFORT,
       "--tools",
       "",
       "--system-prompt",
