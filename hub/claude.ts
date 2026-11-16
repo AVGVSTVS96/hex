@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -212,6 +213,8 @@ async function listed(): Promise<Agent[] | undefined> {
 
 const ignore = (): undefined => undefined;
 
+let startedDaemon: ChildProcess | undefined;
+
 // Sessions stop unless a new supervisor connects within about a minute of the old one ending: https://code.claude.com/docs/en/agent-view#keep-sessions-running-after-the-supervisor-stops
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A supervisor that's down lists no sessions even while some run, so an empty list is trusted only once it answers.
@@ -220,15 +223,19 @@ async function awake(asking: () => boolean) {
     return true;
   }
 
-  if (!asking()) {
+  const starting = startedDaemon?.exitCode === null && startedDaemon.signalCode === null;
+
+  if (!asking() || starting) {
     return false;
   }
 
   process.stderr.write("hub: Claude's daemon isn't answering, so the hub starts it\n");
   const [command, args] = contained("claude", ["daemon", "run"]);
-  spawn(command, args, { detached: true, stdio: "ignore", env: inherited() })
-    .on("error", ignore)
-    .unref();
+  startedDaemon = spawn(command, args, { detached: true, stdio: "ignore", env: inherited() }).on(
+    "error",
+    ignore,
+  );
+  startedDaemon.unref();
 
   return false;
 }

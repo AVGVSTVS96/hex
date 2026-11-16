@@ -17,6 +17,9 @@ RestartSteps=5
 RestartMaxDelaySec=1min
 # A stop waits for a live call to end, the way a restart does.
 TimeoutStopSec=30min
+# A restart starts the next hub here, so the hub keeps taking messages until it exits, as on its own restart (HUP).
+# A stop (TERM) hands them to the next hub, which may run on another machine.
+RestartKillSignal=SIGHUP
 MemoryMax=2G
 # The hub answers every channel, so it runs ahead of everything else on the machine when the CPU or disk is short
 # (session.slice.d/hex.conf).

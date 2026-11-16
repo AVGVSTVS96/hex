@@ -180,6 +180,8 @@ case "${1:-}" in
     export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord" BUZZ_STATE_DIR="$home/state/buzz" T3_STATE_DIR="$home/state/t3"
     # A stop ends the hub the way a restart does, once no call is live, and waits for it to exit.
     trap '[ -z "${hub:-}" ] || { kill -TERM "$hub" 2>/dev/null; wait "$hub"; }; rm -f "$pidfile"; exit 0' INT TERM
+    # systemd restarting hex sends HUP to the hub as well as here (RestartKillSignal), so this waits for it to exit.
+    trap '[ -z "${hub:-}" ] || wait "$hub"; rm -f "$pidfile"; exit 0' HUP
     # A restart finds the door by HEX_DOOR, its file and port as it started, and replaces it only when one of them has
     # changed, as after an update or a rollback, or when it's gone.
     doors() { pgrep -P $$ -f channels/iikb/door.ts >/dev/null; }
