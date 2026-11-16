@@ -37,6 +37,7 @@ import type { Session } from "./running.ts";
 import { schedule } from "./schedule.ts";
 import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
 import type { Author, Kept, MessageId, NewRow, Row, Store } from "./store.ts";
+import { wentThrough, whenThrough } from "./through.ts";
 import { zoneOf } from "./zone.ts";
 
 export { dispatch, tool } from "./mcp.ts";
@@ -319,14 +320,6 @@ class Clients extends Map<string, Client> {
 }
 
 export const clients = new Clients();
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Each hub's restart of its threads whose session failed to start, run whenever a session this process started connects: a start just went through, so theirs can too.
-const retries = new Set<() => void>();
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Each hub's retry of its compactions that failed (the account pool out of usage, the network down), run whenever a session's turn ends with an answer: requests go through again.
-const answered = new Set<() => void>();
 
 let generalHub: Hub | undefined;
 const TELL_GENERAL_AFTER_FAILED_STARTS = 3;
@@ -2081,9 +2074,7 @@ export function startHub({
     }
 
     if (!given.length && !left.length) {
-      for (const each of answered) {
-        each();
-      }
+      wentThrough("turn");
     }
 
     wake();
@@ -2390,9 +2381,7 @@ export function startHub({
     })();
 
     if (was.is === "launching") {
-      for (const each of retries) {
-        each();
-      }
+      wentThrough("start");
     }
   }
 
@@ -2697,9 +2686,7 @@ export function startHub({
         setState(request.thread, request.busy, request.background === true);
 
         if (!request.busy && request.failed !== true) {
-          for (const each of answered) {
-            each();
-          }
+          wentThrough("turn");
         }
 
         return;
@@ -2925,8 +2912,6 @@ export function startHub({
   const unrestart =
     general && present(main) && journal !== undefined ? restarts(storeDir, main, journal) : ignore;
 
-  const retryCompactions = () => void recompact();
-
   const api = {
     deliver,
     sent,
@@ -2988,10 +2973,6 @@ export function startHub({
       unschedule();
       unhold();
       unrestart();
-      retries.delete(retry);
-      answered.delete(retryCompactions);
-      answered.delete(resumeStalled);
-      answered.delete(releaseBeside);
 
       if (generalHub === api) {
         generalHub = undefined;
@@ -3014,10 +2995,10 @@ export function startHub({
     },
   };
 
-  retries.add(retry);
-  answered.add(retryCompactions);
-  answered.add(resumeStalled);
-  answered.add(releaseBeside);
+  whenThrough("start", retry, closing.signal);
+  whenThrough("turn", () => void recompact(), closing.signal);
+  whenThrough("turn", resumeStalled, closing.signal);
+  whenThrough("turn", releaseBeside, closing.signal);
 
   if (general && present(main)) {
     generalHub = api;
