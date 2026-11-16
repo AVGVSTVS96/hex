@@ -6,14 +6,7 @@ import { basename, join } from "node:path";
 
 import { z } from "zod";
 
-import {
-  besideOf,
-  besideWhat,
-  jobOf,
-  lastWords,
-  prompt as besidePrompt,
-  run as runBeside,
-} from "./beside.ts";
+import { sessionsBeside } from "./besides.ts";
 import { threadCalls } from "./calls.ts";
 import * as claude from "./claude.ts";
 import { clock } from "./clock.ts";
@@ -35,8 +28,6 @@ import { present } from "./present.ts";
 import { threadRenewals } from "./renewals.ts";
 import { sessionRests } from "./rest.ts";
 import { restarts } from "./restarts.ts";
-import { live } from "./running.ts";
-import type { Session } from "./running.ts";
 import { threadRuns } from "./runs.ts";
 import { schedule } from "./schedule.ts";
 import { threadSessions } from "./sessions.ts";
@@ -722,6 +713,22 @@ export async function startHub({
     fresh,
   });
 
+  const besides = sessionsBeside({
+    threads,
+    files,
+    starts,
+    kept,
+    serving,
+    app,
+    main,
+    channel,
+    launcher,
+    zone,
+    ownTurnsOnly: () => clients.get(app)?.waits === true,
+    failed,
+    wake,
+  });
+
   const hubRuns = runs.part((): Run => ({}));
   const runOf = hubRuns.of;
 
@@ -1029,7 +1036,7 @@ export async function startHub({
 
     const [rows, besideThem] = await Promise.all([
       kept<Row[] | undefined>((store) => store.messages.untaken(threads.ids()), undefined),
-      besideRows(),
+      besides.rows(),
     ]);
 
     if (!rows || closed) {
@@ -1044,200 +1051,8 @@ export async function startHub({
       }
     }
 
-    for (const row of besideThem) {
-      if (row.meta?.stalled === undefined) {
-        void beside(row);
-      }
-    }
-
+    besides.runReady(besideThem);
     noLongerWaiting(new Set(rows.map((row) => row.key)));
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Each session running beside a thread, by the row it was started for, if this hub started it.
-  const besides = new Map<string, string | undefined>();
-  let besideStarted: Promise<void> = Promise.resolve();
-
-  const besideAddresses = () => threads.ids().map(besideOf);
-  const besideRows = () => kept((store) => store.messages.beside(besideAddresses()), []);
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A row beside a thread starts a session of its own, as hex in the thread's chat, which takes the row itself; one for a session that ran beside it resumes that session once its run is over, where this machine has its conversation. A client that shows only the turns its own messages start can't be spoken into from beside, so there the row goes to the thread.
-  async function beside(row: Row & { beside: string; resume?: string }) {
-    await besideStarted;
-    const thread = besideWhat(row.beside);
-    const resumed = row.resume;
-    const known = thread === undefined ? undefined : threads.get(thread);
-
-    if (
-      closed ||
-      thread === undefined ||
-      !known ||
-      [...besides.values()].includes(row.key) ||
-      (resumed !== undefined && besides.has(resumed))
-    ) {
-      return;
-    }
-
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // The row is this run's from here on, so a wake while the store is asked about it starts no second run.
-    const session = resumed !== undefined && claude.saved(resumed) ? resumed : randomUUID();
-    besides.set(session, row.key);
-
-    if (resumed !== undefined && live().has(resumed)) {
-      besides.delete(session);
-
-      return;
-    }
-
-    if (clients.get(app)?.waits === true) {
-      await kept((store) => store.messages.readdress(row.key, thread), false);
-      besides.delete(session);
-
-      return;
-    }
-
-    files.writeBeside(thread);
-
-    const code = await runBeside(
-      [
-        launcher,
-        "-p",
-        ...(session === resumed ? ["--resume", session] : ["--session-id", session]),
-        ...starts.launchArgs(thread),
-        "--settings",
-        files.besideSettingsOf(thread),
-        besidePrompt(app, row, zone()),
-      ],
-      {
-        cwd: threads.cwd(thread),
-        env: {
-          HEX_CHANNEL: channel,
-          HEX_THREAD: thread,
-          HEX_BESIDE: session,
-          CLAUDE_CODE_SESSION_NAME: `${known.name}/${jobOf(row)}`,
-        },
-        log: files.besideLog(session),
-      },
-    );
-
-    await besideEnded(thread, session, row.key, `exit ${code}`);
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Each thread's runs beside it end one at a time, so each reads what the one before it left.
-  const besideEnding = ordered();
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A run beside a thread that saw its turn through is a turn that went through. One that didn't, as on an API error, waits for one to go through anywhere, as a thread's turn does, and its chat hears once while runs there wait; one that waited already is left, and its chat hears that. The run is the hub's until the store has its end, so no look starts it again before then.
-  async function besideEnded(
-    thread: string,
-    session: string,
-    key?: string,
-    exit = "its session ended",
-  ) {
-    const said = lastWords(files.besideLog(session));
-
-    if (closed) {
-      return;
-    }
-
-    const { waited, given, left } = await besideEnding(thread, async () => {
-      const before = await besideRows();
-
-      const ended = await kept((store) => store.turns.besideEnded(session, key), {
-        given: [],
-        left: [],
-      });
-
-      besides.delete(session);
-
-      return {
-        waited: before.some(
-          (row) => row.beside === besideOf(thread) && row.meta?.stalled !== undefined,
-        ),
-        ...ended,
-      };
-    });
-
-    if (closed) {
-      return;
-    }
-
-    const why = said === "" ? exit : said;
-
-    for (const row of left) {
-      failed(
-        thread,
-        `[${jobOf(row)}] failed again beside this chat, so it won't run by itself again: ${why}`,
-        true,
-      );
-    }
-
-    const [first] = given;
-
-    if (first && !waited) {
-      failed(
-        thread,
-        `[${jobOf(first)}] ran beside this chat and failed: ${why}\nIt carries on once turns go through again.`,
-        true,
-      );
-    }
-
-    if (!given.length && !left.length) {
-      wentThrough("turn");
-    }
-
-    wake();
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // One run that waits beside a thread, for each turn that goes through, so the runs an outage stopped don't all start at once.
-  async function releaseBeside() {
-    await kept((store) => store.messages.supersede(besideAddresses()), undefined);
-    const stalled = (await besideRows()).filter((row) => row.meta?.stalled !== undefined);
-
-    if (stalled.some((row) => [...besides.values()].includes(row.key))) {
-      return;
-    }
-
-    const [next] = stalled;
-
-    if (next) {
-      void beside(next);
-    }
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // As the hub starts, a run beside a thread cut off with the machine gives back what it took, to run again; one that outlived the last hub is waited on to its end; and the logs of runs that ended go. No run starts until then (besideStarted), so none is taken for one cut off.
-  function besideStart() {
-    const alive = live();
-    files.sweepBesideLogs((session) => alive.has(session));
-
-    for (const run of alive.values()) {
-      const thread =
-        run.thread?.startsWith(`${app}:`) === true ? run.thread.slice(app.length + 1) : undefined;
-
-      if (
-        run.beside !== undefined &&
-        thread !== undefined &&
-        (thread === main || threads.has(thread))
-      ) {
-        void waitBeside(thread, run);
-      }
-    }
-
-    return kept(async (store) => {
-      for (const dead of await store.turns.unfinishedBeside([...alive.keys()])) {
-        await store.turns.besideEnded(dead, undefined, undefined, false);
-      }
-    }, undefined);
-  }
-
-  async function waitBeside(thread: string, run: Session) {
-    besides.set(run.id, undefined);
-    await claude.exited(run.pid);
-    await besideEnded(thread, run.id);
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1639,7 +1454,7 @@ export async function startHub({
   }
 
   const unwatch = await kept((store) => store.watch(wake), ignore);
-  besideStarted = besideStart();
+  besides.hubStarted();
   const unschedule = present(generalThread) ? schedule(storeDir, hexDir, generalThread) : ignore;
   const unhold = present(generalThread) ? holding(storeDir) : ignore;
 
@@ -1749,7 +1564,7 @@ export async function startHub({
   whenThrough("start", () => void sessions.retry(), closing.signal);
   whenThrough("turn", () => void rests.recompact(), closing.signal);
   whenThrough("turn", resumeStalled, closing.signal);
-  whenThrough("turn", () => void releaseBeside(), closing.signal);
+  whenThrough("turn", () => void besides.release(), closing.signal);
 
   if (present(generalThread)) {
     generalHub = api;
