@@ -8,40 +8,21 @@ import { study } from "./ideas.ts";
 import { open } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
-const FIELDS = [
-  [0, 59],
-  [0, 23],
-  [1, 31],
-  [1, 12],
-  [0, 7],
-] as const;
-
-const PART = /^(?:\*|(\d+)(?:-(\d+))?)(?:\/(\d+))?$/u;
 const AT = /^\d{4}-\d\d-\d\d[T ]\d\d:\d\d$/u;
-const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MINUTE = 60_000;
 
-function fits(part: string, [min, max]: readonly [number, number]) {
-  const match = PART.exec(part);
-
-  if (!match) {
+function isCron(cron: string) {
+  if (cron.trim().split(/\s+/u).length !== 5) {
     return false;
   }
 
-  const [, from = String(min), to = from, step = "1"] = match;
+  try {
+    Bun.cron.parse(cron);
 
-  return Number(from) >= min && Number(to) <= max && Number(from) <= Number(to) && Number(step) > 0;
-}
-
-function isCron(cron: string) {
-  const fields = cron.trim().split(/\s+/u);
-
-  return (
-    fields.length === FIELDS.length &&
-    FIELDS.every((bounds, index) =>
-      (fields[index] ?? "").split(",").every((part) => fits(part, bounds)),
-    )
-  );
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isAt(at: string) {
@@ -116,109 +97,33 @@ export function parse(text: string): Record<string, Job> {
   );
 }
 
-type WallClock = { minute: number; hour: number; day: number; month: number; weekday: number };
+function afterMinute(cron: string, from: number, zone = Temporal.Now.timeZoneId()) {
+  const next = Bun.cron.parse(cron, from * MINUTE, { tz: zone });
 
-const clocks = new Map<string | undefined, Intl.DateTimeFormat>();
-
-function wall(minute: number, zone?: string): WallClock {
-  let clock = clocks.get(zone);
-
-  if (!clock) {
-    clock = new Intl.DateTimeFormat("en-US", {
-      timeZone: zone,
-      hourCycle: "h23",
-      weekday: "short",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-    clocks.set(zone, clock);
-  }
-
-  const part = Object.fromEntries(
-    clock.formatToParts(minute * MINUTE).map(({ type, value }) => [type, value]),
-  );
-
-  return {
-    minute: Number(part.minute),
-    hour: Number(part.hour),
-    day: Number(part.day),
-    month: Number(part.month),
-    weekday: DAYS.indexOf(part.weekday ?? ""),
-  };
-}
-
-function inField(spec: string, [min, max]: readonly [number, number], value: number) {
-  return spec.split(",").some((part) => {
-    const [range = "", step = "1"] = part.split("/");
-    const [from, to] = range.split("-");
-    const lo = range === "*" ? min : Number(from);
-    const hi = range === "*" || (to === undefined && part.includes("/")) ? max : Number(to ?? from);
-
-    return value >= lo && value <= hi && (value - lo) % Number(step) === 0;
-  });
-}
-
-function onCron(cron: string, at: WallClock) {
-  const [minute = "", hour = "", monthDay = "", month = "", weekDay = ""] = cron
-    .trim()
-    .split(/\s+/u);
-
-  const onMonthDay = inField(monthDay, FIELDS[2], at.day);
-
-  const onWeekDay =
-    inField(weekDay, FIELDS[4], at.weekday) || (at.weekday === 0 && inField(weekDay, FIELDS[4], 7));
-
-  const onDay =
-    monthDay !== "*" && weekDay !== "*" ? onMonthDay || onWeekDay : onMonthDay && onWeekDay;
-
-  return (
-    onDay &&
-    inField(minute, FIELDS[0], at.minute) &&
-    inField(hour, FIELDS[1], at.hour) &&
-    inField(month, FIELDS[3], at.month)
-  );
+  return next === null ? undefined : next.getTime() / MINUTE;
 }
 
 function minuteOf(at: string, zone = Temporal.Now.timeZoneId()) {
   return Temporal.PlainDateTime.from(at).toZonedDateTime(zone).epochMilliseconds / MINUTE;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-/* The next minute a job fires after `from`, looking no further than a year ahead: an hour its
-   cron can't fire in is passed over whole. */
 export function nextRun(
   job: Job,
   zone: string | undefined,
   from = Math.floor(Date.now() / MINUTE),
 ) {
-  const ats = [job.at ?? []]
+  const nexts = [job.at ?? []]
     .flat()
     .map((at) => minuteOf(at, zone))
     .filter((minute) => minute > from);
 
-  const next = ats.length > 0 ? Math.min(...ats) : undefined;
+  const onCron = job.cron === undefined ? undefined : afterMinute(job.cron, from, zone);
 
-  if (job.cron === undefined) {
-    return next;
+  if (onCron !== undefined) {
+    nexts.push(onCron);
   }
 
-  const cron = job.cron;
-  const anyMinute = `* ${cron.trim().split(/\s+/u).slice(1).join(" ")}`;
-  const end = Math.min(next ?? Infinity, from + 366 * 24 * 60);
-
-  for (let minute = from + 1; minute <= end;) {
-    const at = wall(minute, zone);
-
-    if (onCron(cron, at)) {
-      return minute;
-    }
-
-    minute += onCron(anyMinute, at) ? 1 : 60 - at.minute;
-  }
-
-  return next;
+  return nexts.length > 0 ? Math.min(...nexts) : undefined;
 }
 
 export function check(
@@ -272,22 +177,17 @@ export function check(
     }
   }
 
-  const cronsLeft = new Map(
-    Object.entries(jobs).flatMap(([name, job]) =>
-      job.cron === undefined ? [] : [[name, job.cron] as const],
-    ),
-  );
+  for (const [name, { cron }] of Object.entries(jobs)) {
+    if (cron === undefined) {
+      continue;
+    }
 
-  for (let minute = now; minute > since && cronsLeft.size > 0; minute--) {
-    const at = wall(minute, zone);
-
-    for (const [name, cron] of cronsLeft) {
-      if (!onCron(cron, at)) {
-        continue;
-      }
-
-      cronsLeft.delete(name);
-      found(name, minute);
+    for (
+      let slot = afterMinute(cron, since, zone);
+      slot !== undefined && slot <= now;
+      slot = afterMinute(cron, slot, zone)
+    ) {
+      found(name, slot);
     }
   }
 
