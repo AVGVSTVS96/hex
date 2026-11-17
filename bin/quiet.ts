@@ -28,7 +28,7 @@ const turnEndedSinceClaudeCodeLastCalledItBusy = (session: Session) =>
 
 mkdirSync(sessions, { recursive: true });
 
-function midTurn() {
+async function midTurn() {
   const asking = sessionsAskingForTheUpdateWithTheirAskTime();
 
   const turnWaitingOnTheUpdateItAskedFor = (session: Session) =>
@@ -39,7 +39,7 @@ function midTurn() {
           Number(at),
     );
 
-  return running(store)
+  return (await running(store))
     .values()
     .filter(
       (session) =>
@@ -57,9 +57,10 @@ function midTurn() {
 await new Promise<void>((resolve) => {
   let told = "";
   let timer: Timer | undefined;
+  let queue = Promise.resolve();
 
-  const look = () => {
-    const now = midTurn();
+  const check = async () => {
+    const now = await midTurn();
 
     if (now !== "" && now !== told) {
       console.log(`waiting on: ${now}`);
@@ -70,17 +71,24 @@ await new Promise<void>((resolve) => {
     if (now === "") {
       timer ??= setTimeout(() => {
         timer = undefined;
-
-        if (midTurn() === "") {
-          resolve();
-        } else {
-          look();
-        }
+        queue = queue.then(settled);
       }, settle);
     } else {
       clearTimeout(timer);
       timer = undefined;
     }
+  };
+
+  const settled = async () => {
+    if ((await midTurn()) === "") {
+      resolve();
+    } else {
+      await check();
+    }
+  };
+
+  const look = () => {
+    queue = queue.then(check);
   };
 
   watch(sessions, look);

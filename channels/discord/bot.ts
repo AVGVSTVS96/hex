@@ -626,7 +626,7 @@ async function images(attachments: Collection<string, Attachment>): Promise<stri
   return paths.filter((path) => path !== undefined);
 }
 
-function serve(token: string) {
+async function serve(token: string) {
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -680,7 +680,7 @@ function serve(token: string) {
         await threadChannel(thread)
       ).send({ content: text, flags: MessageFlags.SuppressEmbeds });
 
-      said(thread, sent.id, text);
+      await said(thread, sent.id, text);
 
       return sent.id;
     },
@@ -936,13 +936,13 @@ function serve(token: string) {
 
   const link = (thread: string) => `https://discord.com/channels/${guild().id}/${thread}`;
 
-  function said(
+  async function said(
     thread: string,
     id: string | undefined,
     text: string,
     meta: Record<string, string> = {},
   ) {
-    hub.sent(thread, { ...(id !== undefined && { key: id }), content: text, meta });
+    await hub.sent(thread, { ...(id !== undefined && { key: id }), content: text, meta });
   }
 
   async function place(name: string, where?: string, about?: string, tags: string[] = []) {
@@ -952,7 +952,7 @@ function serve(token: string) {
       const thread = await parent.threads.create({ name });
 
       if (filled(about)) {
-        said(thread.id, (await thread.send(about)).id, about);
+        await said(thread.id, (await thread.send(about)).id, about);
       }
 
       return { thread: thread.id, link: link(thread.id) };
@@ -973,7 +973,7 @@ function serve(token: string) {
       appliedTags: applied.map((tag) => tag.id),
     });
 
-    said(opened.id, opened.id, about ?? name);
+    await said(opened.id, opened.id, about ?? name);
 
     return { thread: opened.id, link: link(opened.id) };
   }
@@ -1054,7 +1054,7 @@ function serve(token: string) {
       components: verdicts(request.request_id),
     });
 
-    said(thread, sent.id, sent.content, { permission: request.request_id });
+    await said(thread, sent.id, sent.content, { permission: request.request_id });
     asking.set(thread, (asking.get(thread) ?? new Set()).add(sent.id));
   }
 
@@ -1078,7 +1078,7 @@ function serve(token: string) {
   const questionAt = (thread: string, message: MessageId) => ledger.find(thread, message);
 
   async function redraw(thread: string, message: MessageId): Promise<void> {
-    const question = questionAt(thread, message);
+    const question = await questionAt(thread, message);
 
     if (question === undefined || question.options.length === 0) {
       return;
@@ -1121,9 +1121,9 @@ function serve(token: string) {
     return drawn;
   }
 
-  function quotable(ref: string): string | undefined {
+  async function quotable(ref: string): Promise<string | undefined> {
     const id = ref.replace(/^discord:/u, "");
-    const kept = /^\d+$/u.test(id) ? undefined : hub.said(id)?.meta;
+    const kept = /^\d+$/u.test(id) ? undefined : (await hub.said(id))?.meta;
 
     const quoted =
       kept === undefined
@@ -1137,13 +1137,13 @@ function serve(token: string) {
   }
 
   async function answerQuestion(thread: string, message: MessageId, label: string, via: string) {
-    const question = questionAt(thread, message);
+    const question = await questionAt(thread, message);
 
     if (question === undefined || question.answer !== undefined) {
       return;
     }
 
-    const answered = hub.deliver(
+    const answered = await hub.deliver(
       thread,
       hub.name(thread) ?? thread,
       {
@@ -1159,7 +1159,7 @@ function serve(token: string) {
           answered_in: answeredIn(via),
         },
       },
-      () => ledger.answered(thread, message, label, via),
+      { answered: { message, label, via } },
     );
 
     if (answered) {
@@ -1168,18 +1168,18 @@ function serve(token: string) {
   }
 
   async function settleQuestion(thread: string, message: MessageId, note: string) {
-    const question = questionAt(thread, message);
+    const question = await questionAt(thread, message);
 
     if (question === undefined || !waits(question)) {
       return;
     }
 
-    ledger.settled(thread, message, note);
+    await ledger.settled(thread, message, note);
     await draw(thread, message);
   }
 
   async function reopenQuestion(thread: string, message: MessageId, via: string) {
-    const question = questionAt(thread, message);
+    const question = await questionAt(thread, message);
 
     if (
       question === undefined ||
@@ -1191,7 +1191,7 @@ function serve(token: string) {
     const taken = question.answer?.label;
 
     const reopened = filled(taken)
-      ? hub.deliver(
+      ? await hub.deliver(
           thread,
           hub.name(thread) ?? thread,
           {
@@ -1205,9 +1205,9 @@ function serve(token: string) {
               [isPoll(question) ? "poll_message_id" : "button_message_id"]: String(message),
             },
           },
-          () => ledger.reopened(thread, message),
+          { reopened: { message } },
         )
-      : ledger.reopened(thread, message);
+      : await ledger.reopened(thread, message);
 
     if (reopened) {
       await draw(thread, message);
@@ -1276,7 +1276,7 @@ function serve(token: string) {
       const { thread, ch } = await conversation(caller, args.thread);
       const access = loadAccess();
       const text = tappable(args.text);
-      const reply_to = args.reply_to === undefined ? undefined : quotable(args.reply_to);
+      const reply_to = args.reply_to === undefined ? undefined : await quotable(args.reply_to);
       const files = sendable(args.files ?? []);
       const labels = args.buttons;
       const multiple = args.multiple === true;
@@ -1307,13 +1307,13 @@ function serve(token: string) {
             }),
           });
 
-          const pictures = i === 0 ? keepPictures(sent.id, files) : undefined;
-          said(thread, sent.id, content, pictures === undefined ? {} : { image_path: pictures });
+          const shots = i === 0 ? keepPictures(sent.id, files) : undefined;
+          await said(thread, sent.id, content, shots === undefined ? {} : { image_path: shots });
           sentIds.push(sent.id);
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        said(thread, undefined, chunks.slice(sentIds.length).join("\n"), { failed: msg });
+        await said(thread, undefined, chunks.slice(sentIds.length).join("\n"), { failed: msg });
         throw new Error(
           `reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`,
           { cause: error },
@@ -1327,12 +1327,12 @@ function serve(token: string) {
       }
 
       if (asks) {
-        ledger.ask(thread, last, text, labels, {
+        await ledger.ask(thread, last, text, labels, {
           multiple,
           ...(files.length > 0 && sentIds[0] !== undefined && { attached: [sentIds[0]] }),
         });
       } else if (text !== "") {
-        ledger.said(thread, last, text);
+        await ledger.said(thread, last, text);
       }
 
       return sentIds.length === 1
@@ -1364,7 +1364,7 @@ function serve(token: string) {
 
     edit_message: async (caller, args) => {
       const { thread, ch } = await conversation(caller);
-      const pinned = ledger.pin(thread);
+      const pinned = await ledger.pin(thread);
 
       if (pinned !== undefined && pinned.message === args.message_id && args.text !== undefined) {
         if (args.files !== undefined) {
@@ -1372,7 +1372,7 @@ function serve(token: string) {
         }
 
         await ledger.rewrite(thread, post, tappable(args.text), pinned.message);
-        said(thread, undefined, tappable(args.text), {
+        await said(thread, undefined, tappable(args.text), {
           edited: "true",
           message_id: pinned.message,
         });
@@ -1392,8 +1392,9 @@ function serve(token: string) {
           : msg;
 
       if (args.text !== undefined) {
-        said(thread, undefined, tappable(args.text), { edited: "true", message_id: edited.id });
-        ledger.edited(thread, edited.id, args.text);
+        const meta = { edited: "true", message_id: edited.id };
+        await said(thread, undefined, tappable(args.text), meta);
+        await ledger.edited(thread, edited.id, args.text);
       }
 
       if (args.settled === true) {
@@ -1455,8 +1456,8 @@ function serve(token: string) {
         },
       });
 
-      said(thread, sent.id, args.question, { poll: args.options.join(" / ") });
-      ledger.ask(thread, sent.id, args.question, args.options, {
+      await said(thread, sent.id, args.question, { poll: args.options.join(" / ") });
+      await ledger.ask(thread, sent.id, args.question, args.options, {
         poll: sent.id,
         multiple: args.multiple === true,
       });
@@ -1499,7 +1500,7 @@ function serve(token: string) {
       if (await gone(thread)) {
         const name = hub.name(thread) ?? thread;
         void hub.retire(thread);
-        void ledger.forget(thread);
+        await ledger.forget(thread);
 
         return `forgot "${name}": its Discord thread no longer exists`;
       }
@@ -1530,7 +1531,7 @@ function serve(token: string) {
 
   const dms = new Set<string>();
 
-  const hub = startHub({
+  const hub = await startHub({
     stateDir: STATE_DIR,
     channel: "plugin:discord@hex",
     server,
@@ -1681,8 +1682,8 @@ function serve(token: string) {
       },
     };
 
-    hub.deliver(ch.id, nameOf(ch), message);
-    ledger.heard(ch.id, msg.id, message.content, message.meta.reply_to_message_id);
+    await hub.deliver(ch.id, nameOf(ch), message);
+    await ledger.heard(ch.id, msg.id, message.content, message.meta.reply_to_message_id);
   }
 
   async function servedThread(
@@ -1714,7 +1715,7 @@ function serve(token: string) {
 
     const who = user.partial ? await user.fetch() : user;
     const emoji = reaction.emoji.toString();
-    hub.deliver(ch.id, nameOf(ch), {
+    await hub.deliver(ch.id, nameOf(ch), {
       author: "owner",
       content: `(${removed ? "reaction removed" : "reaction"}: ${emoji})`,
       meta: {
@@ -1743,8 +1744,8 @@ function serve(token: string) {
       return;
     }
 
-    void ledger.deleted(ch.id, msg.id);
-    hub.deliver(ch.id, nameOf(ch), {
+    await ledger.deleted(ch.id, msg.id);
+    await hub.deliver(ch.id, nameOf(ch), {
       author: "other",
       content: "(deleted a message)",
       meta: {
@@ -1783,7 +1784,9 @@ function serve(token: string) {
 
     const vote = msg.poll.answers.get(answer.id)?.text ?? "";
     const who = await client.users.fetch(userId);
-    hub.deliver(
+    const question = await questionAt(ch.id, msg.id);
+
+    await hub.deliver(
       ch.id,
       nameOf(ch),
       {
@@ -1800,15 +1803,14 @@ function serve(token: string) {
           poll: msg.poll.question.text ?? "",
         },
       },
-      () => {
-        if (!removed) {
-          ledger.answered(ch.id, msg.id, vote, "discord", true);
-        } else if (questionAt(ch.id, msg.id)?.answer?.label === vote) {
-          ledger.reopened(ch.id, msg.id);
-        }
-
-        return true;
-      },
+      removed
+        ? question?.answer?.label === vote
+          ? { reopened: { message: msg.id }, always: true }
+          : undefined
+        : question && {
+            answered: { message: msg.id, label: vote, via: "discord", again: true },
+            always: true,
+          },
     );
   }
 
@@ -1819,8 +1821,8 @@ function serve(token: string) {
     user: { id: string; username: string },
     message: string,
   ) {
-    const question = questionAt(ch.id, message);
-    hub.deliver(
+    const question = await questionAt(ch.id, message);
+    await hub.deliver(
       ch.id,
       nameOf(ch),
       {
@@ -1835,7 +1837,7 @@ function serve(token: string) {
           button_message_id: message,
         },
       },
-      question && (() => ledger.answered(ch.id, message, label, "discord")),
+      question && { answered: { message, label, via: "discord" } },
     );
 
     if (question !== undefined) {
@@ -2123,7 +2125,7 @@ function serve(token: string) {
 
   client.on("threadDelete", (thread) => {
     process.stderr.write(`discord hub: thread ${thread.id} was deleted, forgetting it\n`);
-    void ledger.forget(thread.id);
+    ledger.forget(thread.id).catch(failed(`couldn't forget ${thread.id}'s questions and pin`));
     void hub.retire(thread.id);
   });
 
@@ -2139,9 +2141,9 @@ function serve(token: string) {
       writeFileSync(GUILD_FILE, `${JSON.stringify({ id })}\n`);
     }
 
-    hub.save();
+    hub.save().catch(failure("saving the threads' links"));
     void c.application?.commands.set(COMMANDS).catch(failure("registering slash commands"));
-    ledger.keep(post, (thread, error) => {
+    void ledger.keep(post, (thread, error) => {
       failed(`couldn't rewrite ${thread}'s status post`)(error);
     });
   });
@@ -2176,7 +2178,7 @@ if (TOKEN !== undefined && TOKEN !== "") {
   process.on("uncaughtException", (error) => {
     process.stderr.write(`discord hub: uncaught exception: ${String(error)}\n`);
   });
-  serve(TOKEN);
+  await serve(TOKEN);
 } else {
   process.stderr.write(`discord hub: no DISCORD_BOT_TOKEN in ${ENV_FILE}, Discord stays off\n`);
 }

@@ -30,7 +30,7 @@ function lastWrite(cwd: string, session: string) {
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A session of hex's that's mid-turn and has written nothing for a while signals stalled once for each quiet stretch, keyed by its last write.
-export function stalled(store: Store, sessions: Iterable<Session>, now = Date.now()) {
+export async function stalled(store: Store, sessions: Iterable<Session>, now = Date.now()) {
   for (const session of sessions) {
     if (!busy(session) || session.thread === undefined || session.cwd === undefined) {
       continue;
@@ -42,7 +42,7 @@ export function stalled(store: Store, sessions: Iterable<Session>, now = Date.no
       continue;
     }
 
-    store.scheduler.signal(
+    await store.scheduler.signal(
       "stalled",
       `${session.name ?? session.id} (session ${session.id}, thread ${session.thread}) is mid-turn and has written nothing since ${new Date(last).toISOString()}`,
       `${session.id}@${Math.floor(last)}`,

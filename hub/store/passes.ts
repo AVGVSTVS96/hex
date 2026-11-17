@@ -1,15 +1,13 @@
-import type { Database } from "bun:sqlite";
-
 import { z } from "zod";
 
 import { fromJson } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Sql, Write } from "./db.ts";
 
 const PassRow = z.object({ n: z.number(), pass: z.string() }).nullable();
 const PassJson = z.record(z.string(), z.string());
 
 export class Passes {
-  private readonly db: Database;
+  private readonly db: Sql;
   private readonly write: Write;
 
   constructor({ db, write }: Core) {

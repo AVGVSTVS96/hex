@@ -28,7 +28,7 @@ const { session_id, hook_event_name, agent_id } = ToolUse.parse(
 );
 
 if (HEX_THREAD !== undefined && HEX_THREAD !== "" && session_id !== "" && agent_id === undefined) {
-  const rows = open(stateDir()).messages.takeHeld(HEX_THREAD, session_id);
+  const rows = await open(stateDir()).messages.takeHeld(HEX_THREAD, session_id);
 
   if (rows.length > 0) {
     const zone = Temporal.Now.timeZoneId();

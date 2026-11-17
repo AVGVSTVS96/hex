@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { above } from "./fit.ts";
 import { statusPost } from "./status.ts";
-import { Store } from "./store.ts";
+import { File } from "./store.ts";
 
 let dir: string;
 
@@ -17,7 +17,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-const said = (store: Store, n: number, body: string) => {
+const said = (store: File, n: number, body: string) => {
   const key = `telegram:-100:${n}`;
   store.messages.deliver({
     key,
@@ -31,10 +31,10 @@ const said = (store: Store, n: number, body: string) => {
   return key;
 };
 
-test("a status post is the note over the thread's waiting questions, open tasks and the last five done", () => {
-  const store = new Store(dir);
+test("a status post is the note over the thread's waiting questions, open tasks and the last five done", async () => {
+  const store = new File(dir);
   const note = "Site: https://example.com";
-  expect(statusPost(store, "-100:7", note, 4096)).toBe(note);
+  expect(await statusPost(store.store, "-100:7", note, 4096)).toBe(note);
 
   store.questions.ask({
     app: "telegram",
@@ -80,7 +80,7 @@ test("a status post is the note over the thread's waiting questions, open tasks 
     proof: "shipped in abc123, https://example.com/pull/3.",
   });
 
-  expect(statusPost(store, "-100:7", note, 4096)).toBe(
+  expect(await statusPost(store.store, "-100:7", note, 4096)).toBe(
     [
       note,
       "**Waiting on you**\n- Ship today?",
@@ -89,8 +89,8 @@ test("a status post is the note over the thread's waiting questions, open tasks 
     ].join("\n\n"),
   );
   expect(
-    statusPost(
-      store,
+    await statusPost(
+      store.store,
       "-100:7",
       note,
       4096,
@@ -109,13 +109,13 @@ test("a status post is the note over the thread's waiting questions, open tasks 
     );
   }
 
-  const latest = statusPost(store, "-100:7", note, 4096);
+  const latest = await statusPost(store.store, "-100:7", note, 4096);
   expect(latest).toContain("- [Blur the logo less]");
   expect(latest).not.toContain("Rename the repo");
 });
 
-test("a status post fits the room the app gives one message, saying how many more there are", () => {
-  const store = new Store(dir);
+test("a status post fits the room the app gives one message, saying how many more there are", async () => {
+  const store = new File(dir);
 
   for (let n = 0; n < 40; n++) {
     store.tasks.create({
@@ -126,19 +126,21 @@ test("a status post fits the room the app gives one message, saying how many mor
   }
 
   for (let room = 300; room <= 2100; room += 7) {
-    expect(statusPost(store, "-100:7", "Note", room).length).toBeLessThanOrEqual(room);
+    expect((await statusPost(store.store, "-100:7", "Note", room)).length).toBeLessThanOrEqual(
+      room,
+    );
   }
 
-  const long = statusPost(store, "-100:7", "x".repeat(3000), 2000);
+  const long = await statusPost(store.store, "-100:7", "x".repeat(3000), 2000);
   expect(long.length).toBeLessThanOrEqual(2000);
   expect(long).toMatch(/^x+…\n\n\*\*Open\*\*\n…and 40 more$/u);
 
-  const text = statusPost(store, "-100:7", "Note", 2000);
+  const text = await statusPost(store.store, "-100:7", "Note", 2000);
   expect(text).toMatch(/\n…and \d+ more$/u);
 });
 
-test("a done task links to the first link in its proof, without the markdown or punctuation around it", () => {
-  const store = new Store(dir);
+test("a done task links to the first link in its proof, without the markdown or punctuation around it", async () => {
+  const store = new File(dir);
 
   const proofs = [
     "merged in `https://github.com/o/r/pull/3`.",
@@ -158,7 +160,9 @@ test("a done task links to the first link in its proof, without the markdown or 
     );
   }
 
-  expect(statusPost(store, "-100:7", "Note", 4096).split("**Done**\n")[1]?.split("\n")).toEqual([
+  expect(
+    (await statusPost(store.store, "-100:7", "Note", 4096)).split("**Done**\n")[1]?.split("\n"),
+  ).toEqual([
     "- Task 3",
     "- [Task 2](https://example.com/a)",
     "- [Task 1](https://en.wikipedia.org/wiki/Foo_(bar))",
@@ -183,8 +187,8 @@ test("a status post's note is its words above its first heading, plain or an old
   expect(above("Note\n## 🟡 Pending\n- old")).toBe("Note");
 });
 
-test("an open task links to the owner's latest words for it in the thread, to reply to with more", () => {
-  const store = new Store(dir);
+test("an open task links to the owner's latest words for it in the thread, to reply to with more", async () => {
+  const store = new File(dir);
 
   const task = store.tasks.create({
     title: "Fix the login page",
@@ -202,8 +206,8 @@ test("an open task links to the owner's latest words for it in the thread, to re
   });
   store.tasks.addWords(task.id, "telegram:42:90");
   expect(
-    statusPost(
-      store,
+    await statusPost(
+      store.store,
       "-100:7",
       "Note",
       4096,
@@ -212,8 +216,8 @@ test("an open task links to the owner's latest words for it in the thread, to re
   ).toContain("**Open**\n- [Fix the login page](https://t.me/c/-100:7/58)");
 });
 
-test("the owner's question hex answered waits on them, linked to the answer, and ideas get their own list", () => {
-  const store = new Store(dir);
+test("the owner's question hex answered waits on them, linked to the answer, and ideas get their own list", async () => {
+  const store = new File(dir);
   store.questions.ask({
     asker: "owner",
     app: "telegram",
@@ -222,7 +226,7 @@ test("the owner's question hex answered waits on them, linked to the answer, and
     text: "did the migration run?",
     options: [],
   });
-  expect(statusPost(store, "-100:7", "Note", 4096)).toBe("Note");
+  expect(await statusPost(store.store, "-100:7", "Note", 4096)).toBe("Note");
   store.questions.replied("telegram", "-100:7", {
     label: "Yes, at 4:02pm.",
     at: new Date().toISOString(),
@@ -236,8 +240,8 @@ test("the owner's question hex answered waits on them, linked to the answer, and
     status: "idea",
   });
   expect(
-    statusPost(
-      store,
+    await statusPost(
+      store.store,
       "-100:7",
       "Note",
       4096,

@@ -133,7 +133,7 @@ async function passForTheMarkWhileHoldingTheLock(state: string) {
         await pass(state, why);
         rmSync(join(dir, "error"), { force: true });
       } catch (error) {
-        failed(
+        await failed(
           state,
           `${new Date().toISOString()} ${why}: ${error instanceof Error ? error.message : String(error)}`,
         );
@@ -148,14 +148,14 @@ async function passForTheMarkWhileHoldingTheLock(state: string) {
   }
 }
 
-export function failed(state: string, error: string) {
+export async function failed(state: string, error: string) {
   const file = join(state, "voice", "check", "error");
   const first = !existsSync(file);
   writeFileSync(file, `${error}\n`);
-  const general = first ? generalOf(openStore(state).threads.list()) : undefined;
+  const general = first ? generalOf(await openStore(state).threads.list()) : undefined;
 
   if (general) {
-    openStore(state).messages.deliver({
+    await openStore(state).messages.deliver({
       key: `check:failed:${createHash("sha256").update(error).digest("hex").slice(0, 12)}`,
       to: general.thread,
       from: "check",
@@ -184,7 +184,7 @@ function hold(lock: string): boolean {
 
 async function pass(state: string, why: string) {
   const started = new Date().toISOString();
-  const records = gather(state);
+  const records = await gather(state);
   const inputs = digest(records);
 
   if (records.previous?.inputs === inputs) {
@@ -201,7 +201,7 @@ async function pass(state: string, why: string) {
     kept: records.kept,
   });
 
-  handBack(state, verdict.back, records.threads);
+  await handBack(state, verdict.back, records.threads);
 
   for (const ref of verdict.settle) {
     try {
@@ -241,12 +241,12 @@ async function pass(state: string, why: string) {
 export const HANDED_BACK =
   "[check] Off the owner's Needs you list and back to you, since their rules make it yours to decide or do: ";
 
-export function handBack(state: string, back: Back[], threads: Record<string, string>) {
+export async function handBack(state: string, back: Back[], threads: Record<string, string>) {
   for (const { id, task, question, why, from } of back) {
     const source = from.find((ref) => ref.message !== undefined);
 
     if (task in threads) {
-      openStore(state).messages.deliver({
+      await openStore(state).messages.deliver({
         key: source
           ? `check:back:${source.app}:${source.thread}:${source.message}`
           : `check:back:${id}`,
@@ -260,13 +260,19 @@ export function handBack(state: string, back: Back[], threads: Record<string, st
   }
 }
 
-function gather(state: string) {
+async function gather(state: string) {
   const now = Date.now();
   const recent = new Date(now - RECENT).toISOString();
   const names: Record<string, string> = {};
   const pins: { pin: Ref; topic: string; text: string }[] = [];
-  const questions = openStore(state).questions.list({ asker: "hex" });
-  const threads = openStore(state).threads.list();
+  const store = openStore(state);
+
+  const [questions, threads, pinned] = await Promise.all([
+    store.questions.list({ asker: "hex" }),
+    store.threads.list(),
+    store.pins.list(),
+  ]);
+
   const general = generalOf(threads);
 
   for (const thread of threads) {
@@ -287,7 +293,7 @@ function gather(state: string) {
     threads.filter((thread) => thread.open).map((thread) => `${thread.app}:${thread.thread}`),
   );
 
-  for (const pin of openStore(state).pins.list()) {
+  for (const pin of pinned) {
     if (pin.note !== "" && openThreads.has(`${pin.app}:${pin.thread}`)) {
       pins.push({
         pin: { app: pin.app, thread: pin.thread, message: pin.message },
@@ -297,20 +303,23 @@ function gather(state: string) {
     }
   }
 
-  const pictures = threads
-    .filter((thread) => thread.open && thread.app !== "voice")
-    .flatMap(({ app, thread }) =>
-      openStore(state)
-        .messages.said(thread, -1, "9", recent)
-        .filter((row) => row.from === app && row.author === "hex" && picturesIn(row).length > 0)
-        .slice(-PICTURES_A_THREAD)
-        .map((row) => ({
-          ref: { app, thread, message: messageIdOf(row) },
-          topic: names[`${app}:${thread}`] ?? thread,
-          at: row.at,
-          files: held(row).map((file) => file.name),
-        })),
-    );
+  const pictures = (
+    await Promise.all(
+      threads
+        .filter((thread) => thread.open && thread.app !== "voice")
+        .map(async ({ app, thread }) =>
+          (await store.messages.said(thread, -1, "9", recent))
+            .filter((row) => row.from === app && row.author === "hex" && picturesIn(row).length > 0)
+            .slice(-PICTURES_A_THREAD)
+            .map((row) => ({
+              ref: { app, thread, message: messageIdOf(row) },
+              topic: names[`${app}:${thread}`] ?? thread,
+              at: row.at,
+              files: held(row).map((file) => file.name),
+            })),
+        ),
+    )
+  ).flat();
 
   const entry = (app: string, question: Asked) => ({
     ref: { app, thread: question.thread, message: question.message },
@@ -323,13 +332,15 @@ function gather(state: string) {
     ...(question.settled && { settled: question.settled }),
   });
 
-  const open = Object.entries(ledgers).flatMap(([app, asked]) =>
-    asked
-      .filter((question) => !answeredOrSettled(question))
-      .map((question) => ({
-        ...entry(app, question),
-        before: before(openStore(state), app, question),
-      })),
+  const open = await Promise.all(
+    Object.entries(ledgers).flatMap(([app, asked]) =>
+      asked
+        .filter((question) => !answeredOrSettled(question))
+        .map(async (question) => ({
+          ...entry(app, question),
+          before: await before(store, app, question),
+        })),
+    ),
   );
 
   const closed = Object.entries(ledgers).flatMap(([app, asked]) =>
@@ -394,25 +405,27 @@ function gather(state: string) {
   };
 }
 
-export function before(store: Store, app: string, question: Asked, max = 700) {
-  if (holdsEveryProject({ app, thread: question.thread }, generalOf(store.threads.list()))) {
+export async function before(store: Store, app: string, question: Asked, max = 700) {
+  const [threads, rows, others] = await Promise.all([
+    store.threads.list(),
+    store.messages.said(
+      question.thread,
+      -1,
+      question.at,
+      new Date(Date.parse(question.at) - 60 * 60_000).toISOString(),
+    ),
+    store.questions.list({ app, thread: question.thread }),
+  ]);
+
+  if (holdsEveryProject({ app, thread: question.thread }, generalOf(threads))) {
     return [];
   }
-
-  const rows = store.messages.said(
-    question.thread,
-    -1,
-    question.at,
-    new Date(Date.parse(question.at) - 60 * 60_000).toISOString(),
-  );
 
   const asked = Date.parse(
     rows.find((row) => messageIdOf(row) === String(question.message))?.at ?? question.at,
   );
 
-  const questions = new Set(
-    store.questions.list({ app, thread: question.thread }).map((other) => String(other.message)),
-  );
+  const questions = new Set(others.map((other) => String(other.message)));
 
   const part = (row: Row) =>
     withoutPartFences(row.body) !== "" &&
@@ -442,14 +455,21 @@ function withoutPartFences(text: string) {
   return text.replaceAll(/^```.*$/gmu, "").trim();
 }
 
-export function digest({ open, closed, answered, pins, calls, t3 }: ReturnType<typeof gather>) {
+export function digest({
+  open,
+  closed,
+  answered,
+  pins,
+  calls,
+  t3,
+}: Awaited<ReturnType<typeof gather>>) {
   return createHash("sha256")
     .update(JSON.stringify({ open, closed, answered, pins, calls, t3 }))
     .digest("hex");
 }
 
 function prompt(
-  { ledgers: _ledgers, kept: _kept, previous, ...records }: ReturnType<typeof gather>,
+  { ledgers: _ledgers, kept: _kept, previous, ...records }: Awaited<ReturnType<typeof gather>>,
   hexDir: string,
 ) {
   const ids = {
@@ -555,7 +575,7 @@ async function claude(input: string, hexDir: string, state: string) {
   writeFileSync(join(cwd, "messages.md"), messages(hexDir));
   writeFileSync(
     join(cwd, "threads.json"),
-    JSON.stringify(openStore(state).threads.list(), null, 1),
+    JSON.stringify(await openStore(state).threads.list(), null, 1),
   );
 
   try {

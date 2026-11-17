@@ -1,9 +1,8 @@
-import type { Database, SQLQueryBindings } from "bun:sqlite";
-
 import { z } from "zod";
 
 import { clause, fromJson, MessageIdColumn, now, TextOrAbsent } from "./db.ts";
-import type { Core, MessageId, Write } from "./db.ts";
+import type { Bound, Core, MessageId, Sql, Write } from "./db.ts";
+import type { Messages, NewRow } from "./messages.ts";
 
 export type Answer = { label: string; at: string; via: string; message?: MessageId; kept?: true };
 
@@ -76,13 +75,41 @@ const QuestionRow = z
 
 const QuestionRows = z.array(QuestionRow);
 
-export class Questions {
-  private readonly db: Database;
-  private readonly write: Write;
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What a message can tell of: a question's answer, or its answer taken back.
+export type Told = (
+  | { answered: { message: MessageId; label: string; via: string; again?: boolean } }
+  | { reopened: { message: MessageId } }
+) & { always?: boolean };
 
-  constructor({ db, write }: Core) {
+export class Questions {
+  private readonly db: Sql;
+  private readonly write: Write;
+  private readonly messages: Messages;
+
+  constructor({ db, write }: Core, messages: Messages) {
     this.db = db;
     this.write = write;
+    this.messages = messages;
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A change to a question and the message that tells its thread land in one write, so both do or neither does; a change that changes nothing tells nothing, unless it is told always, as a vote is.
+  told(app: string, thread: string, change: Told, row: NewRow): boolean {
+    return this.write(() =>
+      ("answered" in change
+        ? this.answered(
+            app,
+            thread,
+            change.answered.message,
+            change.answered.label,
+            change.answered.via,
+            change.answered.again,
+          )
+        : this.reopened(app, thread, change.reopened.message)) || change.always === true
+        ? this.messages.deliver(row)
+        : false,
+    );
   }
 
   ask({
@@ -116,7 +143,7 @@ export class Questions {
       answer: answer === undefined ? null : JSON.stringify(answer),
       settled: settled === undefined ? null : JSON.stringify(settled),
       at,
-    } satisfies Record<string, SQLQueryBindings>;
+    } satisfies Record<string, Bound>;
 
     const columns = Object.keys(row);
 

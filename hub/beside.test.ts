@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { jobOf, lastWords, run } from "./beside.ts";
 import { exited } from "./claude.ts";
-import { open } from "./store.ts";
+import { file } from "./store.ts";
 
 let dir: string;
 
@@ -59,7 +59,7 @@ function found<T>(value: T | null): T {
 }
 
 test("a run is named for its timed job, or the job whose report it is", () => {
-  const store = open(dir);
+  const store = file(dir);
   const row = { to: "beside:general", from: "job", author: "prompt" as const, body: "ended" };
   store.messages.deliver({ ...row, key: "job:mail@1", meta: { user: "job", job: "mail" } });
   store.messages.deliver({ ...row, key: "job:beat@1", meta: { schedule: "beat" } });
@@ -68,7 +68,7 @@ test("a run is named for its timed job, or the job whose report it is", () => {
 });
 
 test("a run beside a thread that ended is dealt with once, not at every hub start", () => {
-  const store = open(dir);
+  const store = file(dir);
   const at = new Date(Date.now() - 60_000).toISOString();
   store.messages.deliver({
     key: "job:beat@1",

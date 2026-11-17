@@ -38,22 +38,22 @@ export class Ledger {
     this.app = app;
   }
 
-  get questions(): readonly Question[] {
+  get questions(): Promise<readonly Question[]> {
     return this.store.questions.list({ app: this.app });
   }
 
-  pin(thread: string): Pin | undefined {
-    return this.store.pins.get(this.app, thread) ?? undefined;
+  async pin(thread: string): Promise<Pin | undefined> {
+    return (await this.store.pins.get(this.app, thread)) ?? undefined;
   }
 
   post(thread: string, note: string, post: Post): Promise<MessageId> {
     return this.turn(thread, async () => {
-      const was = this.pin(thread);
+      const was = await this.pin(thread);
       const words = above(note);
       const text = await this.render(thread, words, post);
       const message = await post.send(thread, text);
       await post.pin(thread, message);
-      this.store.pins.pinned({ app: this.app, thread, message, text, note: words });
+      await this.store.pins.pinned({ app: this.app, thread, message, text, note: words });
 
       if (was) {
         await post.unpin(thread, was.message).catch(() => null);
@@ -65,7 +65,7 @@ export class Ledger {
 
   rewrite(thread: string, post: Post, note?: string, message?: MessageId): Promise<void> {
     return this.turn(thread, async () => {
-      const pin = this.pin(thread);
+      const pin = await this.pin(thread);
 
       if (message !== undefined && String(pin?.message) !== String(message)) {
         throw new Error("that message is no longer the status post");
@@ -85,7 +85,7 @@ export class Ledger {
       const shown = text === pin.text || (await post.edit(thread, pin.message, text));
 
       if (shown === null) {
-        this.store.pins.unpinned(this.app, thread, pin.message);
+        await this.store.pins.unpinned(this.app, thread, pin.message);
       }
 
       if (shown === null || shown === false) {
@@ -100,15 +100,10 @@ export class Ledger {
         return;
       }
 
-      this.store.write(() => {
-        const still = this.pin(thread);
-
-        if (still?.message !== pin.message || still.note !== pin.note) {
-          return;
-        }
-
-        this.store.pins.pinned({ app: this.app, thread, message: pin.message, text, note: said });
-      });
+      await this.store.pins.repinned(
+        { app: this.app, thread, message: pin.message, text, note: said },
+        pin.note,
+      );
     });
   }
 
@@ -123,14 +118,14 @@ export class Ledger {
   private async render(thread: string, note: string, post: Post) {
     await post.ready?.(thread);
 
-    return statusPost(this.store, thread, note, post.room, post.link);
+    return await statusPost(this.store, thread, note, post.room, post.link);
   }
 
-  keep(
+  async keep(
     post: Post,
     // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a failed rewrite's reason is whatever its app threw
     failed: (thread: string, error: unknown) => void,
-  ): () => void {
+  ): Promise<() => void> {
     const rewriteOrReport = async (thread: string) => {
       try {
         await this.rewrite(thread, post);
@@ -139,22 +134,24 @@ export class Ledger {
       }
     };
 
-    let seen = this.store.pins.changedSince(0).last;
+    let seen = (await this.store.pins.changedSince(0)).last;
 
-    const rewriteChanged = () => {
-      const { threads, last } = this.store.pins.changedSince(seen);
+    const rewriteChanged = async () => {
+      const { threads, last } = await this.store.pins.changedSince(seen);
 
-      seen = last;
+      seen = Math.max(seen, last);
 
       for (const thread of threads) {
         void rewriteOrReport(thread);
       }
     };
 
-    const stop = this.store.watch(rewriteChanged);
+    const stop = this.store.watch(() => {
+      void rewriteChanged();
+    });
 
     try {
-      for (const { thread } of this.store.pins.list({ app: this.app })) {
+      for (const { thread } of await this.store.pins.list({ app: this.app })) {
         void rewriteOrReport(thread);
       }
     } catch (error) {
@@ -165,23 +162,23 @@ export class Ledger {
     return stop;
   }
 
-  find(thread: string, message: MessageId) {
-    return this.store.questions.get(this.app, thread, message) ?? undefined;
+  async find(thread: string, message: MessageId) {
+    return (await this.store.questions.get(this.app, thread, message)) ?? undefined;
   }
 
-  byPoll(poll: string) {
-    return this.store.questions.poll(this.app, poll) ?? undefined;
+  async byPoll(poll: string) {
+    return (await this.store.questions.poll(this.app, poll)) ?? undefined;
   }
 
-  ask(
+  async ask(
     thread: string,
     message: MessageId,
     text: string,
     options: string[],
     how: Pick<Question, "poll" | "multiple" | "shots" | "attached"> = {},
   ) {
-    this.store.questions.ask({ app: this.app, thread, message, text, options, ...how });
-    this.store.questions.replied(this.app, thread, {
+    await this.store.questions.ask({ app: this.app, thread, message, text, options, ...how });
+    await this.store.questions.replied(this.app, thread, {
       label: clip(text, 60),
       at: new Date().toISOString(),
       via: "hex",
@@ -189,7 +186,7 @@ export class Ledger {
     });
   }
 
-  said(
+  async said(
     thread: string,
     message: MessageId,
     text: string,
@@ -203,7 +200,7 @@ export class Ledger {
       their.thread === thread &&
       String(their.message) === String(quoted?.message)
     ) {
-      this.store.questions.replied(this.app, thread, answer, their.message);
+      await this.store.questions.replied(this.app, thread, answer, their.message);
 
       return;
     }
@@ -211,34 +208,37 @@ export class Ledger {
     const remindsOfQuoted = quoted !== undefined;
     const question = remindsOfQuoted ? undefined : asking(text);
 
-    if (question === undefined) {
-      this.store.questions.replied(this.app, thread, answer);
-    } else {
-      this.ask(thread, message, question, []);
-    }
+    await (question === undefined
+      ? this.store.questions.replied(this.app, thread, answer)
+      : this.ask(thread, message, question, []));
   }
 
-  heard(thread: string, message: MessageId, text: string, replyTo?: MessageId) {
-    this.store.questions.returned(this.app, thread);
+  async heard(thread: string, message: MessageId, text: string, replyTo?: MessageId) {
+    await this.store.questions.returned(this.app, thread);
 
     const to =
       replyTo === undefined
         ? undefined
-        : (this.store.questions.get(this.app, thread, replyTo) ??
-          this.store.questions
-            .list({ app: this.app, thread, asker: "owner", waiting: true })
-            .find((question) => String(question.answer?.message) === String(replyTo)));
+        : ((await this.store.questions.get(this.app, thread, replyTo)) ??
+          (
+            await this.store.questions.list({
+              app: this.app,
+              thread,
+              asker: "owner",
+              waiting: true,
+            })
+          ).find((question) => String(question.answer?.message) === String(replyTo)));
 
     if (to?.asker === "owner") {
-      this.settled(thread, to.message, "you replied");
+      await this.settled(thread, to.message, "you replied");
     } else if (to !== undefined && replyTo !== undefined && !to.options.length) {
-      this.answered(thread, replyTo, clip(text, 60), "reply");
+      await this.answered(thread, replyTo, clip(text, 60), "reply");
     }
 
     const question = theirs(text);
 
     if (question !== undefined) {
-      this.store.questions.ask({
+      await this.store.questions.ask({
         asker: "owner",
         app: this.app,
         thread,
@@ -254,18 +254,18 @@ export class Ledger {
   }
 
   settled(thread: string, message: MessageId, note: string) {
-    this.store.questions.settled(this.app, thread, message, note);
+    return this.store.questions.settled(this.app, thread, message, note);
   }
 
   reopened(thread: string, message: MessageId) {
     return this.store.questions.reopened(this.app, thread, message);
   }
 
-  edited(thread: string, message: MessageId, text: string) {
-    const question = this.store.questions.get(this.app, thread, message);
+  async edited(thread: string, message: MessageId, text: string) {
+    const question = await this.store.questions.get(this.app, thread, message);
 
     if (question !== null) {
-      this.store.questions.reworded(
+      await this.store.questions.reworded(
         this.app,
         thread,
         message,
@@ -276,7 +276,7 @@ export class Ledger {
 
   unpin(thread: string, post: Post, message?: MessageId): Promise<MessageId | undefined> {
     return this.turn(thread, async () => {
-      const target = message ?? this.pin(thread)?.message;
+      const target = message ?? (await this.pin(thread))?.message;
 
       if (target === undefined) {
         return;
@@ -284,34 +284,28 @@ export class Ledger {
 
       await post.unpin(thread, target);
 
-      this.store.pins.unpinned(this.app, thread, target);
+      await this.store.pins.unpinned(this.app, thread, target);
 
       return target;
     });
   }
 
   deleted(thread: string, message: MessageId): Promise<void> {
-    this.store.write(() => {
-      this.store.questions.unask(this.app, thread, message);
-      this.store.pins.unpinned(this.app, thread, message);
-    });
-
-    const unpinWhatAPinStillRunningRecorded = () => {
-      this.store.pins.unpinned(this.app, thread, message);
-    };
-
-    return this.turn(thread, unpinWhatAPinStillRunningRecorded);
+    return this.forgotten(thread, message);
   }
 
   forget(thread: string): Promise<void> {
-    this.store.write(() => {
-      this.store.questions.unask(this.app, thread);
-      this.store.pins.unpinned(this.app, thread);
-    });
+    return this.forgotten(thread);
+  }
 
-    return this.turn(thread, () => {
-      this.store.pins.unpinned(this.app, thread);
-    });
+  private async forgotten(thread: string, message?: MessageId) {
+    const now = this.store.pins.forgotten(this.app, thread, message);
+
+    const unpinWhatAPinStillRunningRecorded = this.turn(thread, () =>
+      this.store.pins.unpinned(this.app, thread, message),
+    );
+
+    await Promise.all([now, unpinWhatAPinStillRunningRecorded]);
   }
 }
 

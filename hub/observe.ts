@@ -80,7 +80,7 @@ export async function observe(
     rows.length > 0 ? recall(rows.map((row) => `\\[${escape(row.key)}\\]`).join("|")) : "";
 
   const store = open(state);
-  const taken = store.messages.observe(session, by, thread, LEASE_OUTLASTS_EVERY_TRY);
+  const taken = await store.messages.observe(session, by, thread, LEASE_OUTLASTS_EVERY_TRY);
   const rows = owners(taken);
   const written: string[] = [];
 
@@ -93,12 +93,12 @@ export async function observe(
 
     if (rows.length > 0) {
       const zone = zoneOf(hexDir()) ?? Temporal.Now.timeZoneId();
-      const threads = store.threads.names();
+      const threads = await store.threads.names();
       const place = taken[0]?.to ?? thread;
       const earliest = [by, ...taken.map((row) => row.at)].toSorted()[0] ?? by;
 
       const before = given(place)
-        ? store.messages.said(place, MESSAGES_BEFORE_THE_TURN, earliest).filter(shown)
+        ? (await store.messages.said(place, MESSAGES_BEFORE_THE_TURN, earliest)).filter(shown)
         : [];
 
       const turn = [
@@ -123,7 +123,7 @@ export async function observe(
       let notesDone = false;
 
       for (let tries = 0; tries < TRIES; tries++) {
-        const profileBefore = store.profiles.current();
+        const profileBefore = await store.profiles.current();
 
         const answer = await ask(
           `<profile>\n${profileBefore || "(none yet)"}\n</profile>\n\n<newest memories>\n${newestNotes(recall("."))}\n</newest memories>\n\n${turn}${wrong}`,
@@ -131,11 +131,15 @@ export async function observe(
 
         const notes = notesDone ? [] : answer.notes.map(asMemoTakesIt).filter(Boolean);
 
-        const refused = notes.flatMap((note) => {
-          const why = unkept(note, store);
+        const refused = (
+          await Promise.all(
+            notes.map(async (note) => {
+              const why = await unkept(note, store);
 
-          return why.length > 0 ? [`${note}\n  ${why.join("\n  ")}`] : [];
-        });
+              return why.length > 0 ? [`${note}\n  ${why.join("\n  ")}`] : [];
+            }),
+          )
+        ).flat();
 
         if (refused.length > 0 && tries < TRIES - 1) {
           wrong = notesBack(refused);
@@ -150,7 +154,7 @@ export async function observe(
             (key) => !ours.has(key) || now.includes(`[${key}]`),
           );
 
-          if (unkept(note, store).length > 0 || anotherPassNamed) {
+          if ((await unkept(note, store)).length > 0 || anotherPassNamed) {
             continue;
           }
 
@@ -168,11 +172,11 @@ export async function observe(
           break;
         }
 
-        const bad = misquoted(answer.profile, store);
+        const bad = await misquoted(answer.profile, store);
         reasons = bad.join("\n");
         wrong = bad.length > 0 ? retry(bad, answer.profile) : "";
 
-        if (wrong !== "" || !store.profiles.profiled(profileBefore, answer.profile)) {
+        if (wrong !== "" || !(await store.profiles.profiled(profileBefore, answer.profile))) {
           continue;
         }
 
@@ -189,14 +193,14 @@ export async function observe(
 
     const lostOnlyToOtherPasses = wanted && wrong === "" && written.length === 0;
 
-    store.messages.observed(
+    await store.messages.observed(
       taken.map((row) => row.key),
       !lostOnlyToOtherPasses,
     );
 
     return written;
   } catch (error) {
-    store.messages.observed(
+    await store.messages.observed(
       taken.map((row) => row.key),
       written.length > 0,
     );
@@ -206,7 +210,7 @@ export async function observe(
   }
 }
 
-function misquoted(profile: string | null, store: Store): string[] {
+async function misquoted(profile: string | null, store: Store): Promise<string[]> {
   if (profile === null || profile.trim() === "") {
     return ["(empty)"];
   }
@@ -217,37 +221,43 @@ function misquoted(profile: string | null, store: Store): string[] {
     ];
   }
 
-  return profile.split("\n").flatMap((each) => {
-    if (keysOf(each).length === 0) {
-      return quotesOf(each).length > 0
-        ? [`${each}\n  names no message of the owner's for its quote`]
+  const lines = await Promise.all(
+    profile.split("\n").map(async (each) => {
+      if (keysOf(each).length === 0) {
+        return quotesOf(each).length > 0
+          ? [`${each}\n  names no message of the owner's for its quote`]
+          : [];
+      }
+
+      const found = await verdict(each, store);
+
+      if (!holds(found)) {
+        return [`${each}\n  ${problems(found, false).join("\n  ")}`];
+      }
+
+      const foreign = found.keys.filter((row) => owners([row]).length === 0);
+
+      return foreign.length > 0
+        ? [
+            `${each}\n  ${foreign.map((row) => `[${row.key}]`).join(", ")} isn't the owner's message`,
+          ]
         : [];
-    }
+    }),
+  );
 
-    const found = verdict(each, store);
-
-    if (!holds(found)) {
-      return [`${each}\n  ${problems(found, false).join("\n  ")}`];
-    }
-
-    const foreign = found.keys.filter((row) => owners([row]).length === 0);
-
-    return foreign.length > 0
-      ? [`${each}\n  ${foreign.map((row) => `[${row.key}]`).join(", ")} isn't the owner's message`]
-      : [];
-  });
+  return lines.flat();
 }
 
 const retry = (bad: string[], draft: string) =>
   `\n\nYour last profile wasn't kept. It must stay under ${PROFILE} characters, and a line that quotes the owner must name the message it quotes, quoting it as written:\n${bad.join("\n")}\n\nFix that draft rather than starting over:\n<draft>\n${draft.trim()}\n</draft>`;
 
-function unkept(note: string, store: Store): string[] {
+async function unkept(note: string, store: Store): Promise<string[]> {
   const bytes = Buffer.byteLength(note);
 
   return [
     ...(bytes > BYTES ? [`${bytes} bytes, and memo holds ${BYTES}.`] : []),
     ...(keysOf(note).length > 0
-      ? problems(verdict(note, store), false)
+      ? problems(await verdict(note, store), false)
       : quotesOf(note).length > 0
         ? ["It quotes without naming the message it quotes."]
         : []),
@@ -304,8 +314,12 @@ async function remember(input: string): Promise<Answer> {
 }
 
 // OptMem leaves due compressions to whoever writes a note, and only this agent writes notes: https://github.com/VictorTaelin/OptMem/blob/1fb164cf39028047781f72ac3bb1e5a691c1dcb0/README.md#while-working-register-memories-mandatory
-export async function nap(memo = MEMO, compress = summarize, stillHoldsLease = () => true) {
-  while (stillHoldsLease()) {
+export async function nap(
+  memo = MEMO,
+  compress = summarize,
+  stillHoldsLease: () => Promise<boolean> = () => Promise.resolve(true),
+) {
+  while (await stillHoldsLease()) {
     const asked = Bun.spawnSync([memo, "nap"], {
       stdout: "pipe",
       stderr: "ignore",
@@ -384,7 +398,7 @@ export function refresh() {
   });
 }
 
-async function pass(state: string, turn: Pass, stillHoldsLease: () => boolean) {
+async function pass(state: string, turn: Pass, stillHoldsLease: () => Promise<boolean>) {
   await observe(state, turn.session, turn);
 
   try {
@@ -396,41 +410,43 @@ async function pass(state: string, turn: Pass, stillHoldsLease: () => boolean) {
 
 export async function drain(
   state: string,
-  run: (turn: Pass, stillHoldsLease: () => boolean) => Promise<void> = (turn, stillHoldsLease) =>
-    pass(state, turn, stillHoldsLease),
+  run: (turn: Pass, stillHoldsLease: () => Promise<boolean>) => Promise<void> = (
+    turn,
+    stillHoldsLease,
+  ) => pass(state, turn, stillHoldsLease),
 ) {
   const store = open(state);
   const holder = crypto.randomUUID();
   const holdsLease = () => store.leases.take("observe", holder, LEASE_OUTLASTS_EVERY_TRY);
 
-  while (store.passes.waiting() && holdsLease()) {
+  while ((await store.passes.waiting()) && (await holdsLease())) {
     try {
-      for (let next; (next = store.passes.waiting());) {
+      for (let next; (next = await store.passes.waiting());) {
         try {
           await run(PASS.parse(next.pass), holdsLease);
         } catch (error) {
           logIndented(`hex couldn't look over a turn for memories: ${String(error)}`);
         }
 
-        store.passes.passed(next.n);
+        await store.passes.passed(next.n);
 
-        if (!holdsLease()) {
+        if (!(await holdsLease())) {
           return;
         }
       }
     } finally {
-      store.leases.release("observe", holder);
+      await store.leases.release("observe", holder);
     }
   }
 }
 
-export function queue(state: string, turn: Pass) {
+export async function queue(state: string, turn: Pass) {
   if (!given(process.env.MEMORY_DIR) || !existsSync(MEMO)) {
     return;
   }
 
   try {
-    open(state).passes.wait(turn);
+    await open(state).passes.wait(turn);
     const observeLog = openSync(join(state, "observe.log"), "a");
 
     try {
@@ -452,7 +468,7 @@ export function queue(state: string, turn: Pass) {
   }
 }
 
-export function ended(state: string, session: string, last?: string) {
+export async function ended(state: string, session: string, last?: string) {
   const { HEX_THREAD, HEX_CHANNEL, HEX_BESIDE } = process.env;
   const t3 = HEX_CHANNEL?.startsWith("plugin:t3@") === true;
   const from = t3 ? "t3" : "terminal";
@@ -461,7 +477,7 @@ export function ended(state: string, session: string, last?: string) {
 
   try {
     if (given(answer)) {
-      open(state).messages.deliver(
+      await open(state).messages.deliver(
         {
           key: `${from}:${crypto.randomUUID()}`,
           to: given(HEX_BESIDE) ? HEX_BESIDE : (HEX_THREAD ?? session),
@@ -477,7 +493,7 @@ export function ended(state: string, session: string, last?: string) {
     process.stderr.write(`hex couldn't keep this turn's answer: ${String(error)}\n`);
   }
 
-  queue(state, {
+  await queue(state, {
     session,
     by: new Date().toISOString(),
     thread: given(HEX_BESIDE) ? HEX_BESIDE : HEX_THREAD,

@@ -1,9 +1,7 @@
-import type { Database } from "bun:sqlite";
-
 import { z } from "zod";
 
 import { clause, found, now, TextOrAbsent } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Sql, Write } from "./db.ts";
 import { AuthorColumn, sent, spoken } from "./messages.ts";
 import type { Author, Messages } from "./messages.ts";
 
@@ -103,7 +101,7 @@ function toLine(row: StoredTask): Omit<Task, "words"> {
 }
 
 export class Tasks {
-  private readonly db: Database;
+  private readonly db: Sql;
   private readonly write: Write;
   private readonly messages: Messages;
 

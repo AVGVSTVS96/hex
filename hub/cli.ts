@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, realpathSync, statSync, watch } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, realpathSync, statSync, watch } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -10,8 +10,8 @@ import { history } from "./loaded.ts";
 import { holds, keysOf, problems, verdict } from "./notes.ts";
 import { busy, running, served, serving } from "./running.ts";
 import type { Session } from "./running.ts";
-import { asked, open as openStore, sent } from "./store.ts";
-import type { Row, Status, Task, Thread } from "./store.ts";
+import { asked, awayFile, open as openStore, sent } from "./store.ts";
+import type { Row, Status, Store, Task, Thread } from "./store.ts";
 import { entry, render, waiting } from "./tasks.ts";
 import { zoneOf } from "./zone.ts";
 
@@ -40,6 +40,9 @@ const USAGE = `usage:
   hex profile [--all] [--json]
   hex log [<thread, by name or id, or a terminal session's id>] [--since <date>] [--last <n>] [--taken] [--room <characters>] [--json]
   hex recall <regex, in any case>
+  hex sql '<a query, which can change nothing>'
+  hex store copy <file>
+  hex store move <the address of the Durable Object that takes hex's records>
   hex watch`;
 
 const { values: flags, positionals } = parseArgs({
@@ -121,7 +124,9 @@ if (unquotedValue !== undefined) {
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // hex watch runs before hex.db opens, so a restore can replace hex.db underneath it.
 if (command === "watch") {
-  await follow(join(state, "hex.bell"));
+  await (existsSync(awayFile(state))
+    ? followAway(openStore(state))
+    : follow(join(state, "hex.bell")));
 }
 
 const store = openStore(state);
@@ -130,7 +135,7 @@ for (const flag of ["owner", "thread"] as const) {
   const given = flags[flag];
 
   if (filled(given)) {
-    flags[flag] = store.threads.key(given);
+    flags[flag] = await store.threads.key(given);
   }
 }
 
@@ -162,20 +167,14 @@ function lastFindings(task: Task) {
     );
 }
 
-function show(tasks: Task[], full = true) {
+async function show(tasks: Task[], full = true) {
   if (flags.json === true) {
-    console.log(
-      JSON.stringify(
-        withThread(tasks, (task) => task.owner),
-        null,
-        1,
-      ),
-    );
+    console.log(JSON.stringify(await withThread(tasks, (task) => task.owner), null, 1));
 
     return;
   }
 
-  const names = store.threads.names();
+  const names = await store.threads.names();
 
   console.log(
     tasks
@@ -204,7 +203,7 @@ async function recall(pattern: string) {
     }
 
     notes++;
-    const v = verdict(recalled, store);
+    const v = await verdict(recalled, store);
 
     if (keysOf(recalled).length === 0) {
       continue;
@@ -241,8 +240,8 @@ async function recall(pattern: string) {
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // every --json output names a thread one way, as <app>:<key>: a thread's id, and threadId on what belongs to one.
-function withThread<T>(rows: T[], key: (row: T) => string) {
-  const ids = store.threads.ids();
+async function withThread<T>(rows: T[], key: (row: T) => string) {
+  const ids = await store.threads.ids();
 
   return rows.map((row) => {
     const threadId = ids[key(row)];
@@ -283,13 +282,27 @@ function follow(bell: string): Promise<never> {
   });
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Records that live in an object ring over its socket, once as it connects and after every write.
+function followAway(away: Store): Promise<never> {
+  return new Promise(() => {
+    away.watch(() => {
+      process.stdout.write(`${new Date().toISOString()}\n`, (error) => {
+        if (error) {
+          process.exit("code" in error && error.code === "EPIPE" ? 0 : 1);
+        }
+      });
+    });
+  });
+}
+
 function stray(word: string) {
   return `"${word}" isn't a flag's value: quote every value that has spaces, like --title 'Fix the login page'`;
 }
 
-function named(given: string) {
-  const key = store.threads.key(given);
-  const threads = store.threads.list();
+async function named(given: string) {
+  const key = await store.threads.key(given);
+  const threads = await store.threads.list();
   const keyed = threads.find(({ thread }) => thread === key);
 
   if (keyed) {
@@ -302,14 +315,14 @@ function named(given: string) {
   return all.length > 0 ? all : threads.filter(({ thread }) => thread === key.toLowerCase());
 }
 
-function threadsOf(given: string) {
-  const threads = named(given).map(({ thread }) => thread);
+async function threadsOf(given: string) {
+  const threads = (await named(given)).map(({ thread }) => thread);
 
   if (threads.length > 0) {
     return threads;
   }
 
-  if (store.messages.said(given, 1).length > 0) {
+  if ((await store.messages.said(given, 1)).length > 0) {
     return [given];
   }
 
@@ -318,8 +331,8 @@ function threadsOf(given: string) {
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // a delivery goes only to a thread, since only a thread's session takes messages; a closed thread takes it once it opens again.
-function recipient(to: string): string {
-  const all = named(to);
+async function recipient(to: string): Promise<string> {
+  const all = await named(to);
   const matches = all.some(({ open }) => open) ? all.filter(({ open }) => open) : all;
 
   if (matches.length > 1) {
@@ -328,7 +341,7 @@ function recipient(to: string): string {
     );
   }
 
-  const thread = matches[0] ?? workingFor(to);
+  const thread = matches[0] ?? (await workingFor(to));
 
   if (!thread.open) {
     console.error(`hex: the thread ${thread.thread} is closed, so this waits until it opens again`);
@@ -337,13 +350,13 @@ function recipient(to: string): string {
   return thread.thread;
 }
 
-function workingFor(given: string) {
+async function workingFor(given: string) {
   if (!/^[0-9a-f]{8}(-[0-9a-f-]*)?$/iu.test(given)) {
     throw new Error(`no thread is "${given}" (hex threads lists them)`);
   }
 
   const to = given.toLowerCase();
-  const threads = store.threads.list();
+  const threads = await store.threads.list();
 
   const held = new Map(
     threads
@@ -353,7 +366,7 @@ function workingFor(given: string) {
       ),
   );
 
-  const live = running(store);
+  const live = await running(store);
   const nameOf = (id: string) => live.get(id)?.name;
 
   const labelled = (id: string) => {
@@ -415,7 +428,7 @@ function real(path: string) {
   }
 }
 
-function log(said: Row[]) {
+async function log(said: Row[]) {
   const room = flags.room === undefined ? Infinity : Number(flags.room);
 
   if (
@@ -430,19 +443,13 @@ function log(said: Row[]) {
   );
 
   if (flags.json === true) {
-    console.log(
-      JSON.stringify(
-        withThread(rows, (row) => row.to),
-        null,
-        1,
-      ),
-    );
+    console.log(JSON.stringify(await withThread(rows, (row) => row.to), null, 1));
 
     return;
   }
 
   const zone = zoneOf(dirname(state)) ?? Temporal.Now.timeZoneId();
-  const names = store.threads.names();
+  const names = await store.threads.names();
 
   const entries = rows.map((row) => {
     const at = Temporal.Instant.from(row.at)
@@ -496,12 +503,17 @@ function end(newest: string, room: number) {
   return `${head}…${newest.slice(from)}`;
 }
 
-function runTask(verb: string, id: string | undefined, key: string | undefined, more: string[]) {
+async function runTask(
+  verb: string,
+  id: string | undefined,
+  key: string | undefined,
+  more: string[],
+) {
   const thread = process.env.HEX_THREAD;
 
   switch (verb) {
     case "new": {
-      const said = filled(id) ? store.messages.get(id) : null;
+      const said = filled(id) ? await store.messages.get(id) : null;
 
       if (!filled(id) || !said) {
         throw new Error(
@@ -509,8 +521,8 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         );
       }
 
-      show([
-        store.tasks.create({
+      await show([
+        await store.tasks.create({
           title: flags.title ?? "",
           message: id,
           owner: flags.owner ?? thread ?? said.to,
@@ -529,7 +541,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         usage();
       }
 
-      show([store.tasks.addWords(id, key, flags.quote)]);
+      await show([await store.tasks.addWords(id, key, flags.quote)]);
 
       return;
     }
@@ -539,7 +551,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         usage();
       }
 
-      show([store.tasks.requote(id, key, flags.quote)]);
+      await show([await store.tasks.requote(id, key, flags.quote)]);
 
       return;
     }
@@ -549,8 +561,8 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         throw new Error("a task is done with --proof: a link or a fact that shows it");
       }
 
-      show([
-        store.tasks.edit(id, {
+      await show([
+        await store.tasks.edit(id, {
           status: "done",
           proof: flags.proof,
           doneIn: thread,
@@ -565,10 +577,10 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         usage();
       }
 
-      show([
-        filled(flags.into)
+      await show([
+        await (filled(flags.into)
           ? store.tasks.merge(flags.into, id)
-          : store.tasks.edit(id, { status: "dropped" }),
+          : store.tasks.edit(id, { status: "dropped" })),
       ]);
 
       return;
@@ -579,7 +591,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         usage();
       }
 
-      show([store.tasks.edit(id, { status: "open" })]);
+      await show([await store.tasks.edit(id, { status: "open" })]);
 
       return;
     }
@@ -589,8 +601,8 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         usage();
       }
 
-      show([
-        store.tasks.edit(id, {
+      await show([
+        await store.tasks.edit(id, {
           title: flags.title,
           owner: flags.owner,
           project: flags.project,
@@ -606,51 +618,53 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         usage();
       }
 
-      show([store.tasks.addAgents(id, more, thread)]);
+      await show([await store.tasks.addAgents(id, more, thread)]);
 
       return;
     }
 
     default: {
-      const found = filled(verb) ? store.tasks.get(verb) : null;
+      const found = filled(verb) ? await store.tasks.get(verb) : null;
 
       if (!found) {
         throw new Error(filled(verb) ? `no task ${verb}` : USAGE);
       }
 
-      show([found]);
+      await show([found]);
     }
   }
 }
 
-function holdable(names: string[], among?: string[]) {
-  return names.map((given) => {
-    const all = named(given);
+async function holdable(names: string[], among?: string[]) {
+  return await Promise.all(
+    names.map(async (given) => {
+      const all = await named(given);
 
-    const matches = among
-      ? all.filter(({ thread }) => among.includes(thread))
-      : all.some(({ open }) => open)
-        ? all.filter(({ open }) => open)
-        : all;
+      const matches = among
+        ? all.filter(({ thread }) => among.includes(thread))
+        : all.some(({ open }) => open)
+          ? all.filter(({ open }) => open)
+          : all;
 
-    const [first] = matches;
+      const [first] = matches;
 
-    if (first !== undefined && matches.length === 1) {
-      return first.thread;
-    }
+      if (first !== undefined && matches.length === 1) {
+        return first.thread;
+      }
 
-    if (matches.length > 0) {
+      if (matches.length > 0) {
+        throw new Error(
+          `more than one thread is named "${given}", so name one by its id: ${matches.map(({ app, thread }) => `${app}:${thread}`).join(", ")}`,
+        );
+      }
+
       throw new Error(
-        `more than one thread is named "${given}", so name one by its id: ${matches.map(({ app, thread }) => `${app}:${thread}`).join(", ")}`,
+        all.length > 0
+          ? `that hold doesn't hold "${given}"`
+          : `no thread is "${given}" (hex threads lists them; quote every value that has spaces)`,
       );
-    }
-
-    throw new Error(
-      all.length > 0
-        ? `that hold doesn't hold "${given}"`
-        : `no thread is "${given}" (hex threads lists them; quote every value that has spaces)`,
-    );
-  });
+    }),
+  );
 }
 
 function heldBySession(threads: Thread[]) {
@@ -661,28 +675,30 @@ function heldBySession(threads: Thread[]) {
   );
 }
 
-function working() {
-  const threads = store.threads.list({ open: true });
+async function working() {
+  const threads = await store.threads.list({ open: true });
   const held = heldBySession(threads);
 
-  const sessions = running(store);
+  const sessions = await running(store);
 
   const busyNow = [...sessions.values()]
     .filter((session) => busy(session) || session.state === "working")
     .flatMap((session) => serving(session, held, sessions) ?? []);
 
+  const atWork = await Promise.all(
+    threads.map(async ({ session }) => filled(session) && (await store.turns.atWork(session))),
+  );
+
   return new Set([
-    ...busyNow.map((thread) => store.threads.key(thread)),
-    ...threads
-      .filter(({ session }) => filled(session) && store.turns.atWork(session))
-      .map(({ thread }) => thread),
+    ...(await Promise.all(busyNow.map((thread) => store.threads.key(thread)))),
+    ...threads.filter((_, at) => atWork[at] === true).map(({ thread }) => thread),
   ]);
 }
 
-function hold(words: string[]) {
+async function hold(words: string[]) {
   const zone = zoneOf(dirname(state));
 
-  if (filled(flags.key) && !store.messages.get(flags.key)) {
+  if (filled(flags.key) && !(await store.messages.get(flags.key))) {
     throw new Error(`no message ${flags.key}`);
   }
 
@@ -693,24 +709,24 @@ function hold(words: string[]) {
       usage();
     }
 
-    const existing = store.holds.get(id);
+    const existing = await store.holds.get(id);
 
     if (!existing) {
       throw new Error(`no hold ${id}`);
     }
 
-    const freed = store.holds.unhold(
+    const freed = await store.holds.unhold(
       id,
       `${flags.why}${filled(flags.key) ? ` [${flags.key}]` : ""}`,
       threads.length > 0
-        ? holdable(
+        ? await holdable(
             threads,
             existing.threads.map(({ thread }) => thread),
           )
         : undefined,
     );
 
-    const names = store.threads.names();
+    const names = await store.threads.names();
     console.log(
       freed.length > 0
         ? `${id} freed ${freed.map((thread) => names[thread] ?? thread).join(", ")}; hex wakes each that worked while held, a couple at a time`
@@ -724,39 +740,40 @@ function hold(words: string[]) {
     usage();
   }
 
-  const by = store.threads.key([process.env.HEX_THREAD, served()].find(filled) ?? "terminal");
+  const by = await store.threads.key([process.env.HEX_THREAD, served()].find(filled) ?? "terminal");
 
-  const placed = place(
+  const placed = await place(
     store,
     {
-      threads: holdable(words),
+      threads: await holdable(words),
       by,
       why: flags.why,
       message: flags.key,
       until: filled(flags.until) ? instant(flags.until, zone) : undefined,
     },
-    { working: working(), ...(zone !== undefined && { zone }) },
+    { working: await working(), ...(zone !== undefined && { zone }) },
   );
 
-  console.log(line(placed, store, zone));
+  console.log(await line(placed, store, zone));
 }
 
 try {
   switch (command) {
     case "hold": {
-      hold(args);
+      await hold(args);
       break;
     }
 
     case "holds": {
-      const listed = store.holds.list({ all: flags.all === true });
+      const listed = await store.holds.list({ all: flags.all === true });
 
       if (flags.json === true) {
         console.log(JSON.stringify(listed, null, 1));
       } else {
         console.log(
-          listed.map((each) => line(each, store, zoneOf(dirname(state)))).join("\n") ||
-            "nothing on hold",
+          (await Promise.all(listed.map((each) => line(each, store, zoneOf(dirname(state)))))).join(
+            "\n",
+          ) || "nothing on hold",
         );
       }
 
@@ -772,8 +789,8 @@ try {
       }
 
       const key = from === given ? `${from}:${crypto.randomUUID()}` : given;
-      const thread = recipient(flags.to);
-      store.messages.deliver({
+      const thread = await recipient(flags.to);
+      await store.messages.deliver({
         key,
         to: flags.beside === true ? besideOf(thread) : thread,
         from,
@@ -792,20 +809,20 @@ try {
         usage();
       }
 
-      store.scheduler.signal(name, words.join(" "), id.length > 0 ? id.join(":") : undefined);
+      await store.scheduler.signal(name, words.join(" "), id.length > 0 ? id.join(":") : undefined);
       break;
     }
 
     case "task": {
-      runTask(args[0] ?? "", args[1], args[2], args.slice(2));
+      await runTask(args[0] ?? "", args[1], args[2], args.slice(2));
       break;
     }
 
     case "tasks": {
       const owner = flags.owner ?? ownThread;
 
-      show(
-        store.tasks.list({
+      await show(
+        await store.tasks.list({
           status: flags.status?.split(",").filter(isStatus) ?? ["open"],
           owner,
         }),
@@ -817,7 +834,7 @@ try {
     case "questions": {
       const thread = flags.thread ?? ownThread;
 
-      const questions = store.questions.list({
+      const questions = await store.questions.list({
         waiting: true,
         thread,
       });
@@ -834,8 +851,10 @@ try {
           ),
         );
       } else {
+        const names = await store.threads.names();
+
         console.log(
-          questions.map((question) => waiting(question, store.threads.names())).join("\n") ||
+          questions.map((question) => waiting(question, names)).join("\n") ||
             "no questions waiting",
         );
       }
@@ -845,8 +864,8 @@ try {
 
     case "pins": {
       const thread = flags.thread ?? ownThread;
-      const pins = store.pins.list({ thread });
-      const names = store.threads.names();
+      const pins = await store.pins.list({ thread });
+      const names = await store.threads.names();
 
       if (flags.json === true) {
         console.log(
@@ -871,7 +890,7 @@ try {
     }
 
     case "threads": {
-      const threads = store.threads.list();
+      const threads = await store.threads.list();
 
       if (flags.json === true) {
         console.log(
@@ -897,7 +916,7 @@ try {
 
     case "thread": {
       const [given] = args;
-      const [thread, another] = filled(given) ? named(given) : [];
+      const [thread, another] = filled(given) ? await named(given) : [];
 
       if (another) {
         throw new Error(`more than one thread goes by ${given}: pass its id, from hex threads`);
@@ -907,13 +926,14 @@ try {
         throw new Error(USAGE);
       }
 
-      store.threads.file(thread.thread, filled(flags.project) ? flags.project : undefined);
+      await store.threads.file(thread.thread, filled(flags.project) ? flags.project : undefined);
       break;
     }
 
     case "profile": {
       const everyVersion = flags.all === true;
-      const versions = everyVersion ? store.profiles.list() : store.profiles.list().slice(0, 1);
+      const every = await store.profiles.list();
+      const versions = everyVersion ? every : every.slice(0, 1);
 
       if (flags.json === true) {
         console.log(JSON.stringify(everyVersion ? versions : (versions[0] ?? null), null, 1));
@@ -929,11 +949,11 @@ try {
     }
 
     case "running": {
-      const threads = store.threads.list({ open: true });
+      const threads = await store.threads.list({ open: true });
       const held = heldBySession(threads);
       const names = new Map(threads.map(({ app, thread, name }) => [`${app}:${thread}`, name]));
       const home = realpathSync(dirname(state));
-      const sessions = running(store);
+      const sessions = await running(store);
       const updates = history(resolve(import.meta.dir, ".."));
 
       const behind = (session: Session, thread?: string) => {
@@ -975,7 +995,7 @@ try {
 
     case "message": {
       const [key] = args;
-      const said = filled(key) ? store.messages.latest(key) : null;
+      const said = filled(key) ? await store.messages.latest(key) : null;
 
       if (!said) {
         throw new Error(`no message ${key ?? ""}`);
@@ -1014,19 +1034,44 @@ try {
       }
 
       const last = filled(flags.last) ? Number(flags.last) : -1;
-      const threads = filled(given) ? threadsOf(given) : [];
+      const threads = filled(given) ? await threadsOf(given) : [];
 
       const rows =
         threads.length > 0
-          ? threads
-              .flatMap((thread) => store.messages.said(thread, last))
+          ? (await Promise.all(threads.map((thread) => store.messages.said(thread, last))))
+              .flat()
               .toSorted((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
               .slice(last < 0 ? 0 : -last)
-          : store.messages.since(since);
+          : await store.messages.since(since);
 
-      log(
+      await log(
         rows.filter((row) => row.at > since && (flags.taken !== true || row.taken !== undefined)),
       );
+      break;
+    }
+
+    case "sql": {
+      const [query] = args;
+
+      if (!filled(query)) {
+        usage();
+      }
+
+      for (const row of await store.read(query)) {
+        console.log(JSON.stringify(row));
+      }
+
+      break;
+    }
+
+    case "store": {
+      const [what, to] = args;
+
+      if (what !== "copy" || !filled(to)) {
+        usage();
+      }
+
+      await store.copy(to);
       break;
     }
 

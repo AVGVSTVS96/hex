@@ -5,12 +5,12 @@ import { join } from "node:path";
 
 import { history } from "./hub.ts";
 import { importLogs } from "./past.ts";
-import { open } from "./store.ts";
+import { file, open } from "./store.ts";
 
-test("log/'s conversations come into hex.db once, under each session's thread, around what hex.db kept, and wake no memory pass", () => {
+test("log/'s conversations come into hex.db once, under each session's thread, around what hex.db kept, and wake no memory pass", async () => {
   const home = mkdtempSync(join(tmpdir(), "past-"));
   mkdirSync(join(home, "log", "threads"), { recursive: true });
-  const store = open(join(home, "state"));
+  const store = file(join(home, "state"));
   store.messages.deliver(
     {
       key: "telegram:1",
@@ -28,9 +28,13 @@ test("log/'s conversations come into hex.db once, under each session's thread, a
     join(home, "log", "threads", "2026-10-06-abc-sess.md"),
     "# 2026-10-06 · session abc-session\n\n## me · telegram · 2026-10-06 10:06\n\nhow full is your context?\n\n## assistant · telegram · 2026-10-06 10:06\n\nRoomy.\n",
   );
-  expect(importLogs(store, join(home, "log"), "America/Los_Angeles")).toBe(1);
-  expect(importLogs(store, join(home, "log"), "America/Los_Angeles")).toBe(0);
-  expect(history(store, "-100:7")).toEqual([
+  expect(
+    await importLogs(open(join(home, "state")), join(home, "log"), "America/Los_Angeles"),
+  ).toBe(1);
+  expect(
+    await importLogs(open(join(home, "state")), join(home, "log"), "America/Los_Angeles"),
+  ).toBe(0);
+  expect(await history(open(join(home, "state")), "-100:7")).toEqual([
     { from: "me", text: "how full is your context?" },
     { from: "hex", text: "Roomy." },
   ]);
@@ -42,10 +46,10 @@ test("log/'s conversations come into hex.db once, under each session's thread, a
   rmSync(home, { recursive: true, force: true });
 });
 
-test("a session's turns go under the thread each was said in, and its terminal notes stay out", () => {
+test("a session's turns go under the thread each was said in, and its terminal notes stay out", async () => {
   const home = mkdtempSync(join(tmpdir(), "past-"));
   mkdirSync(join(home, "log"), { recursive: true });
-  const store = open(join(home, "state"));
+  const store = file(join(home, "state"));
   store.messages.deliver(
     { key: "telegram:1", to: "-100:7", from: "telegram", author: "owner", body: "first ask" },
     "abc-session",
@@ -78,30 +82,34 @@ test("a session's turns go under the thread each was said in, and its terminal n
       "## assistant · discord · 2026-10-06 10:10\n\nTwo.\n",
     ].join("\n"),
   );
-  expect(importLogs(store, join(home, "log"), "America/Los_Angeles")).toBe(2);
-  expect(history(store, "-100:7")).toEqual([
+  expect(
+    await importLogs(open(join(home, "state")), join(home, "log"), "America/Los_Angeles"),
+  ).toBe(2);
+  expect(await history(open(join(home, "state")), "-100:7")).toEqual([
     { from: "me", text: "first ask" },
     { from: "hex", text: "One." },
     { from: "me", text: "second ask" },
   ]);
-  expect(history(store, "900")).toEqual([
+  expect(await history(open(join(home, "state")), "900")).toEqual([
     { from: "me", text: "moved ask" },
     { from: "hex", text: "Two." },
   ]);
   rmSync(home, { recursive: true, force: true });
 });
 
-test("a session that took nothing hex.db kept comes in under its thread", () => {
+test("a session that took nothing hex.db kept comes in under its thread", async () => {
   const home = mkdtempSync(join(tmpdir(), "past-"));
   mkdirSync(join(home, "log", "threads"), { recursive: true });
-  const store = open(join(home, "state"));
+  const store = file(join(home, "state"));
   store.threads.keep("telegram", { "-100:9": { name: "Errands", session: "old-session" } });
   writeFileSync(
     join(home, "log", "threads", "2026-10-01-old-sess.md"),
     "# 2026-10-01 · session old-session\n\n## me · telegram · 2026-10-01 10:06\n\nbuy stamps\n\n## assistant · telegram · 2026-10-01 10:06\n\nOn it.\n",
   );
-  expect(importLogs(store, join(home, "log"), "America/Los_Angeles")).toBe(2);
-  expect(history(store, "-100:9", "old-session")).toEqual([
+  expect(
+    await importLogs(open(join(home, "state")), join(home, "log"), "America/Los_Angeles"),
+  ).toBe(2);
+  expect(await history(open(join(home, "state")), "-100:9", "old-session")).toEqual([
     { from: "me", text: "buy stamps" },
     { from: "hex", text: "On it." },
   ]);

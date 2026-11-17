@@ -126,13 +126,24 @@ What else hex needs on their machines goes in `~/hex/services.json`, in the shap
 - `units`: systemd unit files to link and enable, from the list's folder or from home. A file in a folder named for its unit (`hex.service.d/`) is a drop-in for it.
 - `managed`: Claude Code managed settings, merged into the machine's.
 
+### On more than one machine
+
+A hex that should run on whichever of their machines is up keeps its records where every one of them reaches: in a [Durable Object](https://developers.cloudflare.com/durable-objects/) on their own Cloudflare account, in place of `state/hex.db`. Cloudflare runs exactly one of it and answers a write once several of its machines have it, so nothing is copied when hex moves, and a `hex` command or a terminal session on any machine writes to the same place. It takes the Workers Paid plan ($5 a month): the free plan stops writes after 100,000 rows a day.
+
+1. Put `CLOUDFLARE_API_TOKEN` (the "Edit Cloudflare Workers" template) and `CLOUDFLARE_ACCOUNT_ID` in `~/hex/.env`, and run `~/hex/.hex/bin/hex store deploy`. It prints the Worker's address.
+2. Give it a key only they hold: `openssl rand -hex 32`, then `bunx wrangler@4 secret put KEY --config ~/hex/.hex/hub/store/wrangler.jsonc`.
+3. `~/hex/.hex/bin/hex stop`, then `HEX_STORE_KEY=<the key> ~/hex/.hex/bin/hex store move <the address>`. It sends every row of `hex.db`, compares each with what the object holds, then writes `state/store.json` (the address and the key), which is what points hex there, and renames `hex.db` to `hex.db.moved`. Start hex again.
+4. On each other machine, set hex up as above and copy `state/store.json` over in place of `state/hex.db`.
+
+`hex sql '<query>'` reads the records wherever they live, and can change nothing. `hex store copy <file>` writes them out as a SQLite file. To go back to a file: stop hex, `hex store copy ~/hex/state/hex.db`, delete `state/store.json`, start hex. A hub that runs under a lease that passes between machines sets `HEX_STORE_TENURE` to the lease's count, and the object refuses a hub on an older one.
+
 ## Updating
 
 `.hex/bin/update` runs every morning from `schedules.json`. It pulls hex once `bin/check` passes on the new version, and restarts the hub and hex's sessions.
 
 ## Backups
 
-Every night at 3:00 on their clock, General's hub copies `state/hex.db` to `state/backups/hex-<date>.db`, and to `~/hex-backups` on hex's computer when `HEX_COMPUTER` names one, keeping the last seven in each place. A night that fails tells General. To bring one back: `~/hex/.hex/bin/hex stop`, copy it over `~/hex/state/hex.db`, delete `hex.db-wal` and `hex.db-shm` beside it, then `~/hex/.hex/bin/hex start`.
+Every night at 3:00 on their clock, General's hub copies hex's records (`state/hex.db`, or what the Durable Object holds) to `state/backups/hex-<date>.db`, and to `~/hex-backups` on hex's computer when `HEX_COMPUTER` names one, keeping the last seven in each place. A night that fails tells General. To bring one back: `~/hex/.hex/bin/hex stop`, copy it over `~/hex/state/hex.db`, delete `hex.db-wal` and `hex.db-shm` beside it, then `~/hex/.hex/bin/hex start`.
 
 ## Watching from outside (optional)
 

@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import { generalOf, isDm, projectOf } from "./activity.ts";
 import type { Sent } from "./call.ts";
-import { Changes } from "./changes.ts";
+import { Changes, oneAtATime } from "./changes.ts";
 import { before, Check, final, HANDED_BACK } from "./check.ts";
 import { linkAt, Links } from "./links.ts";
 import { caption, meta as mediaMeta } from "./media.ts";
@@ -214,8 +214,8 @@ export class Questions extends Changes {
   view: Omit<View, "version"> = { asks: [], decided: [], stuck: [], fresh: [], check: null };
   counts = new Changes();
   private ledgers = new Map<string, Asked[]>();
-  private readonly threads = new Map<string, Thread>();
-  private readonly pins = new Map<string, Pin>();
+  private threads = new Map<string, Thread>();
+  private pins = new Map<string, Pin>();
   private readonly links: Links;
   private readonly calls: string;
   private result: CheckResult | undefined;
@@ -228,7 +228,7 @@ export class Questions extends Changes {
   private readonly check: (why: string) => void;
   private seen?: { pins: string; t3: string };
   private callPlaces = new Map<string, CallPlace>();
-  private readonly shots = new Map<string, string[]>();
+  private shots = new Map<string, string[]>();
   private lastCallPlaces = new Map<string, CallPlace>();
   private readonly state: string;
 
@@ -268,7 +268,7 @@ export class Questions extends Changes {
         }
       }),
     );
-    this.build();
+    void this.build();
   }
 
   get lastCheck() {
@@ -331,10 +331,10 @@ export class Questions extends Changes {
     return this.marks.answers[id] === undefined ? (this.renamed(id) ?? id) : id;
   }
 
-  of(id: string) {
+  async of(id: string) {
     const pin = this.pins.get(id);
     const thread = id.slice(id.indexOf(":") + 1);
-    const text = pin && statusPost(store(this.state), thread, pin.note, Infinity);
+    const text = pin && (await statusPost(store(this.state), thread, pin.note, Infinity));
 
     return {
       asks: this.view.asks.filter((question) => question.task === id),
@@ -342,7 +342,7 @@ export class Questions extends Changes {
     };
   }
 
-  words(id: string): Words | undefined {
+  async words(id: string): Promise<Words | undefined> {
     const curated = this.result?.asks.find((question) => question.id === id);
     const raw = curated ? undefined : this.refs(id)[0];
 
@@ -360,7 +360,7 @@ export class Questions extends Changes {
       const words = filled(source.call)
         ? this.callWords(source.call)
         : filled(source.thread) && source.message !== undefined
-          ? this.threadWords(source.app, source.thread, source.message, curated !== undefined)
+          ? await this.threadWords(source.app, source.thread, source.message, curated !== undefined)
           : undefined;
 
       if (words) {
@@ -369,24 +369,24 @@ export class Questions extends Changes {
     }
   }
 
-  private threadWords(
+  private async threadWords(
     app: string,
     thread: string,
     message: MessageId,
     own: boolean,
-  ): Words | undefined {
+  ): Promise<Words | undefined> {
     const db = store(this.state);
     const asked = this.asked({ app, thread, message });
     const pin = this.pins.get(`${app}:${thread}`);
     const pinned = !asked && pin && String(pin.message) === String(message) ? pin : undefined;
     // oxlint-disable-next-line unicorn/no-array-method-this-argument -- Store#find(thread, message) is not Array#find
-    const row = asked || pinned ? undefined : db.messages.find(thread, message);
+    const row = asked || pinned ? undefined : await db.messages.find(thread, message);
 
     const said =
       asked ?? (row && { app, thread, message, text: row.body, at: row.at, options: [] });
 
     const text = said
-      ? [...before(db, app, said, Infinity), ...(own ? [said.text] : [])].join("\n\n")
+      ? [...(await before(db, app, said, Infinity)), ...(own ? [said.text] : [])].join("\n\n")
       : pinned
         ? waiting(pinned.note)
         : "";
@@ -987,30 +987,34 @@ export class Questions extends Changes {
   private schedule() {
     clearTimeout(this.pending);
     this.pending = setTimeout(() => {
-      this.build();
+      void this.build();
     }, 30);
   }
 
-  private build() {
-    this.shots.clear();
-    this.threads.clear();
-    this.pins.clear();
-    const questions = store(this.state).questions.list({ asker: "hex" });
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // The records are swapped in whole once read, so what reads them meanwhile sees the last build's, never a half-cleared one.
+  private readonly build = oneAtATime("the owner's questions", async () => {
+    const db = store(this.state);
 
-    for (const thread of store(this.state).threads.list()) {
-      this.threads.set(`${thread.app}:${thread.thread}`, thread);
-    }
+    const [questions, threads, pins] = await Promise.all([
+      db.questions.list({ asker: "hex" }),
+      db.threads.list(),
+      db.pins.list(),
+    ]);
+
+    this.threads = new Map(threads.map((thread) => [`${thread.app}:${thread.thread}`, thread]));
 
     this.ledgers = Map.groupBy(
       questions.filter((question) => question.app !== "voice"),
       (question) => question.app,
     );
 
-    for (const pin of store(this.state).pins.list()) {
-      if (pin.text !== "") {
-        this.pins.set(`${pin.app}:${pin.thread}`, pin);
-      }
-    }
+    this.pins = new Map(
+      pins.filter((pin) => pin.text !== "").map((pin) => [`${pin.app}:${pin.thread}`, pin]),
+    );
+
+    const shots = new Map<string, string[]>();
+    const dress = (question: Curated) => this.dress(question, shots);
 
     const check = join(this.state, "voice", "check.json");
     const stamp = stampOf(check);
@@ -1024,17 +1028,14 @@ export class Questions extends Changes {
     this.notice();
     const used = new Set<string>();
 
-    const curated = (this.result?.asks ?? []).flatMap((question) => {
+    const curated = (this.result?.asks ?? []).filter((question) => {
       for (const ref of question.refs ?? []) {
         used.add(refId(ref));
       }
 
-      const live =
-        question.refs !== undefined && question.refs.length > 0
-          ? question.refs.some((ref) => this.open(ref))
-          : this.marks.answers[question.id] === undefined;
-
-      return live ? [this.dress(question)] : [];
+      return question.refs !== undefined && question.refs.length > 0
+        ? question.refs.some((ref) => this.open(ref))
+        : this.marks.answers[question.id] === undefined;
     });
 
     const reopened = Object.entries(this.marks.reopened).flatMap(([id, { refs, question }]) => {
@@ -1050,51 +1051,63 @@ export class Questions extends Changes {
       }
 
       return [
-        this.dress({
+        {
           ...fromLedger(first.app, asked),
           id,
           refs,
           from: refs,
           ...(filled(question) && { question }),
-        }),
+        },
       ];
     });
 
     const recently = new Date(Date.now() - DECIDED_MS).toISOString();
 
-    const decided = [...this.ledgers]
-      .flatMap(([app, ledger]) =>
-        ledger.flatMap((question) => {
-          const { settled } = question;
+    const backs = [...this.ledgers].flatMap(([app, ledger]) =>
+      ledger.flatMap((question) => {
+        const { settled } = question;
 
-          if (settled?.note.startsWith(BACK) !== true || settled.at < recently) {
-            return [];
-          }
-
-          const id = refId({ app, thread: question.thread, message: question.message });
-          const told = store(this.state).messages.get(`check:back:${id}`)?.body;
-
-          return [
-            {
-              ...this.dress(fromLedger(app, question)),
-              decided: settled.at,
-              why:
-                told?.startsWith(HANDED_BACK) === true
-                  ? reasonOf(told.slice(HANDED_BACK.length))
-                  : sentence(settled.note.slice(BACK.length).replace(/^:\s*/u, "")),
-            },
-          ];
-        }),
-      )
-      .toSorted((a, b) => b.decided.localeCompare(a.decided));
+        return settled?.note.startsWith(BACK) === true && settled.at >= recently
+          ? [{ app, question, settled }]
+          : [];
+      }),
+    );
 
     const raw = [...this.ledgers].flatMap(([app, ledger]) =>
       ledger
         .filter((question) => !question.answer && !question.settled && !used.has(refId(question)))
-        .map((question) => this.dress(fromLedger(app, question))),
+        .map((question) => fromLedger(app, question)),
     );
 
-    raw.sort((a, b) => b.at.localeCompare(a.at));
+    const [curatedShown, reopenedShown, rawShown, decidedShown] = await Promise.all([
+      Promise.all(curated.map(dress)),
+      Promise.all(reopened.map(dress)),
+      Promise.all(raw.map(dress)),
+      Promise.all(
+        backs.map(async ({ app, question, settled }) => {
+          const id = refId({ app, thread: question.thread, message: question.message });
+
+          const [shown, told] = await Promise.all([
+            dress(fromLedger(app, question)),
+            db.messages.get(`check:back:${id}`),
+          ]);
+
+          return {
+            ...shown,
+            decided: settled.at,
+            why:
+              told?.body.startsWith(HANDED_BACK) === true
+                ? reasonOf(told.body.slice(HANDED_BACK.length))
+                : sentence(settled.note.slice(BACK.length).replace(/^:\s*/u, "")),
+          };
+        }),
+      ),
+    ]);
+
+    const decided = decidedShown.toSorted((a, b) => b.decided.localeCompare(a.decided));
+    this.shots = shots;
+
+    rawShown.sort((a, b) => b.at.localeCompare(a.at));
     const checked = this.result?.at ?? "";
 
     const stuck = [
@@ -1110,10 +1123,10 @@ export class Questions extends Changes {
 
     const view: Omit<View, "version"> = {
       asks: [
-        ...raw.filter((question) => question.at > checked),
-        ...curated,
-        ...reopened,
-        ...raw.filter((question) => question.at <= checked),
+        ...rawShown.filter((question) => question.at > checked),
+        ...curatedShown,
+        ...reopenedShown,
+        ...rawShown.filter((question) => question.at <= checked),
       ],
       decided,
       stuck,
@@ -1131,7 +1144,7 @@ export class Questions extends Changes {
     if (JSON.stringify(view) !== JSON.stringify(this.view)) {
       this.show(view);
     }
-  }
+  });
 
   private show(view: Omit<View, "version">) {
     const moved =
@@ -1182,21 +1195,24 @@ export class Questions extends Changes {
         : {};
   }
 
-  private dress({ refs, from, options, shows = [], ...question }: Curated): Question {
+  private async dress(
+    { refs, from, options, shows = [], ...question }: Curated,
+    shots: Map<string, string[]>,
+  ): Promise<Question> {
     const [app = "", ...thread] = question.task.split(":");
     const was = (refs ?? []).map(refId).filter((id) => id !== question.id);
 
     const shown = refs?.map((ref) => this.asked(ref)).find((asked) => asked?.shots !== undefined);
 
     if (shown?.shots !== undefined) {
-      this.shots.set(question.id, shown.shots);
+      shots.set(question.id, shown.shots);
     }
 
     const sentWith = refs?.map((ref) => this.asked(ref)).find((asked) => asked?.attached);
 
     const multiple = refs?.some((ref) => this.asked(ref)?.multiple === true) === true;
 
-    const pictures = this.pictures([
+    const pictures = await this.pictures([
       ...(sentWith?.attached?.map((message) => ({ thread: sentWith.thread, message })) ?? []),
       ...shows,
     ]);
@@ -1214,15 +1230,15 @@ export class Questions extends Changes {
     };
   }
 
-  private pictures(messages: { thread: string; message: MessageId }[]): Picture[] {
+  private async pictures(messages: { thread: string; message: MessageId }[]): Promise<Picture[]> {
     const db = store(this.state);
 
-    const all = messages.flatMap(({ thread, message }) => {
+    const rows = await Promise.all(
       // oxlint-disable-next-line unicorn/no-array-method-this-argument -- Store#find(thread, message) is not Array#find
-      const row = db.messages.find(thread, message);
+      messages.map(({ thread, message }) => db.messages.find(thread, message)),
+    );
 
-      return row ? picturesIn(row) : [];
-    });
+    const all = rows.flatMap((row) => (row ? picturesIn(row) : []));
 
     return all.filter((picture, at) => all.findIndex((one) => one.id === picture.id) === at);
   }

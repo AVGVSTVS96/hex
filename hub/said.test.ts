@@ -4,15 +4,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { said } from "./said.ts";
-import { open } from "./store.ts";
-import type { Store } from "./store.ts";
+import { file, open } from "./store.ts";
+import type { File } from "./store.ts";
 
 let dir: string;
-let store: Store;
+let store: File;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "said-"));
-  store = open(dir);
+  store = file(dir);
 });
 
 afterEach(() => {
@@ -35,18 +35,18 @@ const wrote = (key: string, body: string, by: string, to = "general") => {
   store.messages.deliver({ key, to, from: "telegram", author: "hex", body, meta: {} }, by);
 };
 
-test("General is shown what a session beside it told the owner since its last turn, once", () => {
+test("General is shown what a session beside it told the owner since its last turn, once", async () => {
   prompted("schedule:heartbeat@1", "beside:general", "beat-1");
   wrote("telegram:1", "The landlord wrote about the lease: https://mail.example/1", "beat-1");
   wrote("telegram:2", "On it.", "general-session");
 
-  const first = said(store, "general", "general-session");
+  const first = await said(open(dir), "general", "general-session");
   expect(first).toContain("[heartbeat]: The landlord wrote about the lease");
   expect(first).not.toContain("On it.");
-  expect(said(store, "general", "general-session")).toBe("");
+  expect(await said(open(dir), "general", "general-session")).toBe("");
 });
 
-test("a timed job's run beside a thread is shown what its earlier runs said there, so it says nothing twice", () => {
+test("a timed job's run beside a thread is shown what its earlier runs said there, so it says nothing twice", async () => {
   prompted("schedule:heartbeat@1", "beside:general", "beat-1");
   wrote("telegram:1", "The landlord wrote about the lease", "beat-1");
   Bun.sleepSync(2);
@@ -54,8 +54,8 @@ test("a timed job's run beside a thread is shown what its earlier runs said ther
   wrote("telegram:2", "A job ended", "catch-1");
   prompted("schedule:heartbeat@2", "beside:general", "beat-2");
 
-  const shown = said(
-    store,
+  const shown = await said(
+    open(dir),
     "general",
     "beat-2",
     '<channel source="telegram" key="schedule:heartbeat@2" user="schedule">\n[heartbeat] Hourly check\n</channel>',
@@ -68,7 +68,7 @@ test("a timed job's run beside a thread is shown what its earlier runs said ther
   expect(others).not.toContain("The landlord");
 });
 
-test("an earlier run that said nothing leaves its last words for the next, and a message shows whole", () => {
+test("an earlier run that said nothing leaves its last words for the next, and a message shows whole", async () => {
   prompted("schedule:heartbeat@1", "beside:general", "beat-1");
   wrote("telegram:1", "**Catch-up**\n- mail: 2 new\n- jobs: none", "beat-1");
   store.messages.deliver(
@@ -84,8 +84,8 @@ test("an earlier run that said nothing leaves its last words for the next, and a
   );
   prompted("schedule:heartbeat@2", "beside:general", "beat-2");
 
-  const shown = said(
-    store,
+  const shown = await said(
+    open(dir),
     "general",
     "beat-2",
     '<channel source="telegram" key="schedule:heartbeat@2">',
@@ -95,17 +95,17 @@ test("an earlier run that said nothing leaves its last words for the next, and a
   expect(shown).toContain("(its last words, not sent): Looked at mail and jobs: nothing new.");
 });
 
-test("a new session isn't shown its own thread's earlier sessions as others", () => {
+test("a new session isn't shown its own thread's earlier sessions as others", async () => {
   store.messages.deliver(
     { key: "telegram:9", to: "general", from: "telegram", author: "owner", body: "hi", meta: {} },
     "general-before",
   );
   wrote("telegram:10", "Hello.", "general-before");
 
-  expect(said(store, "general", "general-after")).toBe("");
+  expect(await said(open(dir), "general", "general-after")).toBe("");
 });
 
-test("a new session is shown only what came since its job last ran, or since its thread's own sessions last took a message", () => {
+test("a new session is shown only what came since its job last ran, or since its thread's own sessions last took a message", async () => {
   prompted("schedule:heartbeat@1", "beside:general", "beat-1");
   wrote("telegram:1", "Old news from long ago", "beat-1");
   store.messages.deliver({
@@ -123,21 +123,21 @@ test("a new session is shown only what came since its job last ran, or since its
   prompted("schedule:once@1", "beside:general", "once-1", "once");
 
   expect(
-    said(
-      store,
+    await said(
+      open(dir),
       "general",
       "once-1",
       '<channel source="telegram" key="schedule:once@1" user="schedule">\n[once] Hourly check\n</channel>',
     ),
   ).toBe("");
 
-  const fresh = said(store, "general", "general-2");
+  const fresh = await said(open(dir), "general", "general-2");
   expect(fresh).toContain("since this chat's last turn");
   expect(fresh).toContain("The build finished");
   expect(fresh).not.toContain("Old news");
 });
 
-test("what a job's report run said is named for the job", () => {
+test("what a job's report run said is named for the job", async () => {
   store.messages.deliver({
     key: "job:mail@1",
     to: "beside:general",
@@ -149,5 +149,5 @@ test("what a job's report run said is named for the job", () => {
   store.messages.take("job:mail@1", "report-1");
   wrote("telegram:1", "Two new mails", "report-1");
 
-  expect(said(store, "general", "general-session")).toContain("[mail]: Two new mails");
+  expect(await said(open(dir), "general", "general-session")).toContain("[mail]: Two new mails");
 });

@@ -1,9 +1,7 @@
-import type { Database } from "bun:sqlite";
-
 import { z } from "zod";
 
 import { fromJson, now, TextOrNull } from "./db.ts";
-import type { Core, MessageId, Write } from "./db.ts";
+import type { Core, MessageId, Sql, Write } from "./db.ts";
 
 export const AuthorColumn = z.enum(["owner", "hex", "prompt", "call", "other"]);
 
@@ -71,7 +69,7 @@ const LastRow = z.object({ last: z.number().nullable() });
 const UntakenRow = z.object({ untaken: z.number() });
 
 export class Messages {
-  private readonly db: Database;
+  private readonly db: Sql;
   private readonly write: Write;
 
   constructor({ db, write }: Core) {

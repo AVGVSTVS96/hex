@@ -1,9 +1,7 @@
-import type { Database } from "bun:sqlite";
-
 import { z } from "zod";
 
 import { now } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Sql, Write } from "./db.ts";
 
 const RecordRow = z.object({ record: z.string() }).nullable();
 
@@ -14,7 +12,7 @@ const TASKS_RECORD_KEPT_UNCHANGED = 2 * 24 * 60 * 60 * 1000;
 const RULES_RECORD_OF_A_SESSION_THAT_ENDED_WITHOUT_SESSION_END = 7 * 24 * 60 * 60 * 1000;
 
 export class Seen {
-  private readonly db: Database;
+  private readonly db: Sql;
   private readonly write: Write;
 
   constructor({ db, write }: Core) {

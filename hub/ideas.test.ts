@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { checks, look, research } from "./ideas.ts";
 import type { Found } from "./ideas.ts";
-import { open, Store } from "./store.ts";
+import { File, file } from "./store.ts";
 import { fakeClaude, flags } from "./testing.ts";
 
 let dir: string;
@@ -21,7 +21,7 @@ afterEach(() => {
 const minute = Date.UTC(2026, 10, 9, 17) / 60_000;
 
 const sent = () =>
-  open(dir)
+  file(dir)
     .messages.untaken()
     .filter((row) => row.from === "schedule");
 
@@ -31,7 +31,7 @@ const neverAsked = () => Promise.resolve({ news: true, finding: "never asked" })
 const job = { cron: "0 9 * * 1", idea: "t-1", prompt: "Is GPT Live 1.1 on the API yet?" };
 
 function idea() {
-  const store = new Store(dir);
+  const store = new File(dir);
 
   store.messages.deliver({
     key: "telegram:-100:5",
@@ -116,7 +116,7 @@ test("a check that fails is kept with its error; the second failure in a row tel
 
 test("an idea that's done has nothing to look into: its thread hears once to take the job out", async () => {
   const { id } = idea();
-  open(dir).tasks.edit(id, { status: "done", proof: "shipped" });
+  file(dir).tasks.edit(id, { status: "done", proof: "shipped" });
   await research(dir, "gpt-live", job, "general", minute, neverAsked);
   await research(dir, "gpt-live", job, "general", minute + 1440, neverAsked);
   expect(sent()).toMatchObject([
@@ -143,7 +143,7 @@ test("each check keeps the input it was given, so a prompt can be replayed again
 
 test("news of an idea General owns goes beside General, not into its conversation", async () => {
   const { id } = idea();
-  open(dir).tasks.edit(id, { owner: "general" });
+  file(dir).tasks.edit(id, { owner: "general" });
 
   await research(dir, "fan", { ...job, idea: id }, "general", minute, () =>
     Promise.resolve({ news: true, finding: "A 12 dB fan is out: https://example.com/fan" }),

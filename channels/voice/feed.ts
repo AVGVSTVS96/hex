@@ -4,7 +4,7 @@ import type { FSWatcher } from "node:fs";
 import { checks, open } from "@hex/hub";
 
 import type { Finished } from "./board.ts";
-import { Changes } from "./changes.ts";
+import { Changes, oneAtATime } from "./changes.ts";
 import { linkAt } from "./links.ts";
 import type { DecidedByHex } from "./questions.ts";
 
@@ -28,7 +28,7 @@ export type Shown = { id: string; shape: number };
 export type Stretch = { entries: Entry[]; older: number };
 
 export type Sources = {
-  closedSince: (since: string) => Finished[];
+  closedSince: (since: string) => Promise<Finished[]>;
   decided: () => DecidedByHex[];
   runs?: () => { id: string; name: string }[];
 };
@@ -52,12 +52,12 @@ export class Feed extends Changes {
     super();
     this.state = state;
     this.sources = sources;
-    this.check();
+    void this.check();
 
     try {
       this.watcher = watch(state, (_, file) => {
         if (file === "ideas.jsonl") {
-          this.check();
+          void this.check();
         }
       });
     } catch {
@@ -68,9 +68,9 @@ export class Feed extends Changes {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   /* Mapping every closed task to its run takes a few hundred milliseconds, so the entries are made again
      only when what they're made from changes, read cheaply here. */
-  check() {
+  readonly check = oneAtATime("the feed", async () => {
     const now = JSON.stringify([
-      open(this.state).tasks.finished(""),
+      await open(this.state).tasks.finished(""),
       this.sources.runs?.().map(({ id, name }) => [id, name]),
       this.sources.decided(),
       checks(this.state).filter((check) => check.news === true),
@@ -81,13 +81,13 @@ export class Feed extends Changes {
     }
 
     const first = this.seen === "";
+    this.kept = await this.make();
     this.seen = now;
-    this.kept = this.make();
 
     if (!first) {
       this.changed();
     }
-  }
+  });
 
   stop() {
     this.watcher?.close();
@@ -97,8 +97,10 @@ export class Feed extends Changes {
     return this.kept;
   }
 
-  private make(): Entry[] {
-    return [...this.done(), ...this.found(), ...this.decided()].toSorted(
+  private async make(): Promise<Entry[]> {
+    const [done, found, decided] = await Promise.all([this.done(), this.found(), this.decided()]);
+
+    return [...done, ...found, ...decided].toSorted(
       (a, b) => Date.parse(b.at) - Date.parse(a.at) || a.id.localeCompare(b.id),
     );
   }
@@ -127,35 +129,43 @@ export class Feed extends Changes {
     return { entries, older: n < left.length && last ? Date.parse(last.at) : 0 };
   }
 
-  private done(): Entry[] {
-    return this.sources.closedSince("").map((task) => {
-      const { words, links } = this.split(task.proof);
+  private async done(): Promise<Entry[]> {
+    const closed = await this.sources.closedSince("");
 
-      return {
-        id: `done:${task.id}`,
-        kind: "done",
-        title: task.title,
-        body: words,
-        topic: task.topic,
-        at: task.at,
-        opens: task.id,
-        links,
-        pictures: [],
-      };
-    });
+    return await Promise.all(
+      closed.map(async (task): Promise<Entry> => {
+        const { words, links } = await this.split(task.proof);
+
+        return {
+          id: `done:${task.id}`,
+          kind: "done",
+          title: task.title,
+          body: words,
+          topic: task.topic,
+          at: task.at,
+          opens: task.id,
+          links,
+          pictures: [],
+        };
+      }),
+    );
   }
 
-  private found(): Entry[] {
+  private async found(): Promise<Entry[]> {
     const tasks = open(this.state).tasks;
 
-    return checks(this.state).flatMap((check) => {
+    const each = checks(this.state).map(async (check): Promise<Entry[]> => {
       if (check.news !== true || check.finding === undefined || check.finding.trim() === "") {
         return [];
       }
 
       const opens = check.idea ?? "";
-      const task = opens === "" ? undefined : tasks.get(opens);
-      const { words, links } = this.split(check.finding);
+
+      const [task, { words, links }] = await Promise.all([
+        opens === "" ? undefined : tasks.get(opens),
+        this.split(check.finding),
+      ]);
+
       const [title, body] = firstSentence(words);
 
       return [
@@ -172,27 +182,31 @@ export class Feed extends Changes {
         },
       ];
     });
+
+    return (await Promise.all(each)).flat();
   }
 
-  private decided(): Entry[] {
-    return this.sources.decided().map((question) => {
-      const { words, links } = this.split(question.why);
+  private decided(): Promise<Entry[]> {
+    return Promise.all(
+      this.sources.decided().map(async (question): Promise<Entry> => {
+        const { words, links } = await this.split(question.why);
 
-      return {
-        id: `decided:${question.id}`,
-        kind: "decided",
-        title: question.question,
-        body: words,
-        topic: question.topic,
-        at: question.decided,
-        opens: question.id,
-        links: [...(question.links ?? []), ...links],
-        pictures: [],
-      };
-    });
+        return {
+          id: `decided:${question.id}`,
+          kind: "decided",
+          title: question.question,
+          body: words,
+          topic: question.topic,
+          at: question.decided,
+          opens: question.id,
+          links: [...(question.links ?? []), ...links],
+          pictures: [],
+        };
+      }),
+    );
   }
 
-  private split(text: string) {
+  private async split(text: string) {
     const links: Link[] = [];
     const store = open(this.state);
 
@@ -202,14 +216,23 @@ export class Feed extends Changes {
       return " ";
     });
 
-    const words = withoutUrls.replaceAll(KEYS, (key) => {
-      const said = store.messages.get(key);
+    const keys = [...new Set(withoutUrls.match(KEYS))];
 
-      if (said === null) {
+    const [rows, threads] = await Promise.all([
+      Promise.all(keys.map(async (key) => [key, await store.messages.get(key)] as const)),
+      keys.length > 0 ? store.threads.list() : [],
+    ]);
+
+    const said = new Map(rows);
+
+    const words = withoutUrls.replaceAll(KEYS, (key) => {
+      const row = said.get(key);
+
+      if (row === null || row === undefined) {
         return key;
       }
 
-      const thread = store.threads.list().find((row) => row.thread === said.to);
+      const thread = threads.find((one) => one.thread === row.to);
       const url = linkAt(key.split(":")[0] ?? "", thread?.link, key.split(":").at(-1));
 
       if (url !== undefined && url !== "") {

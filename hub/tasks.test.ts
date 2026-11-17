@@ -3,14 +3,14 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { open } from "./store.ts";
+import { file } from "./store.ts";
 
 let dir: string;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "tasks-"));
   mkdirSync(join(dir, "telegram"));
-  const store = open(dir);
+  const store = file(dir);
   store.threads.keep("telegram", { "-100:7": { name: "Website" }, "-100:9": { name: "Errands" } });
   store.messages.deliver({
     key: "telegram:-100:50",
@@ -72,7 +72,7 @@ test("a thread's session gets its own open tasks as clean entries, once, and aga
   expect(first).not.toContain("telegram:-100:50");
   expect(first).not.toContain("power adapter");
   expect(await hook({ session_id: "a" }, { HEX_THREAD: "-100:7" })).toBe("");
-  open(dir).tasks.edit("t-1", { status: "done", proof: "https://example.com/pr/1" });
+  file(dir).tasks.edit("t-1", { status: "done", proof: "https://example.com/pr/1" });
   expect(await hook({ session_id: "a" }, { HEX_THREAD: "-100:7" })).toBe(
     "No open tasks or questions waiting on me now.\n",
   );
@@ -101,7 +101,7 @@ test("main sees every thread's open tasks, and gets them again after a compactio
 test("after the first list, main gets only what changed, until the changes add up to the whole list again", async () => {
   const main = { HEX_THREAD: "-100", HEX_MAIN: "1" };
   const all = await hook({ session_id: "m2" }, main);
-  const store = open(dir);
+  const store = file(dir);
   store.messages.deliver({
     key: "telegram:-100:61",
     to: "-100:9",
@@ -130,7 +130,7 @@ test("a session with no tasks hears nothing", async () => {
 });
 
 test("a list too long for one hook's output gives each entry with its done-when while it fits, then one line, and never the owner's words", async () => {
-  const store = open(dir);
+  const store = file(dir);
 
   for (let n = 0; n < 120; n++) {
     store.messages.deliver({
@@ -174,7 +174,7 @@ test("a list too long for one hook's output gives each entry with its done-when 
 });
 
 test("the questions still waiting on the owner come with the tasks, and leave once answered", async () => {
-  open(dir).questions.ask({
+  file(dir).questions.ask({
     app: "telegram",
     thread: "-100:7",
     message: 3935,
@@ -186,7 +186,7 @@ test("the questions still waiting on the owner come with the tasks, and leave on
   expect(shown).toContain("- telegram · Website · telegram:-100:3935 · ");
   expect(shown).toContain("Remove the 4 old pages? [Remove | Keep]");
   expect(shown).not.toContain("below the cutoff");
-  open(dir).questions.answered("telegram", "-100:7", 3935, "Remove", "telegram");
+  file(dir).questions.answered("telegram", "-100:7", 3935, "Remove", "telegram");
   expect(await hook({ session_id: "q" }, { HEX_THREAD: "-100:7" })).not.toContain("waiting on me");
 });
 

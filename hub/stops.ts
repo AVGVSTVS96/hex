@@ -41,21 +41,28 @@ export function sessionStops({
     }
 
     const ended: Promise<void> = (running ? Promise.resolve(running) : claude.listing(session))
-      .then((agent) => {
-        if (!serving()) {
-          return;
-        }
-
-        kept((store) => {
-          store.turns.handled(session);
-        }, undefined);
-        void claude.stop(session);
-
-        return agent && claude.exited(agent.pid);
-      })
+      .then((agent) => windDown(session, agent))
       .finally(() => (underWay.ending = undefined));
 
     return (underWay.ending = ended);
+  }
+
+  async function windDown(session: string, agent: claude.Agent | undefined) {
+    if (!serving()) {
+      return;
+    }
+
+    await kept((store) => store.turns.handled(session), undefined);
+
+    if (!serving()) {
+      return;
+    }
+
+    void claude.stop(session);
+
+    if (agent) {
+      await claude.exited(agent.pid);
+    }
   }
 
   return { ending, stop };

@@ -1,14 +1,12 @@
-import type { Database } from "bun:sqlite";
-
 import { z } from "zod";
 
 import { TextOrNull } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Sql, Write } from "./db.ts";
 
 const OperationRow = z.object({ input: z.string(), result: TextOrNull });
 
 export class Operations {
-  private readonly db: Database;
+  private readonly db: Sql;
   private readonly write: Write;
 
   constructor({ db, write }: Core) {

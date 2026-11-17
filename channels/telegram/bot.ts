@@ -476,8 +476,8 @@ function located(thread: string, ref: string) {
   return where;
 }
 
-function questionAnsweredBy(ref: string) {
-  const row = hub.said(ref.replace(/^telegram:/u, ""));
+async function questionAnsweredBy(ref: string) {
+  const row = await hub.said(ref.replace(/^telegram:/u, ""));
   const message = Number(row?.meta?.button_message_id ?? row?.meta?.poll_message_id);
 
   return row === null || Number.isNaN(message)
@@ -485,14 +485,14 @@ function questionAnsweredBy(ref: string) {
     : { chat_id: target(row.to).chat_id, message };
 }
 
-function questionAt({ chat_id, message }: { chat_id: string; message: number }) {
+async function questionAt({ chat_id, message }: { chat_id: string; message: number }) {
   const isHere = (thread: string, id: MessageId | undefined) => {
     const where = id === undefined ? undefined : located(thread, String(id));
 
     return where?.chat_id === chat_id && where.message === message;
   };
 
-  const { questions } = ledger;
+  const questions = await ledger.questions;
 
   return (
     questions.find((question) => isHere(question.thread, question.message)) ??
@@ -572,7 +572,7 @@ const post: Post = {
     const { chat_id, extra } = there.chat_id === home.chat_id ? there : home;
     const sent = await bot.api.sendRichMessage(chat_id, { markdown: keepLines(text) }, extra);
 
-    said(thread, sent, text);
+    await said(thread, sent, text);
 
     return sent.message_id;
   },
@@ -623,13 +623,13 @@ const post: Post = {
   },
 };
 
-function said(
+async function said(
   thread: string,
   sent: { chat: { id: number }; message_id: number } | undefined,
   text = "",
   meta: Record<string, string> = {},
-): void {
-  hub.sent(thread, {
+): Promise<void> {
+  await hub.sent(thread, {
     ...(sent !== undefined && { key: `${sent.chat.id}:${sent.message_id}` }),
     content: text,
     meta,
@@ -763,7 +763,7 @@ async function ask(thread: string, request: Permission): Promise<void> {
         }),
     );
 
-    said(thread, sent, text, { permission: request_id });
+    await said(thread, sent, text, { permission: request_id });
     asking.set(thread, (asking.get(thread) ?? new Set()).add(idOf(thread, sent)));
   } catch (error) {
     process.stderr.write(
@@ -836,7 +836,7 @@ async function place(name: string, _where?: string, about?: string) {
   topicNames.set(thread, name);
 
   if (about !== undefined && about !== "") {
-    said(
+    await said(
       thread,
       await bot.api.sendMessage(chat_id, about, { message_thread_id: topic.message_thread_id }),
       about,
@@ -1002,7 +1002,7 @@ const handlers: Handlers<typeof tools> = {
     const access = loadAccess();
     const text = tappable(args.text ?? "");
     const quoted = args.reply_to === undefined ? undefined : telegramMessage(thread, args.reply_to);
-    const quotes = quoted && questionAt(quoted);
+    const quotes = quoted && (await questionAt(quoted));
 
     const quoting =
       quotes === undefined || quoted === undefined
@@ -1010,7 +1010,7 @@ const handlers: Handlers<typeof tools> = {
         : { question: quotes, message: idIn(quotes.thread, quoted.chat_id, quoted.message) };
 
     const shown =
-      quoted ?? (args.reply_to === undefined ? undefined : questionAnsweredBy(args.reply_to));
+      quoted ?? (args.reply_to === undefined ? undefined : await questionAnsweredBy(args.reply_to));
 
     const quote = shown && {
       reply_parameters: {
@@ -1074,7 +1074,7 @@ const handlers: Handlers<typeof tools> = {
             ? await bot.api.sendRichMessage(chat_id, { markdown: keepLines(part) }, opts)
             : await bot.api.sendMessage(chat_id, part, { ...opts, ...parseMode });
 
-        said(thread, sent, part);
+        await said(thread, sent, part);
         sentIds.push(idOf(thread, sent));
 
         if (buttons.length > 0 && last) {
@@ -1083,7 +1083,7 @@ const handlers: Handlers<typeof tools> = {
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      said(
+      await said(
         thread,
         undefined,
         chunks
@@ -1133,7 +1133,7 @@ const handlers: Handlers<typeof tools> = {
               }),
             };
 
-      said(thread, sent, captioned ? caption : `(file: ${basename(file)})`, {
+      await said(thread, sent, captioned ? caption : `(file: ${basename(file)})`, {
         file: basename(file),
         ...held,
       });
@@ -1148,9 +1148,9 @@ const handlers: Handlers<typeof tools> = {
     const last = sentIds.at(-1);
 
     if (asked !== undefined) {
-      ledger.ask(thread, asked, text, buttons, { attached: filed });
+      await ledger.ask(thread, asked, text, buttons, { attached: filed });
     } else if (text !== "" && last !== undefined) {
-      ledger.said(thread, last, text, quoting);
+      await ledger.said(thread, last, text, quoting);
     }
 
     return sentIds.length === 1
@@ -1175,11 +1175,11 @@ const handlers: Handlers<typeof tools> = {
     const { chat_id } = target(thread);
     const where = located(thread, args.message_id);
     const id = where.message;
-    const question = questionAt(where);
+    const question = await questionAt(where);
 
     const home =
       question?.thread ??
-      (where.chat_id === chat_id || hub.said(`${where.chat_id}:${id}`)?.to === thread
+      (where.chat_id === chat_id || (await hub.said(`${where.chat_id}:${id}`))?.to === thread
         ? thread
         : where.chat_id);
 
@@ -1206,13 +1206,13 @@ const handlers: Handlers<typeof tools> = {
       }
     }
 
-    if (home === thread && ref === Number(ledger.pin(thread)?.message) && changes) {
+    if (home === thread && changes && ref === Number((await ledger.pin(thread))?.message)) {
       if ((file !== undefined && file !== "") || text === undefined) {
         throw new Error("a status post is text: send the file in its own message");
       }
 
       await ledger.rewrite(thread, post, text, id);
-      said(thread, undefined, text, { edited: "true", message_id: String(id) });
+      await said(thread, undefined, text, { edited: "true", message_id: String(id) });
 
       return `edited the status post's note (id: ${id}); hex keeps the questions and tasks under it current`;
     }
@@ -1230,7 +1230,7 @@ const handlers: Handlers<typeof tools> = {
         return `the poll is already answered (${question.answer.label}), so it stays as it is; its own text can't be edited, so reply with what changed`;
       }
 
-      settleQuestion(home, ref, "✓ Settled");
+      await settleQuestion(home, ref, "✓ Settled");
 
       return `settled the poll (id: ${shown}); its own text can't be edited, so reply with what changed`;
     }
@@ -1282,11 +1282,14 @@ const handlers: Handlers<typeof tools> = {
     }
 
     if (text !== undefined) {
-      said(home, undefined, text, { edited: "true", message_id: String(ref) });
-      ledger.edited(home, ref, text);
+      await said(home, undefined, text, { edited: "true", message_id: String(ref) });
+      await ledger.edited(home, ref, text);
     }
 
-    if (args.settled === true && !settleQuestion(home, question?.message ?? ref, "✓ Settled")) {
+    if (
+      args.settled === true &&
+      !(await settleQuestion(home, question?.message ?? ref, "✓ Settled"))
+    ) {
       return `${changes ? "edited, but " : ""}no question waits on message ${shown}, so nothing was settled`;
     }
 
@@ -1328,9 +1331,8 @@ const handlers: Handlers<typeof tools> = {
     const { chat_id, extra } = into(thread);
     const from = located(caller, args.message_id);
     const sent = await bot.api.forwardMessage(chat_id, from.chat_id, from.message, extra);
-    said(thread, sent, hub.said(`${from.chat_id}:${from.message}`)?.body ?? "(forwarded)", {
-      forwarded: "true",
-    });
+    const original = await hub.said(`${from.chat_id}:${from.message}`);
+    await said(thread, sent, original?.body ?? "(forwarded)", { forwarded: "true" });
 
     return `forwarded to "${topicNames.get(thread) ?? hub.name(thread) ?? thread}" (id: ${idOf(thread, sent)})`;
   },
@@ -1366,7 +1368,7 @@ const handlers: Handlers<typeof tools> = {
         : [];
 
     for (const [i, sent] of album.entries()) {
-      said(caller, sent, options[i] ?? "", { file: basename(shots[i] ?? "") });
+      await said(caller, sent, options[i] ?? "", { file: basename(shots[i] ?? "") });
     }
 
     const sent = await bot.api.sendPoll(chat_id, question, options, {
@@ -1376,7 +1378,7 @@ const handlers: Handlers<typeof tools> = {
       allows_multiple_answers: args.multiple === true,
     });
 
-    said(caller, sent, question, { poll: options.join(" / ") });
+    await said(caller, sent, question, { poll: options.join(" / ") });
 
     const id = idOf(caller, sent);
     const kept = join(KEPT_POLL_SHOTS_DIR, String(id));
@@ -1392,7 +1394,7 @@ const handlers: Handlers<typeof tools> = {
       return copy;
     });
 
-    ledger.ask(caller, id, question, options, {
+    await ledger.ask(caller, id, question, options, {
       poll: sent.poll.id,
       multiple: args.multiple === true,
       ...(keep.length > 0 && { shots: keep }),
@@ -1488,7 +1490,7 @@ const handlers: Handlers<typeof tools> = {
       }
     }
 
-    hub.sent(caller, {
+    await hub.sent(caller, {
       key: `${to}:${sent.message_id}`,
       content: args.caption,
       meta: { widget: basename(args.file) },
@@ -1724,7 +1726,7 @@ const drawing = new Map<string, Promise<void>>();
 async function redraw(thread: string, message: MessageId): Promise<void> {
   try {
     await paced(async () => {
-      const question = questionOf(thread, message);
+      const question = await questionOf(thread, message);
 
       if (question === undefined || question.options.length === 0) {
         return;
@@ -1772,8 +1774,8 @@ const answeredText = ({ label, via }: { label: string; via: string }) => {
   return where === undefined ? `✓ ${label}` : `✓ Answered ${where}: ${label}`;
 };
 
-function answerQuestion(thread: string, message: MessageId, label: string, via: string) {
-  const question = questionOf(thread, message);
+async function answerQuestion(thread: string, message: MessageId, label: string, via: string) {
+  const question = await questionOf(thread, message);
 
   if (!question || question.answer) {
     return;
@@ -1781,7 +1783,7 @@ function answerQuestion(thread: string, message: MessageId, label: string, via: 
 
   const { chat_id } = located(thread, String(message));
 
-  const answered = hub.deliver(
+  const answered = await hub.deliver(
     thread,
     topicNames.get(thread) ?? hub.name(thread) ?? thread,
     {
@@ -1797,7 +1799,7 @@ function answerQuestion(thread: string, message: MessageId, label: string, via: 
         answered_in: ANSWERED_IN.get(via) ?? via,
       },
     },
-    () => ledger.answered(thread, message, label, via),
+    { answered: { message, label, via } },
   );
 
   if (answered) {
@@ -1805,21 +1807,21 @@ function answerQuestion(thread: string, message: MessageId, label: string, via: 
   }
 }
 
-function settleQuestion(thread: string, message: MessageId, note: string): boolean {
-  const question = questionOf(thread, message);
+async function settleQuestion(thread: string, message: MessageId, note: string): Promise<boolean> {
+  const question = await questionOf(thread, message);
 
   if (!question || !waits(question)) {
     return false;
   }
 
-  ledger.settled(thread, message, note);
+  await ledger.settled(thread, message, note);
   void drawInTurn(thread, message);
 
   return true;
 }
 
-function reopenQuestion(thread: string, message: MessageId, via: string) {
-  const question = questionOf(thread, message);
+async function reopenQuestion(thread: string, message: MessageId, via: string) {
+  const question = await questionOf(thread, message);
 
   if (!question || !(question.answer || question.settled)) {
     return;
@@ -1830,8 +1832,8 @@ function reopenQuestion(thread: string, message: MessageId, via: string) {
 
   const reopened =
     taken === undefined
-      ? ledger.reopened(thread, message)
-      : hub.deliver(
+      ? await ledger.reopened(thread, message)
+      : await hub.deliver(
           thread,
           topicNames.get(thread) ?? hub.name(thread) ?? thread,
           {
@@ -1846,13 +1848,19 @@ function reopenQuestion(thread: string, message: MessageId, via: string) {
                 String(message),
             },
           },
-          () => ledger.reopened(thread, message),
+          { reopened: { message } },
         );
 
   if (reopened) {
     void drawInTurn(thread, message);
   }
 }
+
+const questionFailed = (thread: string, message: MessageId) => (error: Error) => {
+  process.stderr.write(
+    `telegram hub: couldn't change the question ${message} in ${thread}: ${String(error)}\n`,
+  );
+};
 
 const ASLEEP: ReactionTypeEmoji = { type: "emoji", emoji: "😴" };
 
@@ -1954,7 +1962,7 @@ async function steady<T>(send: () => Promise<T>, tries = 3): Promise<T> {
 
 let polling: string | undefined;
 
-const hub = startHub({
+const hub = await startHub({
   stateDir: STATE_DIR,
   channel: "plugin:telegram@hex",
   server,
@@ -1978,13 +1986,17 @@ const hub = startHub({
   },
   questions: {
     answer: (thread, message, label, via) => {
-      answerQuestion(thread, asMessageId(message), label, via);
+      void answerQuestion(thread, asMessageId(message), label, via).catch(
+        questionFailed(thread, message),
+      );
     },
     settle: (thread, message, note) => {
-      settleQuestion(thread, asMessageId(message), note);
+      void settleQuestion(thread, asMessageId(message), note).catch(
+        questionFailed(thread, message),
+      );
     },
     reopen: (thread, message, via) => {
-      reopenQuestion(thread, asMessageId(message), via);
+      void reopenQuestion(thread, asMessageId(message), via).catch(questionFailed(thread, message));
     },
   },
   failed: (thread, reason, turn) => {
@@ -2271,14 +2283,14 @@ bot.on("message:sticker", async (ctx) => {
 });
 
 // Telegram only reports reactions to bots that are admins, and the update names neither the topic nor the text, so both come from the message hex.db kept. https://core.telegram.org/bots/api#messagereactionupdated
-bot.on("message_reaction", (ctx) => {
+bot.on("message_reaction", async (ctx) => {
   const { chat, message_id, user, date } = ctx.messageReaction;
 
   if (!allowed(user)) {
     return;
   }
 
-  const found = hub.said(`${chat.id}:${message_id}`);
+  const found = await hub.said(`${chat.id}:${message_id}`);
   const known = found && hub.name(found.to) !== undefined ? found : undefined;
   const thread = known?.to ?? plainThread(chat);
 
@@ -2303,7 +2315,7 @@ bot.on("message_reaction", (ctx) => {
   const key = `${chat.id}:${message_id}:${ctx.update.update_id}`;
 
   for (const emoji of emojiAdded) {
-    hub.deliver(thread, nameOf(ctx, thread), {
+    await hub.deliver(thread, nameOf(ctx, thread), {
       author: "owner",
       key: `${key}+${emoji}`,
       content: `(reaction: ${emoji})`,
@@ -2312,7 +2324,7 @@ bot.on("message_reaction", (ctx) => {
   }
 
   for (const emoji of emojiRemoved) {
-    hub.deliver(thread, nameOf(ctx, thread), {
+    await hub.deliver(thread, nameOf(ctx, thread), {
       author: "owner",
       key: `${key}-${emoji}`,
       content: `(reaction removed: ${emoji})`,
@@ -2343,7 +2355,7 @@ bot.on("callback_query:data", async (ctx) => {
   const thread = threadOf(ctx);
   const id = idOf(thread, message);
   const [, verdict, requestId] = /^perm:(allow|deny):([a-km-z]{5})$/u.exec(data) ?? [];
-  const question = verdict === undefined ? questionOf(thread, id) : undefined;
+  const question = verdict === undefined ? await questionOf(thread, id) : undefined;
 
   if (!question) {
     void markButtons(message.chat.id, message.message_id, `✓ ${label}`);
@@ -2357,7 +2369,7 @@ bot.on("callback_query:data", async (ctx) => {
     return;
   }
 
-  hub.deliver(
+  await hub.deliver(
     thread,
     nameOf(ctx, thread),
     {
@@ -2373,7 +2385,7 @@ bot.on("callback_query:data", async (ctx) => {
         button_message_id: String(id),
       },
     },
-    question && (() => ledger.answered(thread, id, label, "telegram")),
+    question && { answered: { message: id, label, via: "telegram" } },
   );
 
   if (question) {
@@ -2387,14 +2399,17 @@ const asks = (ctx: Context): ctx is Context & { update: { widget_query: WidgetQu
 
 bot.filter(asks).use(async (ctx) => {
   const { id, from, chat, message_id, data } = ctx.update.widget_query;
-  const found = chat && message_id !== undefined ? hub.said(`${chat.id}:${message_id}`) : null;
+
+  const found =
+    chat && message_id !== undefined ? await hub.said(`${chat.id}:${message_id}`) : null;
+
   const thread = found?.to ?? (chat && plainThread(chat));
 
   const heard =
     allowed(from) &&
     chat !== undefined &&
     thread !== undefined &&
-    hub.deliver(thread, hub.name(thread) ?? nameOf(ctx, thread), {
+    (await hub.deliver(thread, hub.name(thread) ?? nameOf(ctx, thread), {
       author: "owner",
       key: `widget:${id}`,
       content: `(widget: ${data})`,
@@ -2410,7 +2425,7 @@ bot.filter(asks).use(async (ctx) => {
             : `telegram:${chat.id}:${message_id}`,
         ...(found?.body !== undefined && found.body !== "" && { widget_caption: found.body }),
       },
-    });
+    }));
 
   try {
     await widgets.answerWidgetQuery({
@@ -2422,16 +2437,16 @@ bot.filter(asks).use(async (ctx) => {
   }
 });
 
-bot.on("poll_answer", (ctx) => {
+bot.on("poll_answer", async (ctx) => {
   const { poll_id, user, option_ids } = ctx.pollAnswer;
-  const question = ledger.byPoll(poll_id);
+  const question = await ledger.byPoll(poll_id);
 
   if (!allowed(user) || !question) {
     return;
   }
 
   const vote = option_ids.map((i) => question.options[i]).join("; ");
-  hub.deliver(
+  await hub.deliver(
     question.thread,
     nameOf(ctx, question.thread),
     {
@@ -2448,15 +2463,12 @@ bot.on("poll_answer", (ctx) => {
         poll: question.text,
       },
     },
-    () => {
-      if (vote) {
-        ledger.answered(question.thread, question.message, vote, "telegram", true);
-      } else {
-        ledger.reopened(question.thread, question.message);
-      }
-
-      return true;
-    },
+    vote
+      ? {
+          answered: { message: question.message, label: vote, via: "telegram", again: true },
+          always: true,
+        }
+      : { reopened: { message: question.message }, always: true },
   );
 });
 
@@ -2535,7 +2547,7 @@ async function replyMeta(msg: Context["msg"], thread: string): Promise<Record<st
 
   const id = replied?.message_id ?? external?.message_id;
   const chat = external?.chat?.id ?? msg.chat.id;
-  const known = id === undefined ? undefined : hub.said(`${chat}:${id}`);
+  const known = id === undefined ? undefined : await hub.said(`${chat}:${id}`);
 
   const text = replied?.text ?? replied?.caption ?? "";
 
@@ -2708,12 +2720,12 @@ async function deliverInbound(parts: Part[]): Promise<void> {
     },
   };
 
-  hub.deliver(thread, nameOf(ctx, thread), message);
+  await hub.deliver(thread, nameOf(ctx, thread), message);
 
   if (msgId !== undefined) {
     const replyTo = message.meta.reply_to_message_id ?? "";
 
-    ledger.heard(
+    await ledger.heard(
       thread,
       idIn(thread, chat_id, msgId),
       content,
@@ -2722,7 +2734,23 @@ async function deliverInbound(parts: Part[]): Promise<void> {
   }
 }
 
-let keeping: (() => void) | undefined;
+let keeping: Promise<void> | undefined;
+
+async function keepStatusPosts() {
+  try {
+    await ledger.keep(post, (thread, error) => {
+      process.stderr.write(
+        `telegram hub: couldn't rewrite ${thread}'s status post: ${String(error)}\n`,
+      );
+    });
+  } catch (error) {
+    keeping = undefined;
+    process.stderr.write(
+      `telegram hub: couldn't keep the status posts current: ${String(error)}\n`,
+    );
+  }
+}
+
 let boarding: Promise<void> | undefined;
 
 const BOARD = "hex right now";
@@ -2811,12 +2839,8 @@ const onStart = (info: { username: string }) => {
   polling = info.username;
   ready();
   void setCommandMenu();
-  hub.save();
-  keeping ??= ledger.keep(post, (thread, error) => {
-    process.stderr.write(
-      `telegram hub: couldn't rewrite ${thread}'s status post: ${String(error)}\n`,
-    );
-  });
+  void hub.save();
+  keeping ??= keepStatusPosts();
   boarding ??= board?.start().catch(ignore);
 };
 

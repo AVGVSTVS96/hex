@@ -1,8 +1,6 @@
-import type { Database } from "bun:sqlite";
-
 import { z } from "zod";
 
-import type { Core, Write } from "./db.ts";
+import type { Core, Sql, Write } from "./db.ts";
 import { MessageRows } from "./messages.ts";
 import type { Messages, Row } from "./messages.ts";
 
@@ -15,8 +13,25 @@ export const signalTo = (name: string) => `${SIGNAL}${name}`;
 export const signalOf = (address: string) =>
   address.startsWith(SIGNAL) ? address.slice(SIGNAL.length) : undefined;
 
+const WHYS_SHOWN = 20;
+const WHY_LENGTH = 300;
+
+function whyNow(heard: Row[]) {
+  const whys = heard
+    .slice(0, WHYS_SHOWN)
+    .map((row) => `- ${(row.body.split("\n")[0] ?? "").slice(0, WHY_LENGTH)}`);
+
+  const more = heard.length - WHYS_SHOWN;
+
+  return `\n\nWhy now:\n${whys.join("\n")}${more > 0 ? `\n- and ${more} more` : ""}`;
+}
+
+export type Due = { name: string; minute: number; to: string; body: string };
+
+export type Listening = { name: string; on: string[]; to: string; body: string };
+
 export class Scheduler {
-  private readonly db: Database;
+  private readonly db: Sql;
   private readonly write: Write;
   private readonly messages: Messages;
 
@@ -86,6 +101,43 @@ export class Scheduler {
         )
         .get(`schedule:${schedule}@`, `schedule:${schedule}@~`, JSON.stringify(alive)) !== null
     );
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A minute's check in one write: every due slot fires, a schedule fires on the signals it listens for unless a run of it is still going, a signal no schedule waits on is taken, and the minute is checked.
+  tick(minute: number, due: Due[], listening: Listening[], alive: string[]) {
+    this.write(() => {
+      for (const { name, minute: slot, to, body } of due) {
+        this.fire(name, slot, to, body, slot < minute);
+      }
+
+      const signals = this.signals();
+      const busy = new Set<string>();
+
+      for (const { name, on, to, body } of listening) {
+        const heard = signals.filter((row) => on.includes(signalOf(row.to) ?? ""));
+
+        if (heard.length === 0) {
+          continue;
+        }
+
+        if (this.running(name, alive)) {
+          for (const row of heard) {
+            busy.add(row.key);
+          }
+        } else {
+          this.fireOn(name, heard, to, `${body}${whyNow(heard)}`);
+        }
+      }
+
+      for (const row of signals) {
+        if (!busy.has(row.key)) {
+          this.messages.take(row.key, "schedule");
+        }
+      }
+
+      this.check(minute);
+    });
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show

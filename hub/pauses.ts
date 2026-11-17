@@ -33,7 +33,7 @@ export function sessionPauses({
   turns: ReturnType<typeof sessionTurns>;
   kept: Keep;
   serving: () => boolean;
-  turnEnded: (thread: string) => void;
+  turnEnded: (thread: string) => Promise<void>;
   failed: Failed;
 }) {
   const pauses = runs.part((): Pause => ({}));
@@ -69,16 +69,16 @@ export function sessionPauses({
     if (
       !pause.paused ||
       !present(session) ||
-      !kept((store) => store.turns.unanswered(session).length > 0, false)
+      !(yield* Effect.promise(() =>
+        kept(async (store) => (await store.turns.unanswered(session)).length > 0, false),
+      ))
     ) {
       return;
     }
 
     process.stderr.write(`hub: ${thread}'s session paused mid-turn: ${needs}\n`);
-    kept((store) => {
-      store.turns.handled(session);
-    }, undefined);
-    turnEnded(thread);
+    yield* Effect.promise(() => kept((store) => store.turns.handled(session), undefined));
+    void turnEnded(thread);
     const refusal = claude.refused(claude.transcript(threads.cwd(thread), session));
     const { model } = threads.of(thread);
 

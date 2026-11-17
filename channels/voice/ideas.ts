@@ -114,20 +114,19 @@ export class Ideas extends Changes {
     }
   }
 
-  list(): Idea[] {
-    return this.shown(open(this.state).tasks.list({ status: ["idea"] }));
+  async list(): Promise<Idea[]> {
+    return await this.shown(await open(this.state).tasks.list({ status: ["idea"] }));
   }
 
-  one(id: string): Idea | undefined {
-    const task = open(this.state).tasks.get(id);
+  async one(id: string): Promise<Idea | undefined> {
+    const task = await open(this.state).tasks.get(id);
 
-    return task === null ? undefined : this.shown([task])[0];
+    return task === null ? undefined : (await this.shown([task]))[0];
   }
 
-  private shown(tasks: Task[]): Idea[] {
+  private async shown(tasks: Task[]): Promise<Idea[]> {
     const store = open(this.state);
-    const names = store.threads.names();
-    const ids = store.threads.ids();
+    const [names, ids] = await Promise.all([store.threads.names(), store.threads.ids()]);
     const jobs = Object.values(this.jobs());
     const seen = readJson(this.seenFile, Seen, {});
     const all = checks(this.state);
@@ -158,8 +157,8 @@ export class Ideas extends Changes {
     });
   }
 
-  get(id: string) {
-    const task = open(this.state).tasks.get(id);
+  async get(id: string) {
+    const task = await open(this.state).tasks.get(id);
 
     if (task === null || task.status === "done") {
       throw new Error(`${id} isn't an idea`);
@@ -177,15 +176,15 @@ export class Ideas extends Changes {
     this.changed();
   }
 
-  status(id: string, status: "open" | "idea" | "dropped") {
-    const was = this.get(id).status;
-    open(this.state).tasks.edit(id, { status });
+  async status(id: string, status: "open" | "idea" | "dropped") {
+    const was = (await this.get(id)).status;
+    await open(this.state).tasks.edit(id, { status });
 
     return was;
   }
 
-  stop(id: string) {
-    this.get(id);
+  async stop(id: string) {
+    await this.get(id);
     const all = this.raw();
     const names = Object.keys(this.jobs()).filter((name) => this.jobs()[name]?.idea === id);
 
@@ -200,8 +199,8 @@ export class Ideas extends Changes {
     writeJson(this.pausedFile, { ...readJson(this.pausedFile, Paused, {}), [id]: taken });
   }
 
-  look(id: string, weekday: number) {
-    const task = this.get(id);
+  async look(id: string, weekday: number) {
+    const task = await this.get(id);
 
     if (Object.values(this.jobs()).some((job) => job.idea === id)) {
       return;

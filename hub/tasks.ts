@@ -80,22 +80,25 @@ export function waiting(question: Question, named: Record<string, string> = {}):
   return `- ${question.app} · ${named[question.thread] ?? question.thread} · ${ref} · ${question.at.slice(0, 16).replace("T", " ")}Z: ${text}`;
 }
 
-export function pending(state: string, thread?: string, room = ROOM) {
+export async function pending(state: string, thread?: string, room = ROOM) {
   const store = open(state);
+  const zone = zoneOf(dirname(state));
 
-  const tasks =
+  const [tasks, questions, named, holds] = await Promise.all([
     thread === undefined
       ? store.tasks.list({ status: ["open"] })
-      : store.tasks.list({ owner: thread, status: ["open"] });
-
-  const questions =
+      : store.tasks.list({ owner: thread, status: ["open"] }),
     thread === undefined
       ? store.questions.list({ waiting: true })
-      : store.questions.list({ thread, waiting: true });
+      : store.questions.list({ thread, waiting: true }),
+    store.threads.names(),
+    store.holds
+      .list()
+      .then((all) =>
+        Promise.all(all.map(async (hold) => [hold.id, await holdLine(hold, store, zone)] as const)),
+      ),
+  ]);
 
-  const zone = zoneOf(dirname(state));
-  const holds = store.holds.list().map((hold) => [hold.id, holdLine(hold, store, zone)] as const);
-  const named = store.threads.names();
   const whose = thread === undefined || thread === "" ? "Every thread" : "This thread";
 
   const sections = [
@@ -176,7 +179,7 @@ if (import.meta.main) {
       const store = open(stateDir());
 
       if (source === "compact" || source === "clear") {
-        store.seen.unshow(session, "tasks");
+        await store.seen.unshow(session, "tasks");
       }
 
       const worksFor = nonEmpty(process.env.HEX_THREAD) ?? served();
@@ -185,11 +188,11 @@ if (import.meta.main) {
       const thread =
         isMain || worksFor === undefined || worksFor === ""
           ? undefined
-          : store.threads.key(worksFor);
+          : await store.threads.key(worksFor);
 
-      const { text, seen } = pending(stateDir(), thread);
+      const { text, seen } = await pending(stateDir(), thread);
       const whole = text || "No open tasks or questions waiting on me now.";
-      const last = store.seen.get(session, "tasks");
+      const last = await store.seen.get(session, "tasks");
 
       const before = last.startsWith("{")
         ? (Pushed.safeParse(JSON.parse(last)).data ?? null)
@@ -206,7 +209,7 @@ if (import.meta.main) {
           : "";
 
       if (before === null ? record !== last : diff !== "") {
-        store.seen.show(session, "tasks", record);
+        await store.seen.show(session, "tasks", record);
         console.log(out);
       }
     }

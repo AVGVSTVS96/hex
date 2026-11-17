@@ -13,7 +13,7 @@ import type { FSWatcher } from "node:fs";
 import { join } from "node:path";
 
 import { busy, CLAUDE, running, ownership, open } from "@hex/hub";
-import type { Session, Thread as Stored } from "@hex/hub";
+import type { Session, Task, Thread as Stored } from "@hex/hub";
 import { z } from "zod";
 
 import {
@@ -31,7 +31,7 @@ import {
   unmark,
 } from "./activity.ts";
 import type { Did, Update } from "./activity.ts";
-import { Changes } from "./changes.ts";
+import { Changes, oneAtATime } from "./changes.ts";
 import { HANDED, Links } from "./links.ts";
 import type { Delegation } from "./links.ts";
 
@@ -292,21 +292,29 @@ export class Board extends Changes {
       },
       t3,
     );
+
+    const recordsChanged = oneAtATime("hex.db for the board", async () => {
+      const [stored, linked, closed] = await Promise.all([
+        this.stored(),
+        open(state).tasks.agentTasks(),
+        open(state).tasks.finished(dayAgo()),
+      ]);
+
+      if (JSON.stringify(stored) !== JSON.stringify(this.threads)) {
+        this.mark("threads");
+      }
+
+      if (JSON.stringify(linked) !== this.linked || JSON.stringify(closed) !== this.closed) {
+        this.schedule();
+      }
+
+      this.linked = JSON.stringify(linked);
+      this.closed = JSON.stringify(closed);
+    });
+
     this.stops.push(
       open(state).watch(() => {
-        if (JSON.stringify(this.stored()) !== JSON.stringify(this.threads)) {
-          this.mark("threads");
-        }
-
-        const linked = JSON.stringify(open(state).tasks.agentTasks());
-        const closed = JSON.stringify(this.closedTasks());
-
-        if (linked !== this.linked || closed !== this.closed) {
-          this.schedule();
-        }
-
-        this.linked = linked;
-        this.closed = closed;
+        void recordsChanged();
       }),
       watchDir(join(claude, "sessions"), () => {
         this.mark("sessions");
@@ -315,21 +323,21 @@ export class Board extends Changes {
         this.jobChanged(file, true);
       }),
     );
-    this.build();
+    void this.build();
   }
 
   get(id: string) {
     return this.runs.find((run) => run.id === id);
   }
 
-  find(id: string): Run | Page | undefined {
+  async find(id: string): Promise<Run | Page | undefined> {
     const kept = this.get(id);
 
     if (kept !== undefined) {
       return kept;
     }
 
-    const all = open(this.state).threads.list();
+    const all = await open(this.state).threads.list();
     const row = all.find(({ app, thread }) => APPS.has(app) && `${app}:${thread}` === id);
 
     if (row === undefined || this.links.delegated(row.app, row.thread)) {
@@ -383,7 +391,8 @@ export class Board extends Changes {
   refresh() {
     clearTimeout(this.pending);
     this.stale = { threads: true, sessions: true };
-    this.build();
+
+    return this.build();
   }
 
   strays(): Session[] {
@@ -448,22 +457,34 @@ export class Board extends Changes {
   private schedule() {
     clearTimeout(this.pending);
     this.pending = setTimeout(() => {
-      this.build();
+      void this.build();
     }, 30);
   }
 
-  private build() {
-    if (this.stale.threads) {
-      this.readThreads();
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // What's stale is taken before the reads, so a change heard while they're under way marks it stale again for the next build.
+  private readonly build = oneAtATime("the board", async () => {
+    const stale = this.stale;
+    this.stale = { threads: false, sessions: false };
+    const store = open(this.state);
+
+    const [stored, sessions, links, finishing] = await Promise.all([
+      stale.threads ? this.stored() : undefined,
+      stale.sessions ? running(store, this.claude) : undefined,
+      store.tasks.agentTasks(),
+      this.finishing(dayAgo()),
+    ]);
+
+    if (stored !== undefined) {
+      this.threads = stored;
     }
 
-    if (this.stale.sessions) {
-      this.readSessions();
+    if (sessions !== undefined) {
+      this.sessions = sessions;
     }
 
     this.own();
     this.watchJobs();
-    this.stale = { threads: false, sessions: false };
     const since = new Date(Date.now() - KEEP).toISOString();
 
     const threads = this.threads
@@ -484,12 +505,12 @@ export class Board extends Changes {
       this.keepLastStretchUntilItWorksAgain(run);
     }
 
-    runs.push(...this.group(runs));
+    runs.push(...this.group(runs, links));
     runs.sort(
       (a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || b.at.localeCompare(a.at),
     );
 
-    const finished = this.finish(runs, dayAgo()).map((task) => ({
+    const finished = finishing(runs).map((task) => ({
       ...task,
       proof: oneLine(task.proof),
     }));
@@ -512,7 +533,7 @@ export class Board extends Changes {
 
     this.summary = summary;
     this.counts.changed();
-  }
+  });
 
   private keepLastStretchUntilItWorksAgain(run: Run) {
     const stretch = this.stretches.get(run.id);
@@ -541,12 +562,8 @@ export class Board extends Changes {
     });
   }
 
-  private readThreads() {
-    this.threads = this.stored();
-  }
-
-  private stored(): Thread[] {
-    const all = open(this.state).threads.list();
+  private async stored(): Promise<Thread[]> {
+    const all = await open(this.state).threads.list();
     const general = generalOf(all);
 
     return all.filter((row) => row.open && APPS.has(row.app)).map((row) => threadOf(row, general));
@@ -704,10 +721,6 @@ export class Board extends Changes {
     this.watchers.delete(id);
   }
 
-  private readSessions() {
-    this.sessions = running(open(this.state), this.claude);
-  }
-
   private job(session: string) {
     const id = short(session);
     let cached = this.jobs.get(id);
@@ -863,8 +876,11 @@ export class Board extends Changes {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   /* A run of a project's own has no thread: it works while its agents do, and stays on the board
      until hex restarts, at most a week. */
-  private group(runs: Run[]): Run[] {
-    const links = Object.entries(open(this.state).tasks.agentTasks());
+  private group(
+    runs: Run[],
+    agentTasks: Record<string, Pick<Task, "id" | "owner" | "project">>,
+  ): Run[] {
+    const links = Object.entries(agentTasks);
 
     const taskOf = (agent: Agent) =>
       links.find(([id]) => id === agent.id || agent.id.startsWith(id))?.[1];
@@ -952,57 +968,68 @@ export class Board extends Changes {
     return fresh;
   }
 
-  closedSince(since: string): Finished[] {
-    return this.finish(this.runs, since);
+  async closedSince(since: string): Promise<Finished[]> {
+    return (await this.finishing(since))(this.runs);
   }
 
-  private finish(runs: Run[], since: string): Finished[] {
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Reads the tasks closed since then, and gives what places each on the runs it's handed.
+  private async finishing(since: string): Promise<(runs: Run[]) => Finished[]> {
     const store = open(this.state);
-    const all = store.threads.list();
+    const [all, closed] = await Promise.all([store.threads.list(), store.tasks.finished(since)]);
     const general = generalOf(all);
 
     const generalOrDM = (row?: Stored) =>
       !row || ["General", "DM"].includes(where(threadOf(row, general)));
 
-    return store.tasks.finished(since).flatMap((task) => {
-      if (task.closed === undefined) {
-        return [];
-      }
+    const elsewhere = new Map(
+      await Promise.all(
+        closed.map(async (task) => {
+          const owner = all.find((row) => row.thread === task.owner);
 
-      const owner = all.find((row) => row.thread === task.owner);
+          const places =
+            !hasText(task.project) && generalOrDM(owner)
+              ? await Promise.all([
+                  store.tasks.worked(task.id),
+                  store.messages.get(task.proof?.split(/\s/u)[0] ?? ""),
+                ])
+              : undefined;
 
-      const whereItWasClosedOrItsAgentsStartedElseItsProof =
-        !hasText(task.project) && generalOrDM(owner)
-          ? [
-              ...store.tasks.worked(task.id),
-              store.messages.get(task.proof?.split(/\s/u)[0] ?? "")?.to,
-            ]
-          : [];
+          return [task.id, places && [...places[0], places[1]?.to]] as const;
+        }),
+      ),
+    );
 
-      const thread =
-        whereItWasClosedOrItsAgentsStartedElseItsProof
-          .map((place) => all.find((row) => row.thread === place))
-          .find((row) => row !== undefined && !generalOrDM(row)) ?? owner;
+    return (runs) =>
+      closed.flatMap((task) => {
+        if (task.closed === undefined) {
+          return [];
+        }
 
-      const id = home({ ...task, owner: thread?.thread ?? task.owner }, runs);
-      const run = runs.find((one) => one.id === id);
-      const topic = run?.name ?? task.project ?? (thread ? projectOf(thread, general) : "hex");
+        const owner = all.find((row) => row.thread === task.owner);
 
-      return {
-        id: task.id,
-        title: task.title,
-        topic,
-        app: thread?.app ?? "hex",
-        proof: plain(task.proof ?? ""),
-        at: task.closed,
-        ...(run && { run: run.id }),
-        ...(hasText(thread?.link) && { link: thread.link }),
-      };
-    });
-  }
+        const whereItWasClosedOrItsAgentsStartedElseItsProof = elsewhere.get(task.id) ?? [];
 
-  private closedTasks() {
-    return open(this.state).tasks.finished(dayAgo());
+        const thread =
+          whereItWasClosedOrItsAgentsStartedElseItsProof
+            .map((place) => all.find((row) => row.thread === place))
+            .find((row) => row !== undefined && !generalOrDM(row)) ?? owner;
+
+        const id = home({ ...task, owner: thread?.thread ?? task.owner }, runs);
+        const run = runs.find((one) => one.id === id);
+        const topic = run?.name ?? task.project ?? (thread ? projectOf(thread, general) : "hex");
+
+        return {
+          id: task.id,
+          title: task.title,
+          topic,
+          app: thread?.app ?? "hex",
+          proof: plain(task.proof ?? ""),
+          at: task.closed,
+          ...(run && { run: run.id }),
+          ...(hasText(thread?.link) && { link: thread.link }),
+        };
+      });
   }
 
   private projectRun(id: string, agents: Agent[]): Run {

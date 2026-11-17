@@ -3,14 +3,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { open } from "../../hub/store.ts";
+import { file } from "../../hub/store.ts";
 import { until } from "../../hub/until.ts";
 
 const HEX = join(import.meta.dir, "../..");
 const home = mkdtempSync(join(tmpdir(), "quiet-"));
 const sessions = join(home, "config/sessions");
 const state = join(home, "state");
-const store = open(state);
+const store = file(state);
 
 const env = {
   ...process.env,
@@ -47,14 +47,14 @@ test("bin/quiet waits while a session hex started is mid-turn, and not on other 
   mkdirSync(sessions, { recursive: true });
 
   const status = (
-    file: string,
+    sessionFile: string,
     name: string,
     kind: string,
     turn: string,
     at = Date.now() - 1000,
   ) => {
     writeFileSync(
-      join(sessions, file),
+      join(sessions, sessionFile),
       JSON.stringify({
         pid: process.pid,
         sessionId: name,

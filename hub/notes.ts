@@ -47,9 +47,13 @@ function quotes(body: string, words: string) {
 
 export type Verdict = { keys: Row[]; unknown: string[]; unquoted: string[]; quoted: boolean };
 
-export function verdict(note: string, store: Store): Verdict {
+export async function verdict(note: string, store: Store): Promise<Verdict> {
   const keys = keysOf(note);
-  const found = keys.map((key) => store.messages.get(key)).filter((row): row is Row => !!row);
+
+  const found = (await Promise.all(keys.map((key) => store.messages.get(key)))).filter(
+    (row): row is Row => !!row,
+  );
+
   const words = quotesOf(note);
 
   return {

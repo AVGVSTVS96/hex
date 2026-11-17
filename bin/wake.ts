@@ -61,9 +61,9 @@ function joinedMemoWake(env: Record<string, string | undefined>): Wake {
   }
 }
 
-function profileOrNothingKeepingTheMemory(store?: Store) {
+async function profileOrNothingKeepingTheMemory(store?: Store) {
   try {
-    return store?.profiles.current() ?? "";
+    return (await store?.profiles.current()) ?? "";
   } catch (error) {
     process.stderr.write(`hex couldn't read the profile: ${String(error)}\n`);
 
@@ -87,12 +87,12 @@ function write(text: string) {
   renameSync(`${wake}.${process.pid}`, wake);
 }
 
-function rewriteOrKeepTheLastSayingWhy(store?: Store) {
+async function rewriteOrKeepTheLastSayingWhy(store?: Store) {
   const wakeNow = joinedMemoWake(process.env);
 
   if ("awake" in wakeNow) {
     const text = wakeNow.awake;
-    const profile = profileOrNothingKeepingTheMemory(store);
+    const profile = await profileOrNothingKeepingTheMemory(store);
     const body = `${profile && `${PROFILE}\n\n${profile}\n\n`}${text.trimEnd()}`;
 
     const fenceSoNoPathReadsAsAnImport = "`".repeat(
@@ -129,13 +129,13 @@ if (memoryDir === undefined || memoryDir === "") {
   const stuck = aWakeHoldingTheLeaseThisLongIsStuckMs;
   const until = Date.now() + stuck;
 
-  while (store?.leases.take("wake", holder, stuck) === false && Date.now() < until) {
-    Bun.sleepSync(100);
+  while ((await store?.leases.take("wake", holder, stuck)) === false && Date.now() < until) {
+    await Bun.sleep(100);
   }
 
   try {
-    rewriteOrKeepTheLastSayingWhy(store);
+    await rewriteOrKeepTheLastSayingWhy(store);
   } finally {
-    store?.leases.release("wake", holder);
+    await store?.leases.release("wake", holder);
   }
 }

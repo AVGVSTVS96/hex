@@ -1,16 +1,14 @@
-import type { Database } from "bun:sqlite";
-
 import { z } from "zod";
 
 import { now } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Sql, Write } from "./db.ts";
 
 const RelayRows = z.array(
   z.object({ from: z.string(), thread: z.string(), run: z.string(), at: z.string() }),
 );
 
 export class Relays {
-  private readonly db: Database;
+  private readonly db: Sql;
   private readonly write: Write;
 
   constructor({ db, write }: Core) {

@@ -7,7 +7,7 @@ import type { Job, Task } from "@hex/hub";
 import { generalOf, projectOf } from "./activity.ts";
 import { home, watchDir } from "./board.ts";
 import type { Board } from "./board.ts";
-import { Changes } from "./changes.ts";
+import { Changes, oneAtATime } from "./changes.ts";
 import type { Questions } from "./questions.ts";
 
 const DAY = 86_400_000;
@@ -48,6 +48,8 @@ export type Watch = {
 
 export type View = { version: number; goals: Goal[]; watching: Watch[] };
 
+type Changed = { task: Task; told: string };
+
 type Undo = { kind: "goal"; status: Task["status"]; proof?: string } | { kind: "watch"; job: Job };
 
 const SCHEDULES = "schedules.json";
@@ -66,6 +68,18 @@ export class Goals extends Changes {
   private readonly hexDir: string;
   private readonly board: Board;
   private readonly questions: Questions;
+  readonly refresh = oneAtATime("the goals", async () => {
+    const [goals, watching] = await Promise.all([this.goals(), this.watching()]);
+    const shown = JSON.stringify({ goals, watching });
+
+    if (shown === this.shown) {
+      return;
+    }
+
+    this.shown = shown;
+    this.changed();
+    this.view = { version: this.version, goals, watching };
+  });
 
   constructor(state: string, hexDir: string, board: Board, questions: Questions) {
     super();
@@ -75,7 +89,7 @@ export class Goals extends Changes {
     this.questions = questions;
 
     const again = () => {
-      this.refresh();
+      void this.refresh();
     };
 
     this.stops.push(
@@ -88,21 +102,7 @@ export class Goals extends Changes {
         }
       }),
     );
-    this.refresh();
-  }
-
-  refresh() {
-    const goals = this.goals();
-    const watching = this.watching();
-    const shown = JSON.stringify({ goals, watching });
-
-    if (shown === this.shown) {
-      return;
-    }
-
-    this.shown = shown;
-    this.changed();
-    this.view = { version: this.version, goals, watching };
+    again();
   }
 
   close() {
@@ -114,7 +114,7 @@ export class Goals extends Changes {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   /* "Not needed" drops a goal, "Not what I asked" opens a reached one again; either tells its
      topic, and Undo puts back what was there. */
-  drop(id: string) {
+  drop(id: string): Promise<Changed> {
     return this.change(
       id,
       "dropped",
@@ -122,7 +122,7 @@ export class Goals extends Changes {
     );
   }
 
-  reopen(id: string) {
+  reopen(id: string): Promise<Changed> {
     return this.change(
       id,
       "open",
@@ -130,7 +130,7 @@ export class Goals extends Changes {
     );
   }
 
-  undo(id: string) {
+  async undo(id: string): Promise<Changed | undefined> {
     const was = this.undos.get(id);
 
     if (was === undefined) {
@@ -141,24 +141,24 @@ export class Goals extends Changes {
 
     if (was.kind === "watch") {
       this.writeJobs({ ...this.jobs(), [id]: was.job });
-      this.refresh();
+      await this.refresh();
 
       return;
     }
 
     const store = open(this.state);
 
-    const task = store.tasks.edit(id, {
+    const task = await store.tasks.edit(id, {
       status: was.status,
       ...(was.proof !== undefined && { proof: was.proof }),
     });
 
-    this.refresh();
+    await this.refresh();
 
     return { task, told: `Undo: ${task.title} (${id}) is back as it was.` };
   }
 
-  stopWatching(name: string) {
+  async stopWatching(name: string) {
     const jobs = this.jobs();
     const job = jobs[name];
 
@@ -169,16 +169,16 @@ export class Goals extends Changes {
     const { [name]: _stopped, ...rest } = jobs;
     this.writeJobs(rest);
     this.undos.set(name, { kind: "watch", job });
-    this.refresh();
+    await this.refresh();
   }
 
   runOf(id: string) {
     return this.view.goals.find((goal) => goal.id === id)?.run;
   }
 
-  private change(id: string, status: Task["status"], told: (task: Task) => string) {
+  private async change(id: string, status: Task["status"], told: (task: Task) => string) {
     const store = open(this.state);
-    const before = store.tasks.get(id);
+    const before = await store.tasks.get(id);
 
     if (before === null) {
       throw new Error(`No goal ${id}.`);
@@ -190,8 +190,8 @@ export class Goals extends Changes {
       ...(before.proof !== undefined && { proof: before.proof }),
     });
 
-    const task = store.tasks.edit(id, { status });
-    this.refresh();
+    const task = await store.tasks.edit(id, { status });
+    await this.refresh();
 
     return { task, told: told(task) };
   }
@@ -208,19 +208,24 @@ export class Goals extends Changes {
     writeFileSync(join(this.hexDir, SCHEDULES), `${JSON.stringify(jobs, null, 2)}\n`);
   }
 
-  goal(id: string): Goal | undefined {
-    return this.goals((task) => task.id === id)[0];
+  async goal(id: string): Promise<Goal | undefined> {
+    return (await this.goals((task) => task.id === id))[0];
   }
 
-  private goals(keep = recent()): Goal[] {
+  private async goals(keep = recent()): Promise<Goal[]> {
     const store = open(this.state);
+
+    const [threads, agentTasks, listed] = await Promise.all([
+      store.threads.list(),
+      store.tasks.agentTasks(),
+      store.tasks.list({ status: ["open", "done", "dropped"] }),
+    ]);
+
     const runs = this.board.runs;
-    const threads = store.threads.list();
     const general = generalOf(threads);
     const asks = this.questions.view.asks;
-    const links = Object.entries(store.tasks.agentTasks());
-
-    const tasks = store.tasks.list({ status: ["open", "done", "dropped"] }).filter(keep);
+    const links = Object.entries(agentTasks);
+    const tasks = listed.filter(keep);
 
     const runOf = (task: Task) => {
       const id = home(task, runs);
@@ -315,17 +320,17 @@ export class Goals extends Changes {
     });
   }
 
-  private watching(): Watch[] {
+  private async watching(): Promise<Watch[]> {
     const store = open(this.state);
     const zone = zoneOf(this.hexDir);
-    const threads = store.threads.list();
+    const threads = await store.threads.list();
     const now = Math.floor(Date.now() / MINUTE);
 
     const stopped = [...this.undos].flatMap(([name, undo]) =>
       undo.kind === "watch" ? [[name, undo.job] as const] : [],
     );
 
-    return [...Object.entries(this.jobs()), ...stopped].flatMap(([name, job]) => {
+    const each = [...Object.entries(this.jobs()), ...stopped].map(async ([name, job]) => {
       if (job.watch === undefined || job.idea !== undefined) {
         return [];
       }
@@ -337,8 +342,10 @@ export class Goals extends Changes {
       const next = off ? undefined : nextRun(job, zone, now);
       const task = /\bt-\d+\b/u.exec(job.prompt)?.[0];
 
-      const asked =
-        task === undefined ? [] : (store.tasks.get(task)?.words.map((said) => said.text) ?? []);
+      const [asked, ran] = await Promise.all([
+        task === undefined ? undefined : store.tasks.get(task),
+        store.messages.runsOf(name, 6),
+      ]);
 
       return {
         id: name,
@@ -348,13 +355,13 @@ export class Goals extends Changes {
         ...(run && { run: run.id }),
         every: everyOf(job, zone),
         ...(next !== undefined && { next: new Date(next * MINUTE).toISOString() }),
-        asked,
+        asked: asked?.words.map((said) => said.text) ?? [],
         does: job.prompt,
-        runs: store.messages
-          .runsOf(name, 6)
-          .map((one) => ({ at: one.at, said: oneLine(one.said) })),
+        runs: ran.map((one) => ({ at: one.at, said: oneLine(one.said) })),
       };
     });
+
+    return (await Promise.all(each)).flat();
   }
 }
 

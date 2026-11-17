@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 
 import { clock } from "./clock.ts";
+import { ordered } from "./ordered.ts";
 import type { Store } from "./store.ts";
 
 export type ToolArguments = z.input<z.ZodObject>;
@@ -182,6 +183,10 @@ export function endpoint(
   }
 
   const active = new Map<string, Promise<Result>>();
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Each operation's begins in this process, one at a time, so a repeat's is answered only once the call before it is under way (active).
+  const beginning = ordered();
   const tools = new Map<string, Tool>(server.tools.map((each) => [each.name, each]));
   const list = toolList(server.tools);
 
@@ -216,7 +221,8 @@ export function endpoint(
     const scope = `${channel}:${thread}`;
     const key = JSON.stringify([scope, id]);
     const value = [toolName, args];
-    const kept = store.operations.begin(scope, id, JSON.stringify(value));
+    const input = JSON.stringify(value);
+    const kept = await beginning(key, () => store.operations.begin(scope, id, input));
 
     if (!isDeepStrictEqual(JSON.parse(kept.input), value)) {
       return failure(`${toolName} didn't run: identity ${id} already identifies a different call`);
@@ -234,8 +240,8 @@ export function endpoint(
     }
 
     const answer = call(thread, toolName, args, beside)
-      .then((answered) => {
-        store.operations.finish(scope, id, JSON.stringify(answered));
+      .then(async (answered) => {
+        await store.operations.finish(scope, id, JSON.stringify(answered));
 
         return answered;
       })

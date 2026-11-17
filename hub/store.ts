@@ -6,27 +6,20 @@ import { Worker } from "node:worker_threads";
 
 import { z } from "zod";
 
-import type { Core } from "./store/db.ts";
-import { Holds } from "./store/holds.ts";
-import { Jobs } from "./store/jobs.ts";
-import { Leases } from "./store/leases.ts";
-import { Messages } from "./store/messages.ts";
-import { appendOnlyMigrations } from "./store/migrations.ts";
-import { Operations } from "./store/operations.ts";
-import { Passes } from "./store/passes.ts";
-import { Pins } from "./store/pins.ts";
-import { Profiles } from "./store/profiles.ts";
-import { Questions } from "./store/questions.ts";
-import { Relays } from "./store/relays.ts";
-import { Scheduler } from "./store/scheduler.ts";
-import { Seen } from "./store/seen.ts";
-import { Tasks } from "./store/tasks.ts";
-import { Threads } from "./store/threads.ts";
-import { Turns } from "./store/turns.ts";
+import { domains, migrate } from "./store/domains.ts";
+import type { Domains } from "./store/domains.ts";
+import { remote } from "./store/remote.ts";
+import type { Home } from "./store/remote.ts";
+import { answering, client } from "./store/wire.ts";
+import type { Client } from "./store/wire.ts";
+
+export { awayFile } from "./store/remote.ts";
 
 export type { MessageId } from "./store/db.ts";
 
 export type { Held, Hold, NewHold } from "./store/holds.ts";
+
+export { when } from "./store/holds.ts";
 
 export { StopReasonColumn } from "./store/jobs.ts";
 
@@ -42,11 +35,17 @@ export { waits } from "./store/questions.ts";
 
 export { signalOf, signalTo } from "./store/scheduler.ts";
 
-export type { Answer, NewQuestion, Question } from "./store/questions.ts";
+export type { Due, Listening } from "./store/scheduler.ts";
+
+export type { Answer, NewQuestion, Question, Told } from "./store/questions.ts";
 
 export type { NewTask, Status, Task, TaskChange, Words } from "./store/tasks.ts";
 
 export type { Kept, LaunchStamp, Thread } from "./store/threads.ts";
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// hex's records, as every caller holds them: each call is answered by the store's home, which is this folder's hex.db (File) or, when the folder's store.json names one, a Durable Object every machine reaches (store/remote.ts, store/object.ts).
+export type Store = Client & Home;
 
 const UserVersionRow = z.object({ user_version: z.number() });
 const DataVersionRow = z.object({ data_version: z.number() });
@@ -62,24 +61,26 @@ process.once("exit", () => {
   }
 });
 
-export class Store {
+export class File {
   readonly dir: string;
   readonly db: Database;
-  readonly messages: Messages;
-  readonly tasks: Tasks;
-  readonly questions: Questions;
-  readonly threads: Threads;
-  readonly pins: Pins;
-  readonly holds: Holds;
-  readonly jobs: Jobs;
-  readonly turns: Turns;
-  readonly profiles: Profiles;
-  readonly seen: Seen;
-  readonly relays: Relays;
-  readonly leases: Leases;
-  readonly passes: Passes;
-  readonly scheduler: Scheduler;
-  readonly operations: Operations;
+  readonly store: Store;
+  readonly messages: Domains["messages"];
+  readonly tasks: Domains["tasks"];
+  readonly questions: Domains["questions"];
+  readonly threads: Domains["threads"];
+  readonly pins: Domains["pins"];
+  readonly holds: Domains["holds"];
+  readonly jobs: Domains["jobs"];
+  readonly turns: Domains["turns"];
+  readonly profiles: Domains["profiles"];
+  readonly seen: Domains["seen"];
+  readonly relays: Domains["relays"];
+  readonly leases: Domains["leases"];
+  readonly passes: Domains["passes"];
+  readonly scheduler: Domains["scheduler"];
+  readonly operations: Domains["operations"];
+  readonly clock: Domains["clock"];
   private readonly bell: string;
   private writing = false;
   private readonly listeners = new Set<() => void>();
@@ -103,36 +104,62 @@ export class Store {
     this.db.run("pragma synchronous = normal");
     this.db.run("pragma foreign_keys = on");
 
-    const core: Core = { db: this.db, write: (fn) => this.write(fn) };
-    this.messages = new Messages(core);
-    this.tasks = new Tasks(core, this.messages);
-    this.questions = new Questions(core);
-    this.threads = new Threads(core);
-    this.pins = new Pins(core);
-    this.holds = new Holds(core, this.messages);
-    this.jobs = new Jobs(core);
-    this.turns = new Turns(core);
-    this.profiles = new Profiles(core);
-    this.seen = new Seen(core);
-    this.relays = new Relays(core);
-    this.leases = new Leases(core);
-    this.passes = new Passes(core);
-    this.scheduler = new Scheduler(core, this.messages);
-    this.operations = new Operations(core);
+    const core = { db: this.db, write: <T>(fn: () => T) => this.write(fn) };
+    const records = domains(core);
+    this.messages = records.messages;
+    this.tasks = records.tasks;
+    this.questions = records.questions;
+    this.threads = records.threads;
+    this.pins = records.pins;
+    this.holds = records.holds;
+    this.jobs = records.jobs;
+    this.turns = records.turns;
+    this.profiles = records.profiles;
+    this.seen = records.seen;
+    this.relays = records.relays;
+    this.leases = records.leases;
+    this.passes = records.passes;
+    this.scheduler = records.scheduler;
+    this.operations = records.operations;
+    this.clock = records.clock;
+    migrate(
+      core,
+      records,
+      {
+        get: () => UserVersionRow.parse(this.db.query("pragma user_version").get()).user_version,
+        set: (version) => {
+          this.db.run(`pragma user_version = ${version}`);
+        },
+      },
+      dir,
+    );
 
-    while (this.version() < appendOnlyMigrations.length) {
-      this.write(() => {
-        const version = this.version();
-        const step = appendOnlyMigrations[version];
+    const home: Home = {
+      dir,
+      watch: (listener) => this.watch(listener),
+      synced: () => this.synced(),
+      // oxlint-disable-next-line typescript/require-await -- async so a query SQLite refuses rejects, as a home that is elsewhere does
+      read: async (text, ...bound) => {
+        const reader = new Database(join(dir, "hex.db"), { strict: true });
+        reader.run("pragma busy_timeout = 30000");
+        reader.run("pragma query_only = on");
 
-        if (step === undefined) {
-          return;
+        try {
+          return reader.query(text).all(...bound);
+        } finally {
+          reader.close();
         }
+      },
+      copy: (to) => {
+        this.db.run("vacuum into ?", [to]);
 
-        step(this);
-        this.db.run(`pragma user_version = ${version + 1}`);
-      });
-    }
+        return Promise.resolve();
+      },
+    };
+
+    const answer = answering(records);
+
+    this.store = { ...client((call) => Promise.resolve(JSON.stringify(answer(call)))), ...home };
   }
 
   write<T>(fn: () => T): T {
@@ -285,10 +312,6 @@ export class Store {
     }, 5);
   }
 
-  private version() {
-    return UserVersionRow.parse(this.db.query("pragma user_version").get()).user_version;
-  }
-
   private moved() {
     const { data_version: otherProcessesCommits } = DataVersionRow.parse(
       this.db.query("pragma data_version").get(),
@@ -302,7 +325,7 @@ export class Store {
   }
 }
 
-const stores = new Map<string, Store>();
+const files = new Map<string, File>();
 
 const nonEmptyEnv = (name: string) => {
   const value = process.env[name];
@@ -324,28 +347,48 @@ export function stateDir(appFolder?: string) {
 
 let inBackground = false;
 
-export function open(dir: string): Store {
-  const kept = stores.get(dir);
+export function file(dir: string): File {
+  const kept = files.get(dir);
 
   if (kept !== undefined) {
     return kept;
   }
 
-  const store = new Store(dir);
-  stores.set(dir, store);
+  const opened = new File(dir);
+  files.set(dir, opened);
 
   if (inBackground) {
-    store.syncInBackground();
+    opened.syncInBackground();
   }
 
-  return store;
+  return opened;
+}
+
+const remotes = new Map<string, Store>();
+
+export function open(dir: string): Store {
+  const kept = remotes.get(dir);
+
+  if (kept !== undefined) {
+    return kept;
+  }
+
+  const away = remote(dir);
+
+  if (away === undefined) {
+    return file(dir).store;
+  }
+
+  remotes.set(dir, away);
+
+  return away;
 }
 
 export function syncInBackground() {
   inBackground = true;
 
-  for (const store of stores.values()) {
-    store.syncInBackground();
+  for (const each of files.values()) {
+    each.syncInBackground();
   }
 }
 

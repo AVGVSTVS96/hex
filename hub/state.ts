@@ -79,7 +79,10 @@ if (answered && stop_hook_active !== true && session_id) {
     (!given(HEX_CHANNEL) || HEX_CHANNEL.startsWith("plugin:t3@"));
 
   try {
-    const said = open(stateDir()).turns.unanswered(session_id, lastWordsReachTheOwner ? 1 : 0);
+    const said = await open(stateDir()).turns.unanswered(
+      session_id,
+      lastWordsReachTheOwner ? 1 : 0,
+    );
 
     if (said.length > 0) {
       const lines = said.map(
@@ -108,20 +111,16 @@ if (key !== undefined) {
     let took: boolean;
 
     try {
-      const takenAsOneTurn = () =>
-        store.messages.take(key, session_id) &&
-        (!session_id || (store.turns.turned(session_id, busy, at), true));
-
-      took = store.write(takenAsOneTurn);
+      took = await store.turns.took(key, session_id, busy, at);
       recorded = took && !!session_id;
     } catch (error) {
       console.error(`hex couldn't record this turn: ${String(error)}`);
-      const mine = store.messages.get(key)?.taken?.by === session_id;
-      took = mine || store.messages.take(key, session_id);
+      const mine = (await store.messages.get(key))?.taken?.by === session_id;
+      took = mine || (await store.messages.take(key, session_id));
       recorded = mine;
     }
 
-    const secondCopyTheHubResent = !took && store.messages.get(key) !== null;
+    const secondCopyTheHubResent = !took && (await store.messages.get(key)) !== null;
 
     if (took) {
       leftForTheHubToTake = undefined;
@@ -136,18 +135,14 @@ if (key !== undefined) {
 
 if (session_id && !recorded) {
   try {
-    const store = open(stateDir());
-    store.write(() => {
-      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-      // bin/quiet trusts this record over Claude Code's busy status once it says the turn ended, so an update lands between turns.
-      store.turns.turned(session_id, busy, at);
-
-      if (answered && background) {
-        store.turns.waitsOnAgents(session_id, at);
-      } else if (answered) {
-        store.turns.handled(session_id, at);
-      }
-    });
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // bin/quiet trusts this record over Claude Code's busy status once it says the turn ended, so an update lands between turns.
+    await open(stateDir()).turns.recorded(
+      session_id,
+      busy,
+      at,
+      answered ? (background ? "waitsOnAgents" : "handled") : undefined,
+    );
   } catch (error) {
     console.error(`hex couldn't record this turn: ${String(error)}`);
   }
@@ -165,12 +160,12 @@ if (typedInTheTerminal !== undefined && typedInTheTerminal !== "" && session_id)
 
     const theHubStartedTheSessionWithIt =
       author === "owner" &&
-      store.messages
-        .said(to, 20)
-        .some((row) => row.from === "hub" && row.body.trim() === typedInTheTerminal.trim());
+      (await store.messages.said(to, 20)).some(
+        (row) => row.from === "hub" && row.body.trim() === typedInTheTerminal.trim(),
+      );
 
     if (!theHubStartedTheSessionWithIt) {
-      store.messages.deliver(
+      await store.messages.deliver(
         {
           key: `terminal:${crypto.randomUUID()}`,
           to,
@@ -190,7 +185,7 @@ if (typedInTheTerminal !== undefined && typedInTheTerminal !== "" && session_id)
 if (!busy && session_id && answered) {
   try {
     const { ended } = await import("./observe.ts");
-    ended(stateDir(), session_id, last_assistant_message);
+    await ended(stateDir(), session_id, last_assistant_message);
   } catch (error) {
     process.stderr.write(`hex couldn't keep this turn: ${String(error)}\n`);
   }

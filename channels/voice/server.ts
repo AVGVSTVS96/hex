@@ -294,7 +294,7 @@ type Phone = Dial & {
    start over for the next (renew), say whether the call is out of the engine's reach (adrift), and
    name the session now serving the thread. */
 export type Hub = {
-  deliver: (content: string, meta: Record<string, string>) => void;
+  deliver: (content: string, meta: Record<string, string>) => Promise<void>;
   keep: () => Promise<void>;
   renew: () => void;
   adrift: (away: boolean) => void;
@@ -339,13 +339,13 @@ const SETTLE = 1500;
 
 export async function tool(...[name, args]: ToolCall): Promise<string> {
   if (name === "running") {
-    board.refresh();
+    await board.refresh();
 
     return overall(
       board.runs,
       board.strays(),
       await jobs(),
-      open(HEX_STATE).threads.names(),
+      await open(HEX_STATE).threads.names(),
       Date.now(),
       yours.view.asks,
     );
@@ -756,10 +756,10 @@ async function pass(
   where?: string,
   call = live?.id ?? ended,
 ) {
-  const known = filled(newThreadIn) ? undefined : findThread(HEX_STATE, name);
+  const known = filled(newThreadIn) ? undefined : await findThread(HEX_STATE, name);
 
   if (!filled(newThreadIn) && !known) {
-    throw new Error(noThread(HEX_STATE, name));
+    throw new Error(await noThread(HEX_STATE, name));
   }
 
   if (filled(call) && live?.id !== call) {
@@ -782,7 +782,7 @@ async function pass(
   }
 
   if (!thread) {
-    throw new Error(noThread(HEX_STATE, name));
+    throw new Error(await noThread(HEX_STATE, name));
   }
 
   const toldTheVoiceWithoutHoldingUpTheWork =
@@ -800,7 +800,7 @@ async function pass(
       : true;
 
   if (filled(call) && filled(id)) {
-    watch(call, id, thread, filled(newThreadIn));
+    await watch(call, id, thread, filled(newThreadIn));
   }
 
   if (!filled(newThreadIn)) {
@@ -833,7 +833,7 @@ async function pass(
     : `${sent}, on the board as ${id}, but the voice may not have heard of it; the work went out, so it needn't be sent again`;
 }
 
-function followWorkPastCallsSentOut() {
+async function followWorkPastCallsSentOut() {
   const dayAgo = Date.now() - 24 * 60 * 60_000;
 
   for (const { id: call, started } of calls.list()) {
@@ -844,27 +844,25 @@ function followWorkPastCallsSentOut() {
     const latest = new Map(past(call).tasks.map((each) => [each.id, each]));
 
     for (const each of latest.values()) {
-      let thread: Thread | undefined;
-
       try {
-        thread =
+        const thread =
           each.state === "running" && filled(each.to) && filled(each.agent)
-            ? findThread(HEX_STATE, each.agent)
+            ? await findThread(HEX_STATE, each.agent)
             : undefined;
+
+        if (thread) {
+          await watch(call, each.id, thread, true);
+        }
       } catch (error) {
         process.stderr.write(
           `voice: ${call}'s task ${each.id} isn't followed again: ${String(error)}\n`,
         );
       }
-
-      if (thread) {
-        watch(call, each.id, thread, true);
-      }
     }
   }
 }
 
-function watch(call: string, id: string, thread: Thread, readFromTheSessionsStart: boolean) {
+async function watch(call: string, id: string, thread: Thread, readFromTheSessionsStart: boolean) {
   stop(call, id);
   const stops: (() => void)[] = [];
   let stopped = false;
@@ -885,13 +883,19 @@ function watch(call: string, id: string, thread: Thread, readFromTheSessionsStar
     }
   });
   holdOrStopAtOnceIfStopped(
-    followThread(thread, dirname(HEX_STATE), `${call}:${id}`, readFromTheSessionsStart, (step) => {
-      if (step.end === undefined) {
-        see(call, id, step);
-      } else {
-        followTheBoardRowUntilItRests(call, id, thread, step.end, holdOrStopAtOnceIfStopped);
-      }
-    }),
+    await followThread(
+      thread,
+      dirname(HEX_STATE),
+      `${call}:${id}`,
+      readFromTheSessionsStart,
+      (step) => {
+        if (step.end === undefined) {
+          see(call, id, step);
+        } else {
+          followTheBoardRowUntilItRests(call, id, thread, step.end, holdOrStopAtOnceIfStopped);
+        }
+      },
+    ),
   );
 }
 
@@ -1132,9 +1136,7 @@ function closeSession(id: string, event: string) {
 
 function deliver(content: string, meta: Record<string, string>) {
   const time = clock();
-  toHub(() => {
-    hub.deliver(content, { ...meta, time });
-  });
+  toHub(() => hub.deliver(content, { ...meta, time }));
 }
 
 function toHub(step: () => void | Promise<void>) {
@@ -3491,7 +3493,7 @@ async function questionRoutes(request: Request, url: URL) {
   const [, asked] = /^\/asks\/([^/]+)\/words$/u.exec(url.pathname) ?? [];
 
   if (filled(asked) && request.method === "GET") {
-    const words = questions.words(decodeURIComponent(asked));
+    const words = await questions.words(decodeURIComponent(asked));
 
     return words ? Response.json(words) : new Response("Nothing to show", { status: 404 });
   }
@@ -3637,27 +3639,29 @@ async function questionRoutes(request: Request, url: URL) {
   return new Response(null, { status: 204 });
 }
 
-function runRoutes(request: Request, url: URL) {
+async function runRoutes(request: Request, url: URL) {
   const runs = board;
 
   if (url.pathname === "/tasks" && request.method === "GET") {
-    return showRuns(url, runs);
+    return await showRuns(url, runs);
   }
 
   if (url.pathname === "/tasks/summary" && request.method === "GET") {
-    return showSummary(url, runs, yours);
+    return await showSummary(url, runs, yours);
   }
 
   const [, id, verb] = /^\/tasks\/([^/]+)(?:\/(talk|chat|stop))?$/u.exec(url.pathname) ?? [];
   const key = filled(id) ? decodeURIComponent(id) : "";
-  const thread = filled(key) ? runs.find(key) : undefined;
+  const thread = filled(key) ? await runs.find(key) : undefined;
 
   if (thread && verb === "chat") {
-    return request.method === "POST" ? sendChat(request, thread) : showChat(url, thread);
+    return request.method === "POST"
+      ? await sendChat(request, thread)
+      : await showChat(url, thread);
   }
 
   if (thread && !filled(verb) && request.method === "GET") {
-    return showPage(url, runs, key);
+    return await showPage(url, runs, key);
   }
 
   const run = filled(key) ? runs.get(key) : undefined;
@@ -3671,10 +3675,12 @@ function runRoutes(request: Request, url: URL) {
   }
 
   if (verb === "stop" && request.method === "POST") {
-    return done(() => {
+    return await done(() => {
       chats.stop(run);
     });
   }
+
+  return new Response("404", { status: 404 });
 }
 
 const IdeaBody = z.object({
@@ -3697,14 +3703,13 @@ async function ideaRoutes(request: Request, url: URL) {
     }
 
     if (!filled(id)) {
-      return Response.json({ version: ideas.version, ideas: ideas.list() });
+      return Response.json({ version: ideas.version, ideas: await ideas.list() });
     }
 
-    const one = ideas.one(id);
+    const { version } = ideas;
+    const one = await ideas.one(id);
 
-    return one
-      ? Response.json({ version: ideas.version, ...one })
-      : new Response("404", { status: 404 });
+    return one ? Response.json({ version, ...one }) : new Response("404", { status: 404 });
   }
 
   if (request.method !== "POST" || !filled(id)) {
@@ -3715,10 +3720,10 @@ async function ideaRoutes(request: Request, url: URL) {
   const { text, key, day } = body.success ? body.data : { text: "", key: "", day: 0 };
 
   return await done(async () => {
-    const idea = ideas.get(id);
+    const idea = await ideas.get(id);
 
     const toThread = async (words: string, named = `app-${id}-${Date.now()}`) => {
-      const run = board.find(ideas.one(id)?.thread ?? "");
+      const run = await board.find((await ideas.one(id))?.thread ?? "");
 
       if (!run) {
         throw new Error(`${id}'s thread can't be reached from here; write to it in its own app.`);
@@ -3730,18 +3735,18 @@ async function ideaRoutes(request: Request, url: URL) {
     if (verb === "seen") {
       ideas.seen(id);
     } else if (verb === "start") {
-      ideas.status(id, "open");
+      await ideas.status(id, "open");
       await toThread(`Start on my idea ${id}, “${idea.title}”: it's a task now, so work on it.`);
     } else if (verb === "keep") {
-      if (ideas.status(id, "idea") === "open") {
+      if ((await ideas.status(id, "idea")) === "open") {
         await toThread(`Never mind starting ${id}, “${idea.title}”: keep it as an idea for now.`);
       }
     } else if (verb === "drop") {
-      ideas.status(id, "dropped");
+      await ideas.status(id, "dropped");
     } else if (verb === "stop") {
-      ideas.stop(id);
+      await ideas.stop(id);
     } else if (verb === "look") {
-      ideas.look(id, day);
+      await ideas.look(id, day);
     } else if (verb === "add" && text.trim() !== "") {
       await toThread(`On my idea ${id}, “${idea.title}”: ${text.trim()}`, key);
     } else {
@@ -3767,7 +3772,7 @@ async function goalRoutes(request: Request, url: URL) {
   const [, one] = /^\/goals\/(t-\d+)$/u.exec(url.pathname) ?? [];
 
   if (filled(one) && request.method === "GET") {
-    const goal = goals.goal(one);
+    const goal = await goals.goal(one);
 
     return goal ? Response.json(goal) : new Response("404", { status: 404 });
   }
@@ -3777,12 +3782,8 @@ async function goalRoutes(request: Request, url: URL) {
   if (filled(watched) && filled(act) && request.method === "POST") {
     const name = decodeURIComponent(watched);
 
-    return await done(() => {
-      if (act === "stop") {
-        goals.stopWatching(name);
-      } else {
-        goals.undo(name);
-      }
+    return await done(async () => {
+      await (act === "stop" ? goals.stopWatching(name) : goals.undo(name));
     });
   }
 
@@ -3796,9 +3797,13 @@ async function goalRoutes(request: Request, url: URL) {
     const run = goals.runOf(id);
 
     const changed =
-      verb === "drop" ? goals.drop(id) : verb === "reopen" ? goals.reopen(id) : goals.undo(id);
+      verb === "drop"
+        ? await goals.drop(id)
+        : verb === "reopen"
+          ? await goals.reopen(id)
+          : await goals.undo(id);
 
-    const where = run === undefined ? undefined : board.find(run);
+    const where = run === undefined ? undefined : await board.find(run);
 
     if (changed && where) {
       await chats.send(where, changed.told, `app-goal-${id}-${verb}-${Date.now()}`);
@@ -3807,8 +3812,8 @@ async function goalRoutes(request: Request, url: URL) {
 }
 
 async function showPage(url: URL, runs: Board, key: string) {
-  const read = () => {
-    const found = runs.find(key);
+  const read = async () => {
+    const found = await runs.find(key);
 
     return (
       found && {
@@ -3816,7 +3821,7 @@ async function showPage(url: URL, runs: Board, key: string) {
         ...("steps" in found && {
           steps: found.steps.map((step) => ({ ...step, brief: brief(step) })),
         }),
-        ...yours.of(found.id),
+        ...(await yours.of(found.id)),
       }
     );
   };
@@ -3825,18 +3830,17 @@ async function showPage(url: URL, runs: Board, key: string) {
 
   if (after !== null && after !== "" && Number(after) === runs.version) {
     const end = Date.now() + 25_000;
-    const before = JSON.stringify(read());
+    const before = JSON.stringify(await read());
 
-    while (Date.now() < end && JSON.stringify(read()) === before) {
+    while (Date.now() < end && JSON.stringify(await read()) === before) {
       await runs.changes(runs.version, end - Date.now());
     }
   }
 
-  const shown = read();
+  const { version } = runs;
+  const shown = await read();
 
-  return shown
-    ? Response.json({ version: runs.version, ...shown })
-    : new Response("404", { status: 404 });
+  return shown ? Response.json({ version, ...shown }) : new Response("404", { status: 404 });
 }
 
 async function showChat(url: URL, run: Run | Page) {
@@ -3851,7 +3855,7 @@ async function showChat(url: URL, run: Run | Page) {
   const chat =
     after !== null && after !== ""
       ? await chats.next(where, Number(after), 25_000)
-      : chats.of(where());
+      : await chats.of(where());
 
   return Response.json(chat);
 }
@@ -4057,14 +4061,14 @@ export function serve(voiceHub: Hub, state: string) {
     runs: () => board.runs,
   });
   board.listen(() => {
-    feed.check();
+    void feed.check();
   });
   yours.listen(() => {
-    feed.check();
+    void feed.check();
   });
   goals = new Goals(state, dirname(state), board, yours);
   recover();
-  followWorkPastCallsSentOut();
+  void followWorkPastCallsSentOut();
   void checkCredit();
   setInterval(() => void checkCredit(), 24 * 60 * 60_000);
 

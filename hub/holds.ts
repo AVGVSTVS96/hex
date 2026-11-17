@@ -1,7 +1,7 @@
 import { clock } from "./clock.ts";
 import { clip } from "./fit.ts";
-import { open } from "./store.ts";
-import type { Held, Hold, Store } from "./store.ts";
+import { open, when } from "./store.ts";
+import type { Held, Hold, NewHold, Store } from "./store.ts";
 
 const FREED_THREADS_WOKEN_AT_ONCE = 2;
 const PATIENCE_FOR_A_WOKEN_TURN_TO_END = 15 * 60_000;
@@ -27,73 +27,21 @@ function onOwnersClock(text: string, iso: string, zone: string): string {
   }
 }
 
-export function when(at: string, zone?: string) {
-  return new Date(at).toLocaleString("en-US", {
-    timeZone: zone,
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
 export function place(
   store: Store,
-  hold: Parameters<Store["holds"]["create"]>[0],
+  hold: NewHold,
   { zone, working }: { zone?: string; working: Set<string> },
-): Hold {
-  return store.write(() => {
-    const placed = store.holds.create(hold);
-    const by = store.threads.names()[placed.by] ?? placed.by;
-    const ends = `${placed.until !== undefined && placed.until !== "" ? `at ${when(placed.until, zone)}, or ` : ""}when my word lifts it`;
-
-    for (const { thread } of placed.threads.filter((held) => working.has(held.thread))) {
-      store.messages.deliver({
-        key: `hold:${placed.id}@${thread}`,
-        to: thread,
-        from: "hold",
-        author: "prompt",
-        body: `[hold ${placed.id}] ${by} put this thread on hold: ${placed.why}. Finish the step you're on, commit it, and start nothing new until the hold ends; hex wakes this thread when it does, ${ends}.`,
-        meta: { user: "hold" },
-      });
-    }
-
-    return placed;
-  });
+): Promise<Hold> {
+  return store.holds.place(hold, { zone, working: [...working] });
 }
 
-export function wake(store: Store, at = new Date(clock.now()).toISOString()): string | undefined {
-  return store.write(() => {
-    const waking = store.holds.waking(PATIENCE_FOR_A_WOKEN_TURN_TO_END, at);
-    let room = FREED_THREADS_WOKEN_AT_ONCE - waking.count;
-    const woken = new Set<string>();
-
-    for (const { id, thread, why, ending } of store.holds.freed()) {
-      if (woken.has(thread)) {
-        continue;
-      }
-
-      if (room-- <= 0) {
-        break;
-      }
-
-      woken.add(thread);
-
-      const key = `hold:${id}@${thread}:ended`;
-      store.messages.deliver({
-        key,
-        to: thread,
-        from: "hold",
-        author: "prompt",
-        body: `[hold ${id} ended] ${ending}. The hold on this thread (${why}) is over: pick up where you stopped.`,
-        meta: { user: "hold" },
-      });
-      store.holds.woke(thread, key);
-    }
-
-    return woken.size > 0
-      ? new Date(Date.parse(at) + PATIENCE_FOR_A_WOKEN_TURN_TO_END).toISOString()
-      : waking.until;
+export function wake(
+  store: Store,
+  at = new Date(clock.now()).toISOString(),
+): Promise<string | undefined> {
+  return store.holds.wake(at, {
+    patience: PATIENCE_FOR_A_WOKEN_TURN_TO_END,
+    atOnce: FREED_THREADS_WOKEN_AT_ONCE,
   });
 }
 
@@ -110,22 +58,23 @@ export function holding(storeDir: string): () => void {
   }
 
   let timer: ReturnType<typeof clock.setTimeout> | undefined;
+  let moving = false;
+  let again = false;
+  let stopped = false;
 
-  const step = () => {
+  const move = async () => {
     let next = Infinity;
 
     try {
       const at = new Date(clock.now()).toISOString();
-      store.holds.due(at);
-      const patience = wake(store, at);
+      await store.holds.due(at);
+      const patience = await wake(store, at);
 
       next = Math.min(
         patience !== undefined && patience !== "" ? Date.parse(patience) : Infinity,
-        ...store.holds
-          .list()
-          .flatMap((hold) =>
-            hold.until !== undefined && hold.until !== "" ? [Date.parse(hold.until)] : [],
-          ),
+        ...(await store.holds.list()).flatMap((hold) =>
+          hold.until !== undefined && hold.until !== "" ? [Date.parse(hold.until)] : [],
+        ),
       );
     } catch (error) {
       process.stderr.write(`hub: holds couldn't move on: ${String(error)}\n`);
@@ -133,10 +82,35 @@ export function holding(storeDir: string): () => void {
     } finally {
       clock.clearTimeout(timer);
 
-      if (next < Infinity) {
+      if (next < Infinity && !stopped) {
         timer = clock.setTimeout(step, Math.min(2 ** 31 - 1, Math.max(0, next - clock.now())));
       }
     }
+  };
+
+  const moveOnceAtATime = async () => {
+    if (stopped) {
+      return;
+    }
+
+    if (moving) {
+      again = true;
+
+      return;
+    }
+
+    moving = true;
+
+    do {
+      again = false;
+      await move();
+    } while (again);
+
+    moving = false;
+  };
+
+  const step = () => {
+    void moveOnceAtATime();
   };
 
   const unwatch = store.watch(step);
@@ -144,6 +118,8 @@ export function holding(storeDir: string): () => void {
   step();
 
   return () => {
+    stopped = true;
+    again = false;
     unwatch();
     clock.clearTimeout(timer);
   };
@@ -153,14 +129,16 @@ function ended(held: Held) {
   return held.ended !== undefined && held.ended !== "";
 }
 
-export function line(hold: Hold, store: Store, zone?: string): string {
-  const names = store.threads.names();
+export async function line(hold: Hold, store: Store, zone?: string): Promise<string> {
+  const names = await store.threads.names();
   const name = (thread: string) => names[thread] ?? thread;
   const stillHeld = hold.threads.filter((held) => !ended(held)).map((held) => name(held.thread));
   const freed = hold.threads.filter((held) => ended(held)).map((held) => name(held.thread));
 
   const said =
-    hold.message !== undefined && hold.message !== "" ? store.messages.get(hold.message) : null;
+    hold.message !== undefined && hold.message !== ""
+      ? await store.messages.get(hold.message)
+      : null;
 
   return [
     stillHeld.length > 0

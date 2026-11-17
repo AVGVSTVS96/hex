@@ -1,11 +1,9 @@
-import type { Database } from "bun:sqlite";
-
 import { z } from "zod";
 
 import { KeyValues, now, TextOrAbsent, TextOrNull } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Sql, Write } from "./db.ts";
 import { MessageRows } from "./messages.ts";
-import type { Row } from "./messages.ts";
+import type { Messages, Row } from "./messages.ts";
 
 const TurnRow = z
   .object({ began: TextOrAbsent, ended: TextOrAbsent, handled: TextOrAbsent })
@@ -24,12 +22,40 @@ const RepliesRow = z.object({ replies: z.number() });
 const TURNS = 30 * 24 * 60 * 60 * 1000;
 
 export class Turns {
-  private readonly db: Database;
+  private readonly db: Sql;
   private readonly write: Write;
+  private readonly messages: Messages;
 
-  constructor({ db, write }: Core) {
+  constructor({ db, write }: Core, messages: Messages) {
     this.db = db;
     this.write = write;
+    this.messages = messages;
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A session takes the message its turn began with and the turn is recorded in one write, so both land or neither does.
+  took(key: string, session: string, busy: boolean, at = now()): boolean {
+    return this.write(() => {
+      if (!this.messages.take(key, session)) {
+        return false;
+      }
+
+      if (session !== "") {
+        this.turned(session, busy, at);
+      }
+
+      return true;
+    });
+  }
+
+  recorded(session: string, busy: boolean, at = now(), answered?: "handled" | "waitsOnAgents") {
+    this.write(() => {
+      this.turned(session, busy, at);
+
+      if (answered !== undefined) {
+        this[answered](session, at);
+      }
+    });
   }
 
   turned(session: string, busy: boolean, at = now()) {

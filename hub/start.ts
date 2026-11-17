@@ -101,15 +101,10 @@ export function sessionStarts({
       await rewound(thread);
     }
 
-    const known = threads.of(thread);
-
-    const takesOverFrom = present(prompt) || present(fork) ? undefined : expired(thread);
-    files.write(thread, {}, takesOverFrom);
-
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // The session's hooks keep what's typed in it as the owner's; this one is hex's.
     if (present(prompt)) {
-      kept(
+      await kept(
         (store) =>
           store.messages.deliver(
             {
@@ -126,6 +121,10 @@ export function sessionStarts({
       );
     }
 
+    const known = threads.of(thread);
+
+    const takesOverFrom = present(prompt) || present(fork) ? undefined : expired(thread);
+    files.write(thread, {}, takesOverFrom);
     const launching = launchArgs(thread);
     threads.update(thread, { launched: stamp(launching, server, startup) });
     const source = fork ?? (present(known.session) ? undefined : known.fork);

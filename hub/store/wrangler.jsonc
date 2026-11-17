@@ -1,0 +1,8 @@
+{
+  "name": "hex-store",
+  "main": "object.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": { "bindings": [{ "name": "STORE", "class_name": "Records" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Records"] }],
+}

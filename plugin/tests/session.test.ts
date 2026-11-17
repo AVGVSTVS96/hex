@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { startHub } from "../../hub/hub.ts";
+import type { Hub } from "../../hub/hub.ts";
 import { until } from "../../hub/until.ts";
 
 const Args = z.array(z.string());
@@ -32,7 +33,7 @@ const HEX = join(import.meta.dir, "../..");
 const saved = { ...process.env };
 
 let home: string;
-let hub: ReturnType<typeof startHub>;
+let hub: Hub;
 let listener: ReturnType<typeof Bun.serve>;
 
 beforeEach(() => {
@@ -125,7 +126,7 @@ async function launch(
 ) {
   const stateOfItsOwnSoNoEarlierHubsThreadsRelaunchAndRace = mkdtempSync(join(home, "state/hub-"));
 
-  hub = startHub({
+  hub = await startHub({
     stateDir: stateOfItsOwnSoNoEarlierHubsThreadsRelaunchAndRace,
     channel,
     server: { title: "Test", instructions: "Messages arrive as <channel>.", tools: [] },
@@ -143,7 +144,7 @@ async function launch(
   if (cwd !== undefined && cwd !== "") {
     hub.open(thread, thread, "hi", cwd);
   } else {
-    hub.deliver(thread, thread, { content: "hi", author: "owner", meta: {} });
+    await hub.deliver(thread, thread, { content: "hi", author: "owner", meta: {} });
   }
 
   await until(() => existsSync(join(home, "launched")));

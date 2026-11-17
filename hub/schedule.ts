@@ -8,8 +8,8 @@ import { study } from "./ideas.ts";
 import { running } from "./running.ts";
 import type { Session } from "./running.ts";
 import { stalled } from "./stalled.ts";
-import { open, signalOf } from "./store.ts";
-import type { Row, Store } from "./store.ts";
+import { open } from "./store.ts";
+import type { Store } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
 const AT = /^\d{4}-\d\d-\d\d[T ]\d\d:\d\d$/u;
@@ -132,26 +132,13 @@ export function nextRun(
   return nexts.length > 0 ? Math.min(...nexts) : undefined;
 }
 
-const WHYS_SHOWN = 20;
-const WHY_LENGTH = 300;
-
-function whyNow(heard: Row[]) {
-  const whys = heard
-    .slice(0, WHYS_SHOWN)
-    .map((row) => `- ${(row.body.split("\n")[0] ?? "").slice(0, WHY_LENGTH)}`);
-
-  const more = heard.length - WHYS_SHOWN;
-
-  return `\n\nWhy now:\n${whys.join("\n")}${more > 0 ? `\n- and ${more} more` : ""}`;
-}
-
-export function check(
+export async function check(
   storeDir: string,
   hexDir: string,
   main: string,
   now = Math.floor(Date.now() / MINUTE),
   research = study,
-  sessions: (store: Store) => Map<string, Session> = running,
+  sessions: (store: Store) => Promise<Map<string, Session>> = running,
 ) {
   const store = open(storeDir);
   let text: string;
@@ -169,7 +156,7 @@ export function check(
   } catch (error) {
     const body = `[schedules] schedules.json no longer loads, so no job runs until it's fixed: ${error instanceof Error ? error.message : String(error)}`;
 
-    store.messages.deliver({
+    await store.messages.deliver({
       key: `schedule:broken@${Bun.hash(text).toString(36)}`,
       to: besideOf(main),
       from: "schedule",
@@ -182,7 +169,7 @@ export function check(
   }
 
   const zone = zoneOf(hexDir);
-  const since = store.scheduler.checked() ?? now;
+  const since = (await store.scheduler.checked()) ?? now;
   const slots = new Map<string, number>();
 
   const found = (name: string, minute: number) => {
@@ -211,48 +198,32 @@ export function check(
     }
   }
 
-  const alive = sessions(store);
-  stalled(store, alive.values(), now * MINUTE);
-  const signals = store.scheduler.signals();
+  const alive = await sessions(store);
+  await stalled(store, alive.values(), now * MINUTE);
 
   const where = (job: Job) =>
     job.thread === undefined || job.check === true ? besideOf(job.thread ?? main) : job.thread;
 
-  store.write(() => {
-    for (const [name, minute] of slots) {
-      const job = jobs[name];
+  const asked = (name: string) => {
+    const job = jobs[name];
 
-      if (job !== undefined && job.idea === undefined) {
-        store.scheduler.fire(name, minute, where(job), `[${name}] ${job.prompt}`, minute < now);
-      }
-    }
+    return job === undefined || job.idea !== undefined
+      ? []
+      : [{ name, job, to: where(job), body: `[${name}] ${job.prompt}` }];
+  };
 
-    const busy = new Set<string>();
-
-    for (const [name, job] of Object.entries(jobs)) {
-      const heard = signals.filter((row) => job.on?.includes(signalOf(row.to) ?? "") === true);
-
-      if (heard.length === 0 || job.idea !== undefined) {
-        continue;
-      }
-
-      if (store.scheduler.running(name, [...alive.keys()])) {
-        for (const row of heard) {
-          busy.add(row.key);
-        }
-      } else {
-        store.scheduler.fireOn(name, heard, where(job), `[${name}] ${job.prompt}${whyNow(heard)}`);
-      }
-    }
-
-    for (const row of signals) {
-      if (!busy.has(row.key)) {
-        store.messages.take(row.key, "schedule");
-      }
-    }
-
-    store.scheduler.check(now);
-  });
+  await store.scheduler.tick(
+    now,
+    [...slots].flatMap(([name, minute]) =>
+      asked(name).map(({ to, body }) => ({ name, minute, to, body })),
+    ),
+    Object.keys(jobs).flatMap((name) =>
+      asked(name).flatMap(({ job, to, body }) =>
+        job.on === undefined ? [] : [{ name, on: job.on, to, body }],
+      ),
+    ),
+    [...alive.keys()],
+  );
 
   for (const [name, job] of Object.entries(jobs)) {
     if (job.idea !== undefined) {
@@ -263,20 +234,24 @@ export function check(
 
 export function schedule(storeDir: string, hexDir: string, main: string): () => void {
   let timer: ReturnType<typeof setTimeout>;
+  let stopped = false;
 
-  const tick = () => {
+  const tick = async () => {
     try {
-      check(storeDir, hexDir, main);
+      await check(storeDir, hexDir, main);
     } catch (error) {
       process.stderr.write(`hub: the scheduler couldn't check schedules.json: ${String(error)}\n`);
     }
 
-    timer = setTimeout(tick, MINUTE - (Date.now() % MINUTE));
+    if (!stopped) {
+      timer = setTimeout(() => void tick(), MINUTE - (Date.now() % MINUTE));
+    }
   };
 
-  tick();
+  void tick();
 
   return () => {
+    stopped = true;
     clearTimeout(timer);
   };
 }

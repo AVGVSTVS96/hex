@@ -60,7 +60,7 @@ function outranks(kept: Session, status: string, updated: number) {
 const nonEmpty = (value: string | undefined) =>
   value !== undefined && value !== "" ? value : undefined;
 
-export function running(store: Store, claude = CLAUDE): Map<string, Session> {
+export async function running(store: Store, claude = CLAUDE): Promise<Map<string, Session>> {
   const sessions = new Map<string, Session>();
   const pids = new Map<number, string>();
   const dir = join(claude, "sessions");
@@ -118,9 +118,14 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
       thread: served(env),
       ...(helper !== undefined && { helper }),
       ...(beside !== undefined && { beside }),
-      ...store.turns.get(id),
     });
   }
+
+  await Promise.all(
+    [...sessions.values()].map(async (session) =>
+      Object.assign(session, await store.turns.get(session.id)),
+    ),
+  );
 
   for (const session of sessions.values()) {
     const parent =

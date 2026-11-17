@@ -1,10 +1,24 @@
-import type { Database } from "bun:sqlite";
-
 import { z } from "zod";
+
+export type Bound = string | number | bigint | boolean | null;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The SQLite a store's home gives it: a file through bun:sqlite, or a Durable Object's own (store/object.ts). changes counts the rows a statement's triggers wrote too, as Bun's does.
+/* oxlint-disable anti-slop/no-unknown-returns -- rows as SQLite gives them, which each domain parses where it reads them */
+export type Sql = {
+  query: (text: string) => {
+    run: (...bound: Bound[]) => { changes: number; lastInsertRowid: number | bigint };
+    get: (...bound: Bound[]) => unknown;
+    all: (...bound: Bound[]) => unknown[];
+    values: (...bound: Bound[]) => unknown[][];
+  };
+  run: (text: string) => void;
+};
+/* oxlint-enable anti-slop/no-unknown-returns -- end of SQLite's rows */
 
 export type Write = <T>(fn: () => T) => T;
 
-export type Core = { db: Database; write: Write };
+export type Core = { db: Sql; write: Write };
 
 export type MessageId = number | string;
 
