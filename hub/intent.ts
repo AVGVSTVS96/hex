@@ -68,10 +68,9 @@ type Hook = z.infer<typeof ToolHook>;
 const named = (text: string) => [...new Set(text.match(/\bt-\d+\b/gu))];
 
 const HANDOFF_COMMAND =
-  /(?:^|[;&|(\n]|\$\()\s*(?:\w+=\S*\s+)*(?:ssh\s+\S+\s+['"]?)?(?:\S*\/)?(?:job\s+\S+\s+(?:\S+\s+)?(?:claude|codex)\b|claude\b[^;&|\n]*\s(?:-p|--print)\b|codex\s+exec\b|hex\s+deliver\b)/u;
+  /(?:^|[;&|(\n]|\$\()\s*(?:\w+=\S*\s+)*(?:ssh\s+\S+\s+['"]?)?(?:\S*\/)?(?:job\s+\S+\s+(?:\S+\s+)?(?:claude|codex)\b|claude\b[^;&|\n]*\s(?:-p|--print)\b|codex\s+exec\b)/u;
 
-const HANDOFF_TOOL =
-  /^SendMessage$|new_thread$|^mcp__t3.code__(t3_thread_launch|t3_thread_send|delegate_task|create_threads)$/u;
+const HANDOFF_TOOL = /new_thread$|^mcp__t3.code__(t3_thread_launch|delegate_task|create_threads)$/u;
 
 export function brief({
   tool_name: tool = "",
@@ -306,17 +305,10 @@ export function asked(store: Store, session: string, text: string, thread?: stri
   const picked = new Set([...newest(taken, cited), ...handed(taken, cited)]);
   const given = taken.filter((row) => picked.has(row));
   const since = saidSince(taken);
-  const to = deliveredTo(store, text);
-
-  const toNewest =
-    to === undefined || to === "" ? [] : newest(store.messages.said(to, 40), [...cited, ...given]);
-
   const home = thread === undefined ? undefined : store.threads.key(thread);
 
   const inThread =
-    home === undefined || home === to
-      ? []
-      : newest(store.messages.said(home, 40), [...cited, ...given]);
+    home === undefined ? [] : newest(store.messages.said(home, 40), [...cited, ...given]);
 
   return [
     tasks.length > 0
@@ -332,27 +324,9 @@ export function asked(store: Store, session: string, text: string, thread?: stri
     inThread.length > 0
       ? `My newest messages in the thread this session works for, which may be about other work:\n\n${quote(inThread)}`
       : "",
-    toNewest.length > 0
-      ? `My newest messages in the thread it goes to, which that thread's own session answers:\n\n${quote(toNewest)}`
-      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
-}
-
-function deliveredTo(store: Store, text: string): string | undefined {
-  const to = /\bhex\s+deliver\b.*?--to[= ]['"]?([^'"\s]+)/su.exec(text)?.[1];
-
-  if (to === undefined) {
-    return;
-  }
-
-  const threads = store.threads.list();
-
-  return (
-    threads.find(({ thread }) => thread === store.threads.key(to)) ??
-    threads.find(({ name }) => name === to)
-  )?.thread;
 }
 
 export async function judge(input: string, kind: Kind = "brief"): Promise<Verdict> {
