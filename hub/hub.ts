@@ -132,12 +132,11 @@ export type HubLine = z.input<typeof HubRequestLine>;
 
 export type Hub = ReturnType<typeof startHub>;
 
-// idleStop: how long a quiet session stays warm before it stops. cacheWarm: how long the main thread rests before it compacts, while its cache is still warm. Both sit just inside Claude Code's one-hour prompt cache, so coming back within the hour costs no new cache write. compactAbove: the context above which a session compacts before it rests. compactWindow: the auto-compact window a thread's session runs with, a fresh thread's aside, which hands off at capacity. Claude Code compacts about 15-35k tokens under it, mid-turn, so a session in steady use, which never rests long enough to compact, stays small; the hex folder's own setting still holds for its terminal sessions, and for its threads too when it's smaller. HEX_COMPACT_WINDOW changes it. reconnect: how long a running session's channel may be gone before the session restarts to get it back. connect: how long a starting session waits for the hub to answer its channel, where Claude Code would give up after 30 seconds for good, so a hub running behind still gets its sessions' channels. Claude Code waits that long for each of a session's MCP servers, but a background session doesn't hold its turn for them. capacity: how much context a fresh thread's session holds before a new one takes over; with 0, every message that finds it done goes to a new one, and HEX_CHAT_CAPACITY changes it. handoffAbove: the context above which a thread whose session's cache has expired starts a new session that takes over from it, instead of resuming it and writing that whole context to the cache again: a new session starts at about 50k and reads back what it needs, so a smaller one costs more to replace than to resume. HEX_HANDOFF_ABOVE changes it. (see https://docs.claude.com/en/docs/build-with-claude/prompt-caching and https://code.claude.com/docs/en/mcp)
+// idleStop: how long a quiet session stays warm before it stops. cacheWarm: how long the main thread rests before it compacts, while its cache is still warm. Both sit just inside Claude Code's one-hour prompt cache, so coming back within the hour costs no new cache write. compactAbove: the context above which a session compacts before it rests. reconnect: how long a running session's channel may be gone before the session restarts to get it back. connect: how long a starting session waits for the hub to answer its channel, where Claude Code would give up after 30 seconds for good, so a hub running behind still gets its sessions' channels. Claude Code waits that long for each of a session's MCP servers, but a background session doesn't hold its turn for them. capacity: how much context a fresh thread's session holds before a new one takes over; with 0, every message that finds it done goes to a new one, and HEX_CHAT_CAPACITY changes it. handoffAbove: the context above which a thread whose session's cache has expired starts a new session that takes over from it, instead of resuming it and writing that whole context to the cache again: a new session starts at about 50k and reads back what it needs, so a smaller one costs more to replace than to resume. HEX_HANDOFF_ABOVE changes it. (see https://docs.claude.com/en/docs/build-with-claude/prompt-caching and https://code.claude.com/docs/en/mcp)
 export type Limits = {
   idleStop: number;
   cacheWarm: number;
   compactAbove: number;
-  compactWindow: number;
   reconnect: number;
   connect: number;
   capacity: number;
@@ -433,7 +432,6 @@ const LIMITS: Limits = {
   idleStop: 54 * 60_000,
   cacheWarm: 54 * 60_000,
   compactAbove: 150_000,
-  compactWindow: tokensFrom("HEX_COMPACT_WINDOW", 200_000),
   reconnect: 20_000,
   connect: 300_000,
   capacity: tokensFrom("HEX_CHAT_CAPACITY", 350_000),
@@ -558,16 +556,7 @@ export function startHub({
   // The systemd journal General follows for units that keep restarting; a hub without one follows none.
   journal?: (() => string[]) | undefined;
 }) {
-  const {
-    idleStop,
-    cacheWarm,
-    compactAbove,
-    compactWindow,
-    reconnect,
-    connect,
-    capacity,
-    handoffAbove,
-  } = {
+  const { idleStop, cacheWarm, compactAbove, reconnect, connect, capacity, handoffAbove } = {
     ...LIMITS,
     ...limits,
   };
@@ -595,8 +584,6 @@ export function startHub({
     port,
     storeDir,
     connect,
-    compactWindow,
-    hexDir,
     generalThread,
     fresh,
   });

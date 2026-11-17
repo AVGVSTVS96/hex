@@ -2,38 +2,8 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { z } from "zod";
-
 import type * as claude from "./claude.ts";
 import { present } from "./present.ts";
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A window is a number of tokens or "auto", the model's own, which is larger than any the hub sets.
-const Window = z.number().optional().catch(undefined);
-
-const Windows = z.looseObject({
-  autoCompactWindow: Window,
-  modelSettings: z.record(z.string(), z.looseObject({ autoCompactWindow: Window })).optional(),
-});
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The smallest auto-compact window the hex folder's settings set, for every model or one. A thread's settings override the folder's, so the hub sets its window only when it's the smaller.
-function folderWindow(hexDir: string) {
-  const windows = [".claude/settings.json", ".claude/settings.local.json"].flatMap((file) => {
-    try {
-      const settings = Windows.parse(JSON.parse(readFileSync(join(hexDir, file), "utf-8")));
-
-      return [
-        settings.autoCompactWindow,
-        ...Object.values(settings.modelSettings ?? {}).map((model) => model.autoCompactWindow),
-      ];
-    } catch {
-      return [];
-    }
-  });
-
-  return Math.min(...windows.filter((window) => window !== undefined));
-}
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A hub's sessions show it this in a header, since any local user can reach its port.
@@ -59,8 +29,6 @@ export function sessionFiles({
   port,
   storeDir,
   connect,
-  compactWindow,
-  hexDir,
   generalThread,
   fresh,
 }: {
@@ -71,8 +39,6 @@ export function sessionFiles({
   port: number;
   storeDir: string;
   connect: number;
-  compactWindow: number;
-  hexDir: string;
   generalThread: string | undefined;
   fresh: (thread: string) => boolean;
 }) {
@@ -127,8 +93,6 @@ export function sessionFiles({
     writeFileSync(
       settingsOf(thread),
       JSON.stringify({
-        ...(!fresh(thread) &&
-          compactWindow < folderWindow(hexDir) && { autoCompactWindow: compactWindow }),
         ...launched,
         enabledPlugins: { ...launched?.enabledPlugins, [plugin]: true },
         env: { ...launched?.env, ...env },
