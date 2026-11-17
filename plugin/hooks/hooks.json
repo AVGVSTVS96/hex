@@ -54,7 +54,7 @@
         "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/hands-off" }]
       },
       {
-        "matcher": "mcp__claude_ai_.*",
+        "matcher": "^(Bash|mcp__claude_ai_.*)$",
         "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/send-gate" }]
       },
       {

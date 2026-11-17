@@ -1,12 +1,18 @@
 #!/bin/sh
 input=$(cat)
-gate='^mcp__claude_ai_[^_].*__((send|reply|forward|trash|delete)[a-z_]*|mark_[a-z_]*spam)$'
-printf '%s' "$input" | jq -e --arg gate "$gate" '.tool_name | test($gate)' >/dev/null || exit 0
+sends='def sends:
+  (.name | test("^mcp__claude_ai_[^_].*__((send|reply|forward|trash|delete)[a-z_]*|mark_[a-z_]*spam)$"))
+  or (.name == "Bash" and (.input.command // "" | test(
+    "pigeon\\s+send|himalaya\\b[\\s\\S]*\\b(send|reply|forward)\\b|\\b(sendmail|msmtp)\\b"
+    + "|osascript\\b(?=[\\s\\S]*\\bMessages\\b)[\\s\\S]*\\bsend\\b"
+    + "|https?://[^\\s\"'"'"']*/((messages|mail|drafts)/send|messages/[^/\\s\"'"'"']+/(reply|reply-all|forward)|Messages\\.json)\\b")));'
+
+printf '%s' "$input" | jq -e "$sends"' {name: .tool_name, input: .tool_input} | sends' >/dev/null || exit 0
 
 printf '%s' "$input" | jq -e --arg machines "${HEX_SEND_MACHINES:-}" '
   ($machines | ascii_downcase | [scan("[^\\s,]+")]) as $machines
   | [.tool_input | .to, .cc, .bcc | arrays | .[] | ascii_downcase] as $recipients
-  | (.tool_name | test("__(send|forward)[a-z_]*$"))
+  | (.tool_name | test("^mcp__.*__(send|forward)[a-z_]*$"))
     and ($recipients | length > 0)
     and ($recipients - $machines | length == 0)
 ' >/dev/null 2>&1 && exit 0
@@ -14,18 +20,19 @@ printf '%s' "$input" | jq -e --arg machines "${HEX_SEND_MACHINES:-}" '
 transcript=$(printf '%s' "$input" | jq -r .transcript_path)
 id=$(printf '%s' "$input" | jq -r .tool_use_id)
 
-[ -f "$transcript" ] && jq -se --arg gate "$gate" --arg id "$id" '
+[ -f "$transcript" ] && jq -se --arg id "$id" "$sends"'
   def text: .message.content | if type == "string" then . else map(.text // "") | join("") end;
-  def gated: .message.content | arrays | .[] | select(.type == "tool_use" and .id != $id and (.name | test($gate)));
+  def sent: .message.content | arrays | .[] | select(.type == "tool_use" and .id != $id and sends);
   (map(.origin.kind == "channel") | rindex(true)) as $said
   | $said != null
+    and (.[$said] | text | test("^<channel[^>]* user=\"hex pick\"") | not)
     and (.[$said] | text | sub("^<channel[^>]*>\\s*(<@[!&]?[0-9]+>\\s*)*"; "") | sub("\\s*</channel>\\s*$"; "")
       | test("^(yes|yep|yeah|yup|sure|ok|okay|send it|do it|go ahead)[.!\\s]*$"; "i"))
-    and ([.[$said + 1:][] | gated] | length == 0)
+    and ([.[$said + 1:][] | sent] | length == 0)
 ' "$transcript" >/dev/null && exit 0
 
 jq -n '{hookSpecificOutput: {
   hookEventName: "PreToolUse",
   permissionDecision: "deny",
-  permissionDecisionReason: "Sending, replying, forwarding, trashing, deleting or marking spam through a connector needs my yes. Tell me in chat exactly what this call will do, wait for me to reply yes, then retry it. Each yes covers one call."
+  permissionDecisionReason: "A message to anyone but me, from my accounts or your own inbox, and sending, replying, forwarding, trashing, deleting or marking spam through a connector, needs my yes. A pick hex made itself is not my yes. Tell me in chat exactly what this call will do, wait for me to reply yes, then retry it. Each yes covers one call."
 }}'
