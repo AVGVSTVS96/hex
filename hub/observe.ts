@@ -17,10 +17,10 @@ const MODEL = "sonnet";
 const BYTES = 280;
 const NEWEST_NOTES = 40;
 const MESSAGES_BEFORE_THE_TURN = 10;
-const PROFILE_TRIES = 3;
+const TRIES = 3;
 const SUMMARY_TRIES = 3;
 const CALL_TIMEOUT = 5 * 60_000;
-const LEASE_OUTLASTS_EVERY_TRY = (PROFILE_TRIES + 1) * CALL_TIMEOUT;
+const LEASE_OUTLASTS_EVERY_TRY = (TRIES + 1) * CALL_TIMEOUT;
 const MEMO = join(import.meta.dir, "..", "vendor", "memo");
 
 const NUMBER_AND_DATE_MEMO_ADDS = /^(#\d+ )?\d{4}-\d\d-\d\d /u;
@@ -33,7 +33,7 @@ const logIndented = (entry: string) =>
 
 const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the owner's profile, the newest memories, and the messages of that turn in order, the owner's, others' (jobs, schedules, other sessions) and what hex replied; an owner's message a memory already names is marked so. You keep two things.
 
-Memories: one line each, appended forever. Sessions write none, so every memory comes from you. Write the ones worth keeping: from the owner's messages no memory names yet, what they decided, asked for, corrected, taught, or said about their life, their work or how they want things done; and from the whole turn, anything of lasting effect that happened, like work shipped, a fact found or a plan changed. Most turns need one memory or none; a message that only answers the turn, like "ok" or "go", needs none. Each is at most ${BYTES} bytes (a memory too big for one note becomes two or three, so the owner's words survive), written like the newest memories: the owner's local time, then what happened in plain words. One that rests on the owner's words quotes them in double quotes exactly as the owner wrote them ("…" skips a part) and ends with the message's key in brackets; quote and key only the owner's messages, and name anything else in plain words, without double quotes. When the owner corrects or changes something a memory says, the new line starts with "Correction:". A memory that's already there doesn't need writing again.
+Memories: one line each, appended forever. Sessions write none, so every memory comes from you. Write the ones worth keeping: from the owner's messages no memory names yet, what they decided, asked for, corrected, taught, or said about their life, their work or how they want things done; and from the whole turn, anything of lasting effect that happened, like work shipped, a fact found or a plan changed. Most turns need one memory or none; a message that only answers the turn, like "ok" or "go", needs none. Each is at most ${BYTES} bytes (a memory too big for one note becomes two or three, so the owner's words survive), written like the newest memories: the owner's local time, then what happened in plain words. Sessions read a memory without the message under it, so it names what the message points to and where a thing came from, like the link or post the owner shared and whose it is. One that rests on the owner's words quotes them in double quotes exactly as the owner wrote them ("…" skips a part) and ends with the message's key in brackets; quote and key only the owner's messages, and name anything else in plain words, without double quotes. When the owner corrects or changes something a memory says, the new line starts with "Correction:". A memory that's already there doesn't need writing again.
 
 The profile: a small markdown file every session reads, who the owner is: their life, health, home, people, work, and plans that hold for a while, like a trip. Each fact has one home, and the others are elsewhere: how they want things done is in their AGENTS.md, what they want brought up on its own, and when, in PROACTIVE.md, what they want done and when it's due is in tasks, and what happened, like a project's latest numbers or where a claim stands, is in memories. When a message changes a fact, rewrite its line so only the current truth stays; a line stays until a message says it's no longer true or it has ended, like a trip that's over. Keep it short and never over ${PROFILE} characters; over it, merge and tighten lines, then drop the facts that matter least. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when nothing in it needs to change.
 
@@ -120,25 +120,37 @@ export async function observe(
 
       const ours = new Set(fresh.map((row) => row.key));
 
-      for (let tries = 0; tries < PROFILE_TRIES; tries++) {
+      let notesDone = false;
+
+      for (let tries = 0; tries < TRIES; tries++) {
         const profileBefore = store.profiles.current();
 
         const answer = await ask(
           `<profile>\n${profileBefore || "(none yet)"}\n</profile>\n\n<newest memories>\n${newestNotes(recall("."))}\n</newest memories>\n\n${turn}${wrong}`,
         );
 
+        const notes = notesDone ? [] : answer.notes.map(asMemoTakesIt).filter(Boolean);
+
+        const refused = notes.flatMap((note) => {
+          const why = unkept(note, store);
+
+          return why.length > 0 ? [`${note}\n  ${why.join("\n  ")}`] : [];
+        });
+
+        if (refused.length > 0 && tries < TRIES - 1) {
+          wrong = notesBack(refused);
+          continue;
+        }
+
+        notesDone = true;
         const now = named(fresh);
 
-        for (const note of tries > 0 ? [] : answer.notes.map(asMemoTakesIt).filter(Boolean)) {
-          const keys = keysOf(note);
+        for (const note of notes) {
+          const anotherPassNamed = keysOf(note).some(
+            (key) => !ours.has(key) || now.includes(`[${key}]`),
+          );
 
-          const kept =
-            keys.length > 0
-              ? keys.every((key) => ours.has(key) && !now.includes(`[${key}]`)) &&
-                holds(verdict(note, store))
-              : quotesOf(note).length === 0;
-
-          if (Buffer.byteLength(note) > BYTES || !kept) {
+          if (unkept(note, store).length > 0 || anotherPassNamed) {
             continue;
           }
 
@@ -170,7 +182,7 @@ export async function observe(
 
       if (wanted) {
         logIndented(
-          `hex left the profile as it was after ${PROFILE_TRIES} tries:${reasons ? `\n${reasons}` : " another pass kept rewriting it"}`,
+          `hex left the profile as it was after ${TRIES} tries:${reasons ? `\n${reasons}` : " another pass kept rewriting it"}`,
         );
       }
     }
@@ -228,6 +240,22 @@ function misquoted(profile: string | null, store: Store): string[] {
 
 const retry = (bad: string[], draft: string) =>
   `\n\nYour last profile wasn't kept. It must stay under ${PROFILE} characters, and a line that quotes the owner must name the message it quotes, quoting it as written:\n${bad.join("\n")}\n\nFix that draft rather than starting over:\n<draft>\n${draft.trim()}\n</draft>`;
+
+function unkept(note: string, store: Store): string[] {
+  const bytes = Buffer.byteLength(note);
+
+  return [
+    ...(bytes > BYTES ? [`${bytes} bytes, and memo holds ${BYTES}.`] : []),
+    ...(keysOf(note).length > 0
+      ? problems(verdict(note, store), false)
+      : quotesOf(note).length > 0
+        ? ["It quotes without naming the message it quotes."]
+        : []),
+  ];
+}
+
+const notesBack = (refused: string[]) =>
+  `\n\nYour last answer wasn't kept, since these memories can't be:\n${refused.join("\n")}\n\nAnswer again with each fixed, split in two or tightened where it's long, keeping every name and fact in it.`;
 
 const newestNotes = (recalled: string) =>
   recalled
@@ -340,7 +368,7 @@ export function within(summary: string, bytes: number) {
 async function summarize(prompt: string) {
   const { answer } = await callWithNoTools(
     prompt,
-    'You compress the memories of an AI assistant into one line: a dated record of what happened and what is still open. A rule or caution the owner stated goes in as something they said on its date, like "Oct 3: owner asked for fewer agents", rather than as an instruction, since their standing rules live in their AGENTS.md.',
+    'You compress the memories of an AI assistant into one line: a dated record of what happened and what is still open. Where a thing came from, like the post an idea is from and whose it is, stays named, since most sessions see only this line. A rule or caution the owner stated goes in as something they said on its date, like "Oct 3: owner asked for fewer agents", rather than as an instruction, since their standing rules live in their AGENTS.md.',
     "low",
     SUMMARY,
   );

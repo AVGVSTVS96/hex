@@ -157,6 +157,33 @@ test("a note that misquotes the owner, quotes without naming the message, or doe
   expect(noted()).toHaveLength(2);
 });
 
+test("a note that can't be kept goes back with why, and the answer that fixes it is written once", async () => {
+  const long = `Oct 19: ships "on fridays only" ${"x".repeat(280)} [telegram:-100:50]`;
+  const unquoted = "Oct 19: ships on fridays, from his team's review day [telegram:-100:50]";
+
+  const fixed =
+    'Oct 19: ships "on fridays only", since "my team reviews thursdays" [telegram:-100:50]';
+
+  const answers = [
+    [long, unquoted, "Oct 19: the nightly backup ran"],
+    [fixed, "Oct 19: the nightly backup ran"],
+  ];
+
+  const asked: string[] = [];
+
+  expect(
+    await observe(dir, "s", {
+      ask: answering(asked, () => ({ notes: answers.shift() ?? [], profile: null })),
+      memo,
+    }),
+  ).toEqual([fixed, "Oct 19: the nightly backup ran"]);
+  expect(asked).toHaveLength(2);
+  expect(asked[1]).toContain(`${long}\n  ${Buffer.byteLength(long)} bytes, and memo holds 280.`);
+  expect(asked[1]).toContain(`${unquoted}\n  The note names a message without quoting it.`);
+  expect(asked[1]).not.toContain("the nightly backup ran\n  ");
+  expect(noted()).toEqual([fixed, "Oct 19: the nightly backup ran"]);
+});
+
 test("a pass that fails hands its messages to the next one, and one that died does once its lease runs out", async () => {
   expect(await observe(dir, "s", { ask: limitHit, memo })).toEqual([]);
 
