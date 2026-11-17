@@ -1,8 +1,10 @@
 import { existsSync } from "node:fs";
 
 import * as claude from "./claude.ts";
+import { lost } from "./kept.ts";
 import type { Keep } from "./kept.ts";
 import { present } from "./present.ts";
+import { UnreachedError } from "./store.ts";
 import type { Kept, Store } from "./store.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -46,8 +48,58 @@ const FIELDS = Object.values({
 
 export type Threads = Awaited<ReturnType<typeof openThreads>>;
 
+const FIRST_LOOK_AGAIN = 1000;
+
+const ignore = (): void => undefined;
+const LONGEST_WAIT = 30_000;
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The app's open threads, from hex.db, and the session each is on. The hub starts only once it can read them, so no save closes threads it never loaded, and each change is saved as it's made, one save after another, so an earlier one never lands last.
+// A hub whose store doesn't answer as it starts waits for it, saying so, instead of exiting as a hub that can't start, which bin/hex would take for a bad commit. It looks again once the store's bell rings, as it does when it reconnects, or after a wait. One whose store says another machine holds hex never starts.
+async function openOf(db: Store, app: string) {
+  for (let wait = FIRST_LOOK_AGAIN; ; wait = Math.min(wait * 2, LONGEST_WAIT)) {
+    try {
+      const open = await db.threads.list({ app, open: true });
+
+      if (wait > FIRST_LOOK_AGAIN) {
+        process.stderr.write(`hub: hex's store answers again, so the ${app} hub starts\n`);
+      }
+
+      return open;
+    } catch (error) {
+      if (lost(error)) {
+        return await new Promise<never>(ignore);
+      }
+
+      if (!(error instanceof UnreachedError)) {
+        throw error;
+      }
+
+      if (wait === FIRST_LOOK_AGAIN) {
+        process.stderr.write(
+          `hub: hex's store doesn't answer, so the ${app} hub waits for it to start: ${String(error)}\n`,
+        );
+      }
+
+      await rings(db, wait);
+    }
+  }
+}
+
+function rings(db: Store, wait: number) {
+  return new Promise<void>((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      unwatch();
+      resolve();
+    };
+
+    const timer = setTimeout(done, wait);
+    const unwatch = db.watch(done);
+  });
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The app's open threads, from hex.db, and the session each is on. The hub starts only once it can read them (openOf), so no save closes threads it never loaded, and each change is saved as it's made, one save after another, so an earlier one never lands last.
 export async function openThreads({
   app,
   db,
@@ -62,7 +114,7 @@ export async function openThreads({
   link: ((thread: string) => string | undefined) | undefined;
 }) {
   const saved = new Map<string, Saved>(
-    (await db.threads.list({ app, open: true })).map(
+    (await openOf(db, app)).map(
       ({ app: _app, open: _open, link: _link, thread, model, ...known }) => [
         thread,
         { ...known, ...(present(model) && { model: family(model) }) },

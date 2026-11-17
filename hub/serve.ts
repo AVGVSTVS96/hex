@@ -8,6 +8,7 @@ import { ahead } from "./ahead.ts";
 import { nightly } from "./backup.ts";
 import { besideOf } from "./beside.ts";
 import { clients, engine, free, listen, up } from "./hub.ts";
+import { whenLost } from "./kept.ts";
 import { hexDir, open, syncInBackground } from "./store.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -20,7 +21,11 @@ function tellACallAndDeafen() {
   return [...clients.values()].map(async (client) => await client.deafen?.());
 }
 
-const hangUpSignOffAndExit = (signal: NodeJS.Signals) =>
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A hub hex's store refused for an older tenure lost hex to another machine: it stops as for a stop, and exits with this, for bin/hex to leave it stopped.
+const LOST_HEX = 3;
+
+const hangUpSignOffAndExit = (signal: NodeJS.Signals | "lost") =>
   (stopping ??= Promise.allSettled(signal === "SIGHUP" ? [] : tellACallAndDeafen())
     .then(free)
     .then(() =>
@@ -34,15 +39,28 @@ const hangUpSignOffAndExit = (signal: NodeJS.Signals) =>
     .then(() =>
       Promise.allSettled(
         [...clients.values()].map(async (client) => {
-          await client.hub.synced();
+          try {
+            await client.hub.synced();
+          } catch (error) {
+            process.stderr.write(
+              `hub: exits with what hex's store didn't take: ${String(error)}\n`,
+            );
+          }
         }),
       ),
     )
-    .then(() => process.exit(0)));
+    .then(() => process.exit(signal === "lost" ? LOST_HEX : 0)));
 
 for (const signal of ["SIGHUP", "SIGTERM", "SIGINT"] as const) {
   process.on(signal, () => void hangUpSignOffAndExit(signal));
 }
+
+whenLost((why) => {
+  if (stopping === undefined) {
+    process.stderr.write(`hub: another machine holds hex now (${why}), so this hub stops\n`);
+    void hangUpSignOffAndExit("lost");
+  }
+});
 
 const hex = join(import.meta.dir, "..");
 const channels = join(hex, "channels");

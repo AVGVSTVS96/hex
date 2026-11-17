@@ -2,7 +2,9 @@ import { connect } from "node:net";
 
 import { z } from "zod";
 
-import { open, stateDir } from "./store.ts";
+import type { HubLine } from "./hub.ts";
+import { open, stateDir, UnreachedError } from "./store.ts";
+import type { NewRow } from "./store.ts";
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER, HEX_BESIDE } = process.env;
 const at = new Date().toISOString();
@@ -148,74 +150,97 @@ if (session_id && !recorded) {
   }
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What hex's store didn't answer goes to the hub, which keeps it once the store answers.
+const owed: Extract<HubLine, { type: "owed" }> = { type: "owed", thread: HEX_THREAD ?? session_id };
+
 const typedInTheTerminal =
   busy && prompt !== undefined && !fromChat && !fromAnAgent && !mayRunNoTurn ? prompt : undefined;
 
 if (typedInTheTerminal !== undefined && typedInTheTerminal !== "" && session_id) {
+  const author = given(HEX_OWNER) && !given(HEX_THREAD) ? "prompt" : "owner";
+
+  const row: NewRow = {
+    key: `terminal:${crypto.randomUUID()}`,
+    to: HEX_THREAD ?? session_id,
+    from: "terminal",
+    author,
+    body: typedInTheTerminal,
+    meta: { session: session_id },
+  };
+
   try {
     const store = open(stateDir());
-    const to = HEX_THREAD ?? session_id;
-
-    const author = given(HEX_OWNER) && !given(HEX_THREAD) ? "prompt" : "owner";
 
     const theHubStartedTheSessionWithIt =
       author === "owner" &&
-      (await store.messages.said(to, 20)).some(
-        (row) => row.from === "hub" && row.body.trim() === typedInTheTerminal.trim(),
+      (await store.messages.said(row.to, 20)).some(
+        (said) => said.from === "hub" && said.body.trim() === typedInTheTerminal.trim(),
       );
 
     if (!theHubStartedTheSessionWithIt) {
-      await store.messages.deliver(
-        {
-          key: `terminal:${crypto.randomUUID()}`,
-          to,
-          from: "terminal",
-          author,
-          body: typedInTheTerminal,
-          meta: { session: session_id },
-        },
-        session_id,
-      );
+      await store.messages.deliver(row, session_id);
     }
-  } catch {
-    ignore();
+  } catch (error) {
+    if (error instanceof UnreachedError) {
+      owed.said = [{ row, by: session_id }];
+    }
   }
 }
 
 if (!busy && session_id && answered) {
   try {
     const { ended } = await import("./observe.ts");
-    await ended(stateDir(), session_id, last_assistant_message);
+    const { said, pass } = await ended(stateDir(), session_id, last_assistant_message);
+
+    if (said) {
+      owed.said = [...(owed.said ?? []), said];
+    }
+
+    if (pass) {
+      owed.pass = pass;
+    }
   } catch (error) {
     process.stderr.write(`hex couldn't keep this turn: ${String(error)}\n`);
   }
 }
 
+const lines: HubLine[] = [];
+
+if (owed.said !== undefined || owed.pass !== undefined) {
+  lines.push(owed);
+}
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A session beside the thread isn't the thread's own, so its turns are never the thread's state, whatever its settings say.
-if (given(HEX_HUB) && given(HEX_THREAD) && !given(HEX_BESIDE) && (!busy || !mayRunNoTurn)) {
+if (given(HEX_THREAD) && !given(HEX_BESIDE) && (!busy || !mayRunNoTurn)) {
+  lines.push({
+    type: "state",
+    thread: HEX_THREAD,
+    busy,
+    ...(background && { background }),
+    ...(hook_event_name === "StopFailure" && {
+      failed: true,
+      error: apiError,
+      said: given(last_assistant_message) ? last_assistant_message : error_details,
+    }),
+    ...(leftForTheHubToTake !== undefined && { taken: [leftForTheHubToTake] }),
+    ...(session_id && { session: session_id }),
+  });
+}
+
+if (lines.includes(owed) && !given(HEX_HUB)) {
+  process.stderr.write("hex's store didn't answer, and no hub runs this session to keep it\n");
+}
+
+if (given(HEX_HUB) && lines.length > 0) {
   const socket = connect(HEX_HUB);
 
   socket
     .on("connect", () => {
-      socket.end(
-        `${JSON.stringify({
-          type: "state",
-          thread: HEX_THREAD,
-          busy,
-          ...(background && { background }),
-          ...(hook_event_name === "StopFailure" && {
-            failed: true,
-            error: apiError,
-            said: given(last_assistant_message) ? last_assistant_message : error_details,
-          }),
-          ...(leftForTheHubToTake !== undefined && { taken: [leftForTheHubToTake] }),
-          ...(session_id && { session: session_id }),
-        })}\n`,
-        () => {
-          socket.destroy();
-        },
-      );
+      socket.end(lines.map((line) => `${JSON.stringify(line)}\n`).join(""), () => {
+        socket.destroy();
+      });
     })
     .on("error", ignore);
 }

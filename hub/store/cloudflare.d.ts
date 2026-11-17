@@ -5,6 +5,7 @@ declare module "cloudflare:workers" {
     readonly storage: import("./storage.ts").Storage;
     acceptWebSocket: (socket: WebSocket) => void;
     getWebSockets: () => WebSocket[];
+    setWebSocketAutoResponse: (pair: InstanceType<typeof WebSocketRequestResponsePair>) => void;
   };
 
   export type Id = { toString: () => string };
@@ -22,3 +23,8 @@ declare module "cloudflare:workers" {
 }
 
 declare const WebSocketPair: new () => { 0: WebSocket; 1: WebSocket };
+
+declare const WebSocketRequestResponsePair: new (
+  request: string,
+  response: string,
+) => { readonly request: string; readonly response: string };

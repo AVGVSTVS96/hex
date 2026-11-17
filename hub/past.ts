@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { asked, open } from "./store.ts";
+import { asked, messagesSince, open } from "./store.ts";
 import type { Author, NewRow, Store } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
@@ -32,7 +32,10 @@ export async function importLogs(store: Store, dir: string, zone: string): Promi
 
   const takenCountsBySession = new Map<string, Map<string, number>>();
 
-  const [threads, messages] = await Promise.all([store.threads.list(), store.messages.since()]);
+  const [threads, messages] = await Promise.all([
+    store.threads.list(),
+    Array.fromAsync(messagesSince(store)).then((pages) => pages.flat()),
+  ]);
 
   const threadOfSessionThatTookNothing = new Map(
     threads.flatMap(({ thread, session }) =>

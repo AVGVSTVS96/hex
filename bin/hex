@@ -25,6 +25,15 @@ running() {
   [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null
 }
 
+# store.json names the Durable Object that holds hex's records, when one does. answers prints the version of the store
+# code that the object named on its stdin runs, as the object itself says, and fails when it doesn't answer. The key
+# goes to curl on stdin, out of ps.
+store="$home/state/store.json"
+answers() {
+  jq -r '"url = \"\(.url | rtrimstr("/"))/\(.name)/version\"", "header = \"authorization: Bearer \(.key)\""' |
+    curl -sf -m 10 -K - | jq -er '.version | strings'
+}
+
 # A service manager starts hex with a bare PATH, so hex takes the one the user's own shell builds,
 # rc files included, and sessions and jobs find what a terminal finds. A shell that hangs or fails leaves PATH as it is.
 shell_path() {
@@ -213,17 +222,26 @@ case "${1:-}" in
       # Jobs a move or their machine going down stopped carry on, alongside each start of the hub, so a pass that failed
       # is tried again; one whose unit runs is left alone.
       (. "$hex/bin/settings"; bun "$hex/bin/job" --resume || echo "hex: jobs that were stopped didn't resume; the hub's next start tries again" >&2) &
-      if wait "$hub"; then
-        hub=
+      exited=0
+      wait "$hub" || exited=$?
+      hub=
+      if [ "$exited" = 0 ]; then
         # A restart: go on as the bin/hex on disk now, which an update may have changed.
         sh -n "$hex/bin/hex" && exec "$hex/bin/hex" run
         continue
       fi
-      hub=
+      # The store refused the hub for an older tenure: another machine holds hex, so a hub here would fight it. hex stays
+      # stopped here, with the same code, which hex.service doesn't restart.
+      [ "$exited" != 3 ] || { echo "hex stopped on $(uname -n): another machine holds hex now, so its hub stays stopped here" >&2; rm -f "$pidfile"; exit 3; }
       first=$second second=$third third=$(date +%s)
       if [ -n "$first" ] && [ $((third - first)) -le 60 ]; then
-        # With nothing to go back to, hex stops as failed, for its service manager to see and act on.
-        roll_back || { down "hex can't start on $(uname -n): its hub exited three times within a minute, and there's no earlier hex to go back to. What it printed is in the hub's log (state/hub.log, or the journal of the unit that runs hex)."; rm -f "$pidfile"; exit 1; }
+        # A store that doesn't answer stops a hub whatever its commit, so hex stays on the commit and tries again.
+        if [ -e "$store" ] && ! answers < "$store" >/dev/null; then
+          down "hex on $(uname -n) can't reach its records at $(jq -r .url "$store"): its hub keeps starting again, on the same commit, until they answer."
+        else
+          # With nothing to go back to, hex stops as failed, for its service manager to see and act on.
+          roll_back || { down "hex can't start on $(uname -n): its hub exited three times within a minute, and there's no earlier hex to go back to. What it printed is in the hub's log (state/hub.log, or the journal of the unit that runs hex)."; rm -f "$pidfile"; exit 1; }
+        fi
         first= second= third=
       fi
       sleep 3
@@ -254,14 +272,50 @@ case "${1:-}" in
     ;;
   store)
     if [ "${2:-}" = deploy ]; then
-      # wrangler reads CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, which .env keeps.
+      # Deploys the store of a hex folder (this one, or the one an update checked) with this folder's settings, where
+      # .env keeps CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID for wrangler, and HEX_STORE_KEY.
       . "$hex/bin/settings"
-      exec bunx wrangler@4 deploy --config "$hex/hub/store/wrangler.jsonc"
+      config="$(cd "${3:-$hex}" && pwd)/hub/store/wrangler.jsonc"
+      built=$(mktemp -d)
+      trap 'rm -rf "$built"' EXIT
+      # The version is what the Worker is built from, so a change anywhere in its bundle deploys it, and nothing else does.
+      bunx wrangler@4 deploy --dry-run --outdir "$built" --config "$config" >/dev/null
+      version=$(cat "$built"/*.js "$config" | git hash-object --stdin)
+      if [ -e "$store" ]; then
+        [ "$(answers < "$store" || :)" != "$version" ] || { echo "the store hex points at runs $version already"; exit 0; }
+        key=$(jq -r .key "$store")
+      else
+        key=${HEX_STORE_KEY:-}
+        [ -n "$key" ] || { key=$(head -c 33 /dev/urandom | base64); printf '\nHEX_STORE_KEY=%s\n' "$key" >> "$home/.env"; }
+      fi
+      # The key goes up with the code, as one version, through stdin: never in a shell's history or ps.
+      out=$(printf '{"KEY":"%s"}' "$key" | bunx wrangler@4 deploy --config "$config" --var "VERSION:$version" --secrets-file /dev/stdin 2>&1) || { printf '%s\n' "$out" >&2; exit 1; }
+      url=$(printf '%s\n' "$out" | grep -o 'https://[^ ]*\.workers\.dev' | head -n 1) || :
+      # Proven where hex points, or before a move at the Worker's own address.
+      target() { if [ -e "$store" ]; then cat "$store"; else printf '{"url":"%s","name":"hex","key":"%s"}' "$url" "$key"; fi; }
+      tries=0
+      until [ "$(target | answers || :)" = "$version" ]; do
+        [ $((tries += 1)) -lt 30 ] || {
+          to=$(target | jq -r .url)
+          bunx wrangler@4 rollback --config "$config" -y -m "hex: $to didn't answer as $version" >/dev/null 2>&1 && back="the store before it is back" || back="there was no store before it to put back"
+          echo "the store at ${to:-the Worker's address} didn't answer as $version, the one deployed, within a minute: $back" >&2
+          exit 1
+        }
+        sleep 2
+      done
+      echo "the store at $(target | jq -r .url) answers as $version"
+      exit 0
     fi
     if [ "${2:-}" = move ]; then
       # A hub that writes while its records move would leave rows in a file nothing reads.
       ! running || { echo "hex is running: stop it first, so nothing writes hex.db while its records move" >&2; exit 1; }
-      exec bun "$hex/hub/store/move.ts" "$home/state" "${3:-}"
+      moved=0
+      where=$(elsewhere) || moved=$?
+      [ "$moved" != 2 ] || { echo "hex is moving between machines: move its records once it's done, from where it runs" >&2; exit 1; }
+      [ "$moved" != 0 ] || { echo "hex runs on $where, whose records are the newest: stop it there and move them from there" >&2; exit 1; }
+      # The key `hex store deploy` made is in .env, as HEX_STORE_KEY.
+      . "$hex/bin/settings"
+      exec bun "$hex/hub/store/move.ts" "$home/state" "${3:-}" "${4:-}"
     fi
     exec bun "$hex/hub/cli.ts" "$home/state" "$@"
     ;;

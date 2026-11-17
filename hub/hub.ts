@@ -25,7 +25,8 @@ import { keeping, landed } from "./kept.ts";
 import { STARTUP } from "./loaded.ts";
 import { endpoint } from "./mcp.ts";
 import type { ChannelServer, Line, Permission, ToolArguments } from "./mcp.ts";
-import { queue } from "./observe.ts";
+import { PASS, queue } from "./observe.ts";
+import type { Pass } from "./observe.ts";
 import { ordered } from "./ordered.ts";
 import { sessionPauses } from "./pauses.ts";
 import { fileOnly, held as filesIn, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
@@ -124,6 +125,26 @@ const HubRequestLine = z.discriminatedUnion("type", [
     thread: z.string(),
     to: z.string(),
     where: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("owed"),
+    thread: z.string(),
+    said: z
+      .array(
+        z.object({
+          row: z.object({
+            key: z.string(),
+            to: z.string(),
+            from: z.string(),
+            author: z.custom<Author>(isAuthor),
+            body: z.string(),
+            meta: z.record(z.string(), z.string()).default({}),
+          }),
+          by: z.string(),
+        }),
+      )
+      .optional(),
+    pass: PASS.optional(),
   }),
 ]);
 
@@ -503,6 +524,39 @@ function startupFiles(hex: string | undefined) {
 
 const ignore = (): void => undefined;
 
+type Owing = ReturnType<typeof keeping>;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A turn's memory pass, which the hub owes hex's store when it didn't answer.
+async function queued(owing: Owing, storeDir: string, turn: Pass) {
+  try {
+    await queue(storeDir, turn);
+  } catch (error) {
+    process.stderr.write(`hub: hex couldn't queue a turn for memories: ${String(error)}\n`);
+    owing.owe(`pass:${turn.session}:${turn.by}`, async () => {
+      await queue(storeDir, turn);
+    });
+  }
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What a session's hooks couldn't keep while hex's store didn't answer, which the hub keeps once it does.
+function owedByHooks(
+  owing: Owing,
+  storeDir: string,
+  { said = [], pass: turn }: Extract<HubRequest, { type: "owed" }>,
+) {
+  for (const { row, by } of said) {
+    owing.owe(row.key, (store) => store.messages.deliver(row, by));
+  }
+
+  if (turn) {
+    owing.owe(`pass:${turn.session}:${turn.by}`, async () => {
+      await queue(storeDir, turn);
+    });
+  }
+}
+
 export async function startHub({
   stateDir,
   storeDir = storeOf(stateDir),
@@ -575,7 +629,8 @@ export async function startHub({
   const path = `/${plugin.split("@")[0]}`;
   const app = path.slice(1);
   const db = open(storeDir);
-  const kept = keeping(db, storeDir);
+  const owing = keeping(db, storeDir);
+  const { kept, must } = owing;
   const threads = await openThreads({ app, db, kept, hexDir, link });
   const turns = sessionTurns({ overdue: (thread) => void letHeldGo(thread) });
   const waiting = messagesWaiting({ runs, kept, waits });
@@ -992,7 +1047,8 @@ export async function startHub({
 
     const row: NewRow = { key, to: thread, from: app, author, body: content, meta };
 
-    const adding = kept(
+    const adding = must(
+      key,
       (store) =>
         along ? store.questions.told(app, thread, along, row) : store.messages.deliver(row),
       along ? false : undefined,
@@ -1001,7 +1057,7 @@ export async function startHub({
     return await delivering(thread, async () => {
       const added = await adding;
 
-      if (added === false) {
+      if (added === false || owing.lost()) {
         return false;
       }
 
@@ -1032,10 +1088,8 @@ export async function startHub({
       meta,
     };
 
-    await kept(
-      (store) => store.messages.deliver(row, caller.getStore() ?? threads.current(thread) ?? "hub"),
-      false,
-    );
+    const by = caller.getStore() ?? threads.current(thread) ?? "hub";
+    await must(row.key, (store) => store.messages.deliver(row, by), false);
   }
 
   function pass(thread: string, name: string, message: Message) {
@@ -1157,11 +1211,13 @@ export async function startHub({
   let rang = false;
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Messages kept outside this hub reach its threads as the bell rings, and at its start so do any that no session took before the hub stopped. One look at the store at a time, and one more after it when the bell rang meanwhile, so an older look never lands after a newer one.
+  // Messages kept outside this hub reach its threads as the bell rings, and at its start so do any that no session took before the hub stopped. One look at the store at a time, and one more after it when the bell rang meanwhile, so an older look never lands after a newer one. The bell also rings as a store across the network reconnects, so what the hub owes it goes first.
   function wake() {
     if (closed) {
       return;
     }
+
+    void owing.pay();
 
     if (waking) {
       rang = true;
@@ -1452,7 +1508,9 @@ export async function startHub({
       return;
     }
 
-    await Promise.all(keys.map((key) => kept((store) => store.messages.take(key, session), false)));
+    await Promise.all(
+      keys.map((key) => must(`taken:${key}`, (store) => store.messages.take(key, session), false)),
+    );
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1736,6 +1794,12 @@ export async function startHub({
         return;
       }
 
+      case "owed": {
+        owedByHooks(owing, storeDir, request);
+
+        return;
+      }
+
       case "mirror": {
         const thread = threads.find(request.thread);
 
@@ -1892,7 +1956,7 @@ export async function startHub({
     // Once what this hub and every other in the process wrote can't be lost.
     synced: async () => {
       await landed();
-      await kept((store) => store.synced(), undefined);
+      await owing.synced();
     },
     renew: renewAsked,
     session: threads.current,
@@ -1902,7 +1966,7 @@ export async function startHub({
       const session = threads.current(thread);
 
       if (present(session)) {
-        await queue(storeDir, { session, by: new Date().toISOString(), thread });
+        await queued(owing, storeDir, { session, by: new Date().toISOString(), thread });
       }
     },
     running: sessions.sessionOf,

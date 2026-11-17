@@ -1,15 +1,19 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { DurableObject, Namespace } from "cloudflare:workers";
 
-import { File, open } from "../store.ts";
+import { File, messagesSince, open } from "../store.ts";
 import type { NewRow } from "../store.ts";
+import { until } from "../until.ts";
+import { bring, layout } from "./carry.ts";
+import type { Read } from "./carry.ts";
 import { objectStorage } from "./fake.ts";
 import { appendOnlyMigrations } from "./migrations.ts";
 import { move, MOVED } from "./move.ts";
+import { LostError, remote, UnreachedError } from "./remote.ts";
 import { recordsIn } from "./storage.ts";
 import type { Storage } from "./storage.ts";
 import { client } from "./wire.ts";
@@ -17,7 +21,9 @@ import type { Client } from "./wire.ts";
 
 type State = ConstructorParameters<typeof DurableObject>[0];
 
-type Env = { KEY: string; STORE: Namespace };
+type Env = { KEY?: string; VERSION?: string; STORE: Namespace };
+
+const KEY = "a key long enough that nobody guesses it";
 
 void mock.module("cloudflare:workers", () => ({
   DurableObject: class {
@@ -30,6 +36,10 @@ void mock.module("cloudflare:workers", () => ({
     }
   },
 }));
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The runtime's own pair of a ping and its answer, which the object only hands to its context.
+Object.assign(globalThis, { WebSocketRequestResponsePair: Array });
 
 const { default: worker, Records } = await import("./object.ts");
 
@@ -57,6 +67,16 @@ function startedEmpty(storage: Storage = objectStorage()) {
   storage.sql.exec("insert into _home (one, version) values (1, 0)");
 
   return recordsIn(storage, dir);
+}
+
+async function thrown(pending: Promise<unknown>): Promise<Error | string> {
+  try {
+    await pending;
+  } catch (error) {
+    return error instanceof Error ? error : String(error);
+  }
+
+  return "it didn't throw";
 }
 
 async function failure(pending: Promise<unknown>): Promise<string> {
@@ -148,7 +168,7 @@ test("a read sees the records and changes nothing, even one that writes", () => 
   expect(object.read(sql("drop table messages"))).toEqual([]);
   expect(object.records()?.messages.get(message.key)).toMatchObject({ body: message.body });
   expect(object.lostTo(1)).toBeUndefined();
-  expect(() => object.read(sql("pragma user_version = 0"))).toThrow("not authorized");
+  expect(() => object.read(sql("pragma user_version = 0"))).toThrow("hex sql");
   expect(() => object.read("not json")).toThrow();
   expect(object.call(raw("messages", "take", [message.key, "s-1"]))).toMatchObject({
     reply: { value: true },
@@ -168,36 +188,69 @@ test("a hub on an older tenure than the object has seen lost hex, and nothing it
   expect(object.lostTo(3)).toBe("tenure 3 no longer holds hex: tenure 4 does");
 });
 
+test("an object made before it kept whether a hub had used it learns to, and counts as unused until a call", () => {
+  const storage = objectStorage();
+  storage.sql.exec(
+    "create table _home (one integer primary key check (one = 1), version integer not null, tenure integer not null default 0)",
+  );
+  storage.sql.exec("insert into _home (one, version) values (1, 0)");
+  const object = recordsIn(storage, dir);
+  expect(object.moved("state", "{}")).toEqual({
+    arrived: true,
+    served: false,
+    version: appendOnlyMigrations.length,
+  });
+  object.call(raw("messages", "untaken"));
+  expect(object.moved("state", "{}")).toMatchObject({ served: true });
+  expect(() => object.moved("begin", "{}")).toThrow("has served a hub");
+});
+
 test("a tenure the object has seen holds through its restarts", () => {
   const storage = objectStorage();
   startedEmpty(storage).lostTo(5);
   expect(recordsIn(storage, dir).lostTo(4)).toBe("tenure 4 no longer holds hex: tenure 5 does");
 });
 
-function served(storage = objectStorage()) {
-  const env: Env = {
-    KEY: "the key",
-    STORE: { idFromName: () => ({}), get: () => records },
+type Between = (route: string, answer: () => Promise<Response>) => Promise<Response>;
+
+function served(storage = objectStorage(), env?: Omit<Env, "STORE">, between?: Between) {
+  const objects = new Map<string, InstanceType<typeof Records>>();
+
+  const named: Env = {
+    ...(env ?? { KEY }),
+    STORE: {
+      idFromName: (name) => ({ toString: () => name }),
+      get: (id) => ({
+        fetch: async (request) => {
+          const name = id.toString();
+
+          const records =
+            objects.get(name) ??
+            new Records(
+              {
+                storage: name === "hex" ? storage : objectStorage(),
+                acceptWebSocket: () => {},
+                getWebSockets: () => [],
+                setWebSocketAutoResponse: () => {},
+              },
+              named,
+            );
+
+          objects.set(name, records);
+          const route = new URL(request.url).pathname.split("/").slice(2).join("/");
+          const answer = async () => await records.fetch(request);
+
+          return between === undefined ? await answer() : await between(route, answer);
+        },
+      }),
+    },
   };
 
-  const sockets: WebSocket[] = [];
-
-  const records = new Records(
-    {
-      storage,
-      acceptWebSocket: (socket) => {
-        sockets.push(socket);
-      },
-      getWebSockets: () => sockets,
-    },
-    env,
-  );
-
-  const server = Bun.serve({ port: 0, fetch: (request) => worker.fetch(request, env) });
+  const server = Bun.serve({ port: 0, fetch: (request) => worker.fetch(request, named) });
 
   return {
     storage,
-    url: server.url.href,
+    url: server.url.origin,
     stop: async () => {
       await server.stop(true);
     },
@@ -266,7 +319,7 @@ test("a hex.db moves into an empty object whole, the folder's store is then the 
   const said: string[] = [];
 
   try {
-    await move(dir, object.url, "the key", (line) => {
+    await move(dir, { url: object.url, name: "hex", key: KEY }, (line) => {
       said.push(line);
     });
     expect(said.at(-1)).toContain(`hex.db is kept as ${MOVED}`);
@@ -274,7 +327,8 @@ test("a hex.db moves into an empty object whole, the folder's store is then the 
     expect(existsSync(join(dir, MOVED))).toBe(true);
     expect(JSON.parse(readFileSync(join(dir, "store.json"), "utf-8"))).toEqual({
       url: object.url,
-      key: "the key",
+      name: "hex",
+      key: KEY,
     });
 
     const there = recordsIn(object.storage, dir);
@@ -289,6 +343,7 @@ test("a hex.db moves into an empty object whole, the folder's store is then the 
 
     mkdirSync(join(dir, "back"));
     await store.copy(join(dir, "back", "hex.db"));
+    expect(existsSync(join(dir, "back", "hex.db.part"))).toBe(false);
     const back = new File(join(dir, "back"));
     expect(back.db.query("pragma user_version").get()).toEqual({
       user_version: appendOnlyMigrations.length,
@@ -306,88 +361,141 @@ test("a hex.db moves into an empty object whole, the folder's store is then the 
   }
 });
 
-test("a move refuses a hex.db this hex hasn't migrated, a folder whose records moved already, and an object that has records", async () => {
+test("a move refuses a hex.db this hex hasn't migrated, a folder whose records moved already, an address that isn't https, and an object a hub has used", async () => {
   const object = served();
+  const to = { url: object.url, name: "hex", key: KEY };
 
   try {
     const file = new File(dir);
     file.db.run("pragma user_version = 3");
     file.db.close();
-    expect(await failure(move(dir, object.url, "the key", hear))).toContain(
+    expect(await failure(move(dir, to, hear))).toContain(
       `hex.db is at migration 3 and this hex at ${appendOnlyMigrations.length}`,
     );
     expect(existsSync(join(dir, "store.json"))).toBe(false);
+    expect(
+      await failure(move(dir, { ...to, url: "http://store.example.workers.dev" }, hear)),
+    ).toContain("a store's address is https");
+    expect(await failure(move(dir, { ...to, key: "short" }, hear))).toContain("key");
 
     const other = join(dir, "other");
     filled(other).db.close();
-    await move(other, object.url, "the key", hear);
-    expect(await failure(move(other, object.url, "the key", hear))).toContain(
-      "this folder's records have moved",
-    );
+    await move(other, to, hear);
+    expect(await failure(move(other, to, hear))).toContain("this folder's records have moved");
 
     const third = join(dir, "third");
     filled(third).db.close();
-    expect(await failure(move(third, object.url, "the key", hear))).toContain(
-      "has records already",
-    );
+    await open(other).messages.untaken();
+    expect(await failure(move(third, to, hear))).toContain("has served a hub");
     expect(existsSync(join(third, "hex.db"))).toBe(true);
     expect(existsSync(join(third, "store.json"))).toBe(false);
+    expect(await open(other).messages.get(message.key)).toMatchObject({ body: message.body });
+
+    await move(third, { ...to, name: "restored" }, hear);
+    expect(await open(third).messages.get(message.key)).toMatchObject({ body: message.body });
   } finally {
     await object.stop();
   }
 });
 
-test("a move starts over from what an earlier one left, and only rows that name rows that arrived are taken", () => {
-  const object = recordsIn(objectStorage());
+test("a move whose last reply was lost is finished by running it again, and one that differs starts over, until a hub has used the object", async () => {
+  let losing: "arrived" | "arrived, then state" | "state" | undefined;
 
-  const schema = (...statements: string[]) =>
-    object.moved("schema", JSON.stringify({ statements }));
+  const object = served(objectStorage(), { KEY }, async (route, answer) => {
+    const answered = await answer();
 
-  expect(object.moved("begin", "{}")).toBe(true);
-  schema(
-    "create table parents (id integer primary key)",
-    "create table children (id integer primary key, parent integer not null references parents (id))",
-  );
-  expect(
-    object.moved(
-      "rows",
-      JSON.stringify({ table: "children", columns: ["id", "parent"], rows: [[1, 7]] }),
-    ),
-  ).toBe(1);
-  expect(() => object.moved("arrived", JSON.stringify({ version: 0 }))).toThrow(
-    "1 rows name a row that isn't there",
-  );
-  expect(object.records()).toBeUndefined();
-  expect(object.moved("begin", "{}")).toBe(true);
-  expect(
-    object.read(sql("select name from sqlite_master where substr(name, 1, 1) <> '_'")),
-  ).toEqual([]);
-  expect(() =>
-    object.moved("rows", JSON.stringify({ table: "x; drop", columns: [], rows: [] })),
-  ).toThrow();
-  expect(() => object.moved("elsewhere", "{}")).toThrow("hex's store has no move/elsewhere");
+    const lost =
+      (route === "move/arrived" && losing?.startsWith("arrived") === true) ||
+      (route === "move/state" && losing === "state");
+
+    if (!lost) {
+      return answered;
+    }
+
+    losing = losing === "arrived, then state" ? "state" : undefined;
+
+    return new Response("<html>bad gateway</html>", { status: 502 });
+  });
+
+  const to = { url: object.url, name: "hex", key: KEY };
+
+  try {
+    filled(dir).db.close();
+    losing = "arrived";
+    const said: string[] = [];
+    await move(dir, to, (line) => {
+      said.push(line);
+    });
+    expect(existsSync(join(dir, "store.json"))).toBe(true);
+
+    const again = join(dir, "again");
+    filled(again).db.close();
+    losing = "arrived, then state";
+    expect(await failure(move(again, { ...to, name: "again" }, hear))).toContain("answered 502");
+    expect(existsSync(join(again, "store.json"))).toBe(false);
+    expect(existsSync(join(again, "hex.db"))).toBe(true);
+
+    const finished: string[] = [];
+    await move(again, { ...to, name: "again" }, (line) => {
+      finished.push(line);
+    });
+    expect(finished).toContain(
+      "the object again has every row from a move whose last reply was lost",
+    );
+    expect(finished.some((line) => line.endsWith("rows sent"))).toBe(false);
+    expect(await open(again).messages.get(message.key)).toMatchObject({ body: message.body });
+
+    const changed = join(dir, "changed");
+    filled(changed).db.close();
+    losing = "arrived, then state";
+    expect(await failure(move(changed, { ...to, name: "changed" }, hear))).toContain(
+      "answered 502",
+    );
+    const file = new File(changed);
+    file.messages.deliver({ ...message, key: "telegram:-100:44", body: "one more" });
+    file.db.close();
+    const restarted: string[] = [];
+    await move(changed, { ...to, name: "changed" }, (line) => {
+      restarted.push(line);
+    });
+    expect(restarted.some((line) => line.includes("it starts over"))).toBe(true);
+    expect(await open(changed).messages.get("telegram:-100:44")).toMatchObject({
+      body: "one more",
+    });
+  } finally {
+    await object.stop();
+  }
 });
 
-test("the object answers only its owner's key, and refuses a hub that lost hex before reading what it sent", async () => {
+test("the object answers only its owner's key, never without one, and refuses a hub that lost hex before reading what it sent", async () => {
   const storage = objectStorage();
   startedEmpty(storage);
-  const object = served(storage);
+  const object = served(storage, { KEY, VERSION: "v7" });
 
   const post = (path: string, body: string, headers: Record<string, string> = {}) =>
     fetch(new URL(path, object.url), {
       method: "POST",
-      headers: { authorization: "Bearer the key", ...headers },
+      headers: { authorization: `Bearer ${KEY}`, ...headers },
       body,
     });
 
   try {
-    expect((await post("/call", "{}", { authorization: "Bearer another" })).status).toBe(401);
-    expect(await (await post("/call", raw("messages", "untaken"))).json()).toEqual({
+    expect((await post("/hex/call", "{}", { authorization: "Bearer another" })).status).toBe(401);
+    expect((await post("/hex/call", "{}", { authorization: `Bearer ${KEY}x` })).status).toBe(401);
+    expect((await post("/call", "{}")).status).toBe(404);
+    expect(await (await post("/hex/call", raw("messages", "untaken"))).json()).toEqual({
       value: [],
     });
-    expect((await post("/call", "{}", { "hex-tenure": "2" })).status).toBe(200);
+    expect(
+      await (
+        await fetch(new URL("/hex/version", object.url), {
+          headers: { authorization: `Bearer ${KEY}` },
+        })
+      ).json(),
+    ).toEqual({ version: "v7", migrations: appendOnlyMigrations.length });
+    expect((await post("/hex/call", "{}", { "hex-tenure": "2" })).status).toBe(200);
 
-    const refused = await post("/call", raw("messages", "deliver", [message]), {
+    const refused = await post("/hex/call", raw("messages", "deliver", [message]), {
       "hex-tenure": "1",
     });
 
@@ -399,4 +507,334 @@ test("the object answers only its owner's key, and refuses a hub that lost hex b
   } finally {
     await object.stop();
   }
+
+  for (const env of [{}, { KEY: "too short" }]) {
+    const keyless = served(storage, env);
+
+    try {
+      for (const authorization of ["Bearer undefined", "Bearer too short", "Bearer "]) {
+        const answer = await fetch(new URL("/hex/sql", keyless.url), {
+          method: "POST",
+          headers: { authorization },
+          body: sql("select 1"),
+        });
+
+        expect(answer.status).toBe(503);
+        expect(await answer.text()).toContain("has no key yet");
+      }
+    } finally {
+      await keyless.stop();
+    }
+  }
+});
+
+const quick = { answerWithin: 200, firstRetry: 100, longestRetry: 100, heartbeat: 100 };
+
+function pointedAt(at: string, url: string, name = "hex") {
+  mkdirSync(at, { recursive: true });
+  writeFileSync(join(at, "store.json"), JSON.stringify({ url, name, key: KEY }));
+}
+
+test("a store that can't reach the object fails fast until a probe gets an answer, and synced rejects meanwhile", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage);
+  const object = served(storage);
+  let mode: "answer" | "hang" | "html" = "hang";
+  let reached = 0;
+
+  const front = Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      reached += 1;
+
+      if (mode === "hang") {
+        return await new Promise<Response>(() => {});
+      }
+
+      if (mode === "html") {
+        return new Response("<html>the origin is unreachable</html>", { status: 523 });
+      }
+
+      const { pathname } = new URL(request.url);
+
+      if (pathname.endsWith("/watch")) {
+        return new Response("no sockets here", { status: 404 });
+      }
+
+      return await fetch(new URL(pathname, object.url), {
+        method: request.method,
+        headers: request.headers,
+        body: await request.text(),
+      });
+    },
+  });
+
+  pointedAt(dir, front.url.origin);
+  const store = remote(dir, quick);
+
+  try {
+    if (store === undefined) {
+      throw new Error("no store.json");
+    }
+
+    const started = performance.now();
+    const first = await thrown(store.messages.deliver(message));
+    expect(first).toBeInstanceOf(UnreachedError);
+    expect(performance.now() - started).toBeGreaterThanOrEqual(quick.answerWithin - 20);
+    const sent = reached;
+
+    const quickly = performance.now();
+    const behind = await Promise.allSettled([store.messages.untaken(), store.threads.list()]);
+    expect(
+      behind.map((each) => each.status === "rejected" && each.reason instanceof UnreachedError),
+    ).toEqual([true, true]);
+    expect(performance.now() - quickly).toBeLessThan(50);
+    expect(await thrown(store.synced())).toBeInstanceOf(UnreachedError);
+    expect(await thrown(store.read("select 1 as n"))).toBeInstanceOf(UnreachedError);
+    expect(reached).toBe(sent);
+
+    mode = "html";
+    await until(() => reached > sent);
+    expect(await thrown(store.messages.untaken())).toBeInstanceOf(UnreachedError);
+
+    let rang = 0;
+
+    const stop = store.watch(() => {
+      rang += 1;
+    });
+
+    mode = "answer";
+    await until(() => rang > 0);
+    stop();
+    expect(await store.messages.deliver(message)).toBe(true);
+    await store.synced();
+    expect(await failure(store.messages.deliver({ ...message, key: "42" }))).not.toContain(
+      "UnreachedError",
+    );
+    await store.synced();
+  } finally {
+    await front.stop(true);
+    await object.stop();
+  }
+});
+
+test("a store whose tenure the object refused is lost for good: every call after it and synced say so at once", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage).lostTo(3);
+  const object = served(storage);
+  pointedAt(dir, object.url);
+  process.env.HEX_STORE_TENURE = "2";
+  const store = remote(dir, quick);
+  expect(process.env.HEX_STORE_TENURE).toBeUndefined();
+
+  try {
+    if (store === undefined) {
+      throw new Error("no store.json");
+    }
+
+    const refused = await thrown(store.messages.deliver(message));
+    expect(refused).toBeInstanceOf(LostError);
+    expect(String(refused)).toContain("tenure 2 no longer holds hex: tenure 3 does");
+    expect(await thrown(store.clock.now())).toBeInstanceOf(LostError);
+    expect(await thrown(store.synced())).toBeInstanceOf(LostError);
+    expect(recordsIn(storage, dir).records()?.messages.untaken()).toEqual([]);
+  } finally {
+    await object.stop();
+  }
+});
+
+test("a store.json whose address isn't https, or whose key is short, is refused before anything is sent", () => {
+  const refused = (url: string, key: string) => {
+    writeFileSync(join(dir, "store.json"), JSON.stringify({ url, name: "hex", key }));
+
+    return () => remote(dir);
+  };
+
+  expect(refused("http://store.example.workers.dev", KEY)).toThrow("https");
+  expect(refused("https://store.example.workers.dev", "short")).toThrow("key");
+
+  pointedAt(dir, "http://127.0.0.1:9");
+  expect(remote(dir)).toBeDefined();
+});
+
+test("a watch socket that goes quiet is dropped and opened again, and one that answers its heartbeat is kept", async () => {
+  let opened = 0;
+  let answering = false;
+
+  const server = Bun.serve({
+    port: 0,
+    fetch: (request, at) => (at.upgrade(request) ? undefined : new Response("no", { status: 400 })),
+    websocket: {
+      open: () => {
+        opened += 1;
+      },
+      message: (socket, data) => {
+        if (answering && data === "ping") {
+          socket.send("pong");
+        }
+      },
+    },
+  });
+
+  pointedAt(dir, server.url.origin);
+  const store = remote(dir, quick);
+  let rang = 0;
+
+  try {
+    if (store === undefined) {
+      throw new Error("no store.json");
+    }
+
+    const stop = store.watch(() => {
+      rang += 1;
+    });
+
+    await until(() => opened >= 2 && rang >= 2);
+
+    answering = true;
+    await Bun.sleep(400);
+    const steady = opened;
+    const rings = rang;
+    await Bun.sleep(1000);
+    expect(opened).toBe(steady);
+    expect(rang).toBe(rings);
+    stop();
+  } finally {
+    await server.stop(true);
+  }
+});
+
+test("hex sql can change nothing on either home: one statement, and no pragma that sets anything", async () => {
+  const storage = objectStorage();
+  const object = startedEmpty(storage);
+  const file = new File(join(dir, "file"));
+
+  const refused = [
+    "pragma foreign_keys = off",
+    "pragma foreign_keys(0)",
+    "pragma main.ignore_check_constraints = 1",
+    "pragma journal_mode = delete",
+    "pragma optimize",
+    "select 1; pragma foreign_keys = off",
+    "select 1 as a; select 2 as b",
+    "attach database 'other.db' as other",
+    "vacuum",
+  ];
+
+  for (const text of refused) {
+    expect(() => object.read(sql(text))).toThrow("hex sql");
+  }
+
+  expect(object.read(sql("select ';' as semicolon -- ; pragma foreign_keys = off"))).toEqual([
+    { semicolon: ";" },
+  ]);
+  expect(object.read(sql("pragma table_info('_home')")).length).toBeGreaterThan(0);
+  expect(object.read(sql("pragma foreign_keys"))).toEqual([{ foreign_keys: 1 }]);
+  expect(storage.sql.exec("pragma foreign_keys").toArray()).toEqual([{ foreign_keys: 1 }]);
+
+  for (const text of refused) {
+    expect(await failure(file.store.read(text))).toContain("hex sql");
+  }
+
+  expect(file.db.query("pragma journal_mode").get()).toEqual({ journal_mode: "wal" });
+  expect(await file.store.read("pragma table_info('messages')")).not.toEqual([]);
+});
+
+test("the stand-in refuses what the runtime refuses: more than 100 variables, statements over 100 KB, values over 2.2 MB, and it binds numbers as doubles", () => {
+  const { sql: run } = objectStorage();
+
+  expect(() =>
+    run.exec(
+      `select ${Array.from({ length: 101 }, () => "?").join(", ")}`,
+      ...Array.from({ length: 101 }, () => 1),
+    ),
+  ).toThrow("too many SQL variables");
+  expect(
+    run
+      .exec(
+        `select ${Array.from({ length: 100 }, () => "?").join(", ")} as last`,
+        ...Array.from({ length: 100 }, () => 1),
+      )
+      .toArray(),
+  ).toHaveLength(1);
+  expect(() => run.exec(`select 1 /*${"a".repeat(100_000)}*/`)).toThrow("statement too long");
+  expect(() => run.exec("select length(?) as n", "a".repeat(2_200_001))).toThrow("too big");
+  expect(
+    run.exec("select typeof(?) as number, ?2 as same, typeof(?) as word", 5, 7, true).toArray(),
+  ).toEqual([{ number: "real", same: 7, word: "text" }]);
+  expect(run.exec("select 1 as a; select 2 as b").toArray()).toEqual([{ b: 2 }]);
+  expect(() => run.exec("create table t (a); insert into t values (?)", 1)).toThrow(
+    "only the last statement can have parameters",
+  );
+});
+
+test("a copy reads each table before the tables it references, so rows written while it reads never name a row it missed, and a copy that fails leaves no file", async () => {
+  const storage = objectStorage();
+  const object = startedEmpty(storage);
+  const records = object.records();
+
+  if (records === undefined) {
+    throw new Error("no records");
+  }
+
+  records.messages.deliver(message);
+  const { tables } = await layout(async (text) => await Promise.resolve(object.read(sql(text))));
+  const order = tables.map(({ name }) => name);
+
+  for (const [referencing, referenced] of [
+    ["words", "messages"],
+    ["words", "tasks"],
+    ["task_agents", "tasks"],
+    ["held", "holds"],
+  ] as const) {
+    expect(order.indexOf(referencing)).toBeLessThan(order.indexOf(referenced));
+  }
+
+  let n = 0;
+
+  const writing: Read = async (text) => {
+    const rows = object.read(sql(text));
+
+    if (/^select .* from "\w+" where rowid > 0 /u.test(text)) {
+      n += 1;
+      const key = `telegram:-100:${2000 + n}`;
+      records.messages.deliver({ ...message, key, body: `asked mid-copy ${n}` });
+      records.tasks.create({ title: `task ${n}`, message: key, owner: "-100:7" });
+    }
+
+    return await Promise.resolve(rows);
+  };
+
+  const to = join(dir, "copy.db");
+  await bring(writing, to);
+  const copy = new File(join(dir, "copy-dir"));
+  copy.db.close();
+  const { Database } = await import("bun:sqlite");
+  const db = new Database(to, { readonly: true });
+  expect(db.query("pragma foreign_key_check").all()).toEqual([]);
+  db.close();
+
+  const failing: Read = async (text) => {
+    if (text.includes('from "messages"')) {
+      throw new Error("the line dropped");
+    }
+
+    return await Promise.resolve(object.read(sql(text)));
+  };
+
+  const lost = join(dir, "lost.db");
+  expect(await failure(bring(failing, lost))).toContain("the line dropped");
+  expect(existsSync(lost)).toBe(false);
+  expect(existsSync(`${lost}.part`)).toBe(false);
+});
+
+test("every message is read a page to a reply", async () => {
+  const file = filled(dir);
+  const pages = await Array.fromAsync(messagesSince(file.store));
+  expect(pages.map((page) => page.length)).toEqual([500, 500, 202]);
+  expect(pages.flat()).toEqual(file.messages.since());
+  const later = pages[1]?.[0]?.at ?? "";
+  expect((await Array.fromAsync(messagesSince(file.store, later))).flat()).toEqual(
+    file.messages.since(later),
+  );
 });

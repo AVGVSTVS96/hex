@@ -186,9 +186,15 @@ export class Messages {
     );
   }
 
-  since(after = ""): Row[] {
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Messages after a time, oldest first: at most `most` of them, starting after the message keyed `past`, so whatever reads every message reads them a page at a time.
+  since(after = "", past = "", most = -1): Row[] {
     return MessageRows.parse(
-      this.db.query("select * from messages where at > ? order by at, n").all(after),
+      this.db
+        .query(
+          "select * from messages where at > ?1 and (?2 = '' or (at, n) > (select at, n from messages where key = ?2)) order by at, n limit ?3",
+        )
+        .all(after, past, most),
     );
   }
 

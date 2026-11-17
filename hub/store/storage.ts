@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { onlyReading } from "./db.ts";
 import type { Bound, Core } from "./db.ts";
 import { domains, migrate } from "./domains.ts";
 import type { Domains } from "./domains.ts";
@@ -19,7 +20,10 @@ export type Storage = {
 };
 /* oxlint-enable anti-slop/no-unsafe-dictionary-type -- end of SQLite's rows */
 
-const HomeRow = z.object({ version: z.number(), tenure: z.number() }).optional();
+const HomeRow = z
+  .object({ version: z.number(), tenure: z.number(), served: z.number() })
+  .optional();
+
 const Count = z.object({ n: z.number() });
 const Statements = z.object({ statements: z.array(z.string()) });
 
@@ -41,6 +45,8 @@ class UndoneError extends Error {
 }
 
 type Called = { reply: Reply; wrote: boolean };
+
+type Moved = boolean | number | { arrived: boolean; served: boolean; version: number | null };
 
 const bind = (bound: Bound[]) =>
   bound.map((value) =>
@@ -100,7 +106,7 @@ export function recordsIn(storage: Storage, dir = "") {
   let answer: ReturnType<typeof answering> | undefined;
 
   const run = (text: string, ...bound: unknown[]) => sql.exec(text, ...bound).toArray();
-  const home = () => HomeRow.parse(run("select version, tenure from _home")[0]);
+  const home = () => HomeRow.parse(run("select version, tenure, served from _home")[0]);
   const changes = () => Count.parse(run("select total_changes() as n")[0]).n;
 
   const ready = () => {
@@ -123,16 +129,35 @@ export function recordsIn(storage: Storage, dir = "") {
   };
 
   run(
-    "create table if not exists _home (one integer primary key check (one = 1), version integer not null, tenure integer not null default 0)",
+    "create table if not exists _home (one integer primary key check (one = 1), version integer not null, tenure integer not null default 0, served integer not null default 0)",
   );
+
+  if (run("select 1 from pragma_table_info('_home') where name = 'served'").length === 0) {
+    run("alter table _home add column served integer not null default 0");
+  }
 
   if (home() !== undefined) {
     ready();
   }
 
+  const drop = () => {
+    for (const { type, name } of Leftovers.parse(
+      run(
+        "select type, name from sqlite_master where name not like 'sqlite_%' and substr(name, 1, 1) <> '_' and type in ('table', 'trigger', 'index') and sql is not null order by type = 'table'",
+      ),
+    )) {
+      run(`drop ${type} if exists "${name}"`);
+    }
+
+    run("delete from _home");
+    records = undefined;
+    answer = undefined;
+  };
+
   return {
     core,
     records: () => records,
+    migrations: () => home()?.version ?? null,
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // A hub says which tenure of its lease it runs on. One on an older tenure than the object has seen lost hex to another machine, whether or not it knows yet, so nothing it sends is taken.
@@ -158,6 +183,10 @@ export function recordsIn(storage: Storage, dir = "") {
           reply: { error: "hex's store is empty: hex store move brings a hex.db into it" },
           wrote: false,
         };
+      }
+
+      if (home()?.served === 0) {
+        run("update _home set served = 1");
       }
 
       const answered = answer;
@@ -187,6 +216,7 @@ export function recordsIn(storage: Storage, dir = "") {
     // A query whose every change is undone, so an agent can read the records with SQL and never write them.
     read(body: string): unknown[] {
       const { text, bound } = Query.parse(JSON.parse(body));
+      onlyReading(text);
       let rows: unknown[] = [];
 
       try {
@@ -205,25 +235,32 @@ export function recordsIn(storage: Storage, dir = "") {
     },
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // A hex.db arrives once, into an object that has no records: its tables, then their rows as they are, then its indexes and triggers, so no trigger fires on a row that was already written, and last the migration it had reached. Rows arrive table by table with foreign keys off, and arrived checks them all.
-    moved(step: string, body: string): boolean | number {
-      if (records !== undefined) {
-        throw new Error("hex's store has records already: a hex.db moves only into an empty one");
+    // A hex.db arrives in steps: its tables, then their rows as they are, then its indexes and triggers, so no trigger fires on a row that was already written, and last the migration it had reached. Rows arrive table by table with foreign keys off, and arrived checks them all. Until a hub has made a call, a move can start over (begin), or tell what it left (state), so one whose last reply was lost is finished by comparing again; after that nothing empties the object.
+    moved(step: string, body: string): Moved {
+      const { served = 0, version } = home() ?? {};
+
+      if (step === "state") {
+        return { arrived: records !== undefined, served: served === 1, version: version ?? null };
       }
 
-      run("pragma foreign_keys = off");
+      if (served === 1) {
+        throw new Error(
+          "hex's store has served a hub, so nothing moves into it: move into an object of a new name",
+        );
+      }
 
       if (step === "begin") {
-        for (const { type, name } of Leftovers.parse(
-          run(
-            "select type, name from sqlite_master where name not like 'sqlite_%' and substr(name, 1, 1) <> '_' and type in ('table', 'trigger', 'index') and sql is not null order by type = 'table'",
-          ),
-        )) {
-          run(`drop ${type} if exists "${name}"`);
-        }
+        run("pragma foreign_keys = off");
+        drop();
 
         return true;
       }
+
+      if (records !== undefined) {
+        throw new Error("hex's store has records already: a move starts over from move/begin");
+      }
+
+      run("pragma foreign_keys = off");
 
       if (step === "schema") {
         for (const statement of Statements.parse(JSON.parse(body)).statements) {
@@ -247,7 +284,7 @@ export function recordsIn(storage: Storage, dir = "") {
       }
 
       if (step === "arrived") {
-        const { version } = Arrived.parse(JSON.parse(body));
+        const { version: reached } = Arrived.parse(JSON.parse(body));
         run("pragma foreign_keys = on");
         const broken = run("pragma foreign_key_check");
 
@@ -257,7 +294,7 @@ export function recordsIn(storage: Storage, dir = "") {
           );
         }
 
-        run("insert into _home (one, version) values (1, ?)", version);
+        run("insert into _home (one, version) values (1, ?)", reached);
         ready();
 
         return true;

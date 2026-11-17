@@ -1,0 +1,267 @@
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const HEX = join(import.meta.dir, "../..");
+const BUNX = Bun.which("bunx") ?? "bunx";
+const CURL = Bun.which("curl") ?? "curl";
+const WORKERS_DEV = "https://hex-store.test.workers.dev";
+const KEY = "k".repeat(40);
+
+let root: string;
+let home: string;
+let hex: string;
+let bin: string;
+let store: ReturnType<typeof Bun.serve>;
+let answering: (deployed: string) => string;
+
+function script(path: string, body: string) {
+  writeFileSync(path, `#!/bin/sh\n${body}\n`);
+  chmodSync(path, 0o755);
+}
+
+const read = (path: string) => (existsSync(path) ? readFileSync(path, "utf-8") : "");
+
+const git = (...args: string[]) =>
+  Bun.spawnSync(
+    ["git", "-c", "commit.gpgsign=false", "-c", "user.name=t", "-c", "user.email=t@t", ...args],
+    { cwd: hex },
+  )
+    .stdout.toString()
+    .trim();
+
+function commit(fit: string, readme = "") {
+  writeFileSync(join(hex, "hub/fit.ts"), `export const fit = ${JSON.stringify(fit)};\n`);
+  writeFileSync(join(hex, "README.md"), readme);
+  git("add", "-A");
+  git("commit", "-qm", `${fit} ${readme}`);
+
+  return git("rev-parse", "HEAD");
+}
+
+async function run(...args: string[]) {
+  const env = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([name]) =>
+        !name.startsWith("HEX_") &&
+        !name.startsWith("CLOUDFLARE_") &&
+        name !== "CLAUDE_CODE_SESSION_ID",
+    ),
+  );
+
+  const spawned = Bun.spawn(args, {
+    env: {
+      ...env,
+      PATH: `${bin}:${process.env.PATH}`,
+      XDG_STATE_HOME: join(root, "xdg-state"),
+      XDG_CACHE_HOME: join(root, "cache"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [out, err, code] = await Promise.all([
+    new Response(spawned.stdout).text(),
+    new Response(spawned.stderr).text(),
+    spawned.exited,
+  ]);
+
+  return { out, err, code };
+}
+
+const deploys = () =>
+  read(join(root, "wrangler.log"))
+    .split("\n")
+    .filter((line) => line.startsWith("deploy "));
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), "store-"));
+  home = join(root, "hex");
+  hex = join(home, ".hex");
+  bin = join(root, "stubs");
+  mkdirSync(join(hex, "bin"), { recursive: true });
+  mkdirSync(join(hex, "hub/store"), { recursive: true });
+  mkdirSync(join(home, "state"));
+  mkdirSync(bin);
+
+  for (const path of ["bin/hex", "bin/settings", "bin/update", "hub/store/wrangler.jsonc"]) {
+    cpSync(join(HEX, path), join(hex, path));
+  }
+
+  for (const stub of ["bin/check", "bin/optmem", "bin/migrate", "bin/wake"]) {
+    script(join(hex, stub), "");
+  }
+
+  writeFileSync(join(hex, ".gitignore"), "node_modules/\nworktrees/\n");
+  writeFileSync(join(hex, "package.json"), '{ "name": "hex-under-test", "private": true }\n');
+  writeFileSync(
+    join(hex, "hub/store/object.ts"),
+    `import { DurableObject } from "cloudflare:workers";\nimport { fit } from "../fit.ts";\nexport class Records extends DurableObject {}\nexport default { fetch: () => new Response(fit) };\n`,
+  );
+  writeFileSync(join(home, ".env"), "TELEGRAM_BOT_TOKEN=test\nCLOUDFLARE_API_TOKEN=from-dotenv\n");
+
+  const wranglerThatBuildsForRealAndDeploysToTheStoreBelow = join(bin, "bunx");
+  script(
+    wranglerThatBuildsForRealAndDeploysToTheStoreBelow,
+    `case " $* " in *" --dry-run "*) exec ${BUNX} "$@" ;; esac
+shift
+echo "$*" >> ${root}/wrangler.log
+echo "token $CLOUDFLARE_API_TOKEN" >> ${root}/wrangler.log
+case $1 in
+  deploy)
+    cat > ${root}/secrets
+    cp ${root}/deployed ${root}/before 2>/dev/null || :
+    for arg; do case $arg in VERSION:*) printf %s "\${arg#VERSION:}" > ${root}/deployed ;; esac; done
+    echo "  ${WORKERS_DEV}" ;;
+  rollback) mv ${root}/before ${root}/deployed ;;
+esac`,
+  );
+  const curlThatFindsTheWorkersOwnAddressHere = join(bin, "curl");
+  script(
+    curlThatFindsTheWorkersOwnAddressHere,
+    `sed "s#${WORKERS_DEV}#$(cat ${root}/url)#" | exec ${CURL} "$@"`,
+  );
+  script(join(bin, "sleep"), "");
+
+  answering = (deployed) => deployed;
+  store = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const { pathname } = new URL(request.url);
+
+      const key = existsSync(join(home, "state/store.json"))
+        ? KEY
+        : /^HEX_STORE_KEY=(.*)$/mu.exec(read(join(home, ".env")))?.[1];
+
+      if (request.headers.get("authorization") !== `Bearer ${key}`) {
+        return Response.json({ error: "hex's store takes only its owner's key" }, { status: 401 });
+      }
+
+      if (pathname !== "/hex/version") {
+        return Response.json({ error: `hex's store has no ${pathname}` }, { status: 404 });
+      }
+
+      return Response.json({ version: answering(read(join(root, "deployed"))), migrations: 1 });
+    },
+  });
+  writeFileSync(join(root, "url"), store.url.origin);
+});
+
+afterEach(async () => {
+  await store.stop(true);
+  rmSync(root, { recursive: true, force: true });
+});
+
+function pointed() {
+  writeFileSync(
+    join(home, "state/store.json"),
+    JSON.stringify({ url: store.url.origin, name: "hex", key: KEY }),
+  );
+}
+
+function published() {
+  Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", join(root, "origin.git")]);
+  git("init", "-q", "-b", "main");
+  git("remote", "add", "origin", join(root, "origin.git"));
+}
+
+const push = () => git("push", "-q", "origin", "main");
+
+test("hex store deploy makes the store's key once, keeps it in .env, and sends it only on stdin, with the code, then waits for the Worker to answer as what it deployed", async () => {
+  writeFileSync(join(hex, "hub/fit.ts"), 'export const fit = "one";\n');
+  const first = await run(join(hex, "bin/hex"), "store", "deploy");
+  expect(first.code).toBe(0);
+
+  const [line, ...others] = read(join(home, ".env"))
+    .split("\n")
+    .filter((kept) => kept.startsWith("HEX_STORE_KEY="));
+
+  const key = line?.slice("HEX_STORE_KEY=".length) ?? "";
+
+  expect(others).toEqual([]);
+  expect(key.length).toBeGreaterThanOrEqual(32);
+  expect(JSON.parse(read(join(root, "secrets")))).toEqual({ KEY: key });
+  expect(read(join(root, "wrangler.log"))).not.toContain(key);
+  expect(first.out).toContain(
+    `the store at ${WORKERS_DEV} answers as ${read(join(root, "deployed"))}`,
+  );
+
+  const again = await run(join(hex, "bin/hex"), "store", "deploy");
+  expect(again.code).toBe(0);
+  expect(read(join(home, ".env")).match(/HEX_STORE_KEY=/gu)).toHaveLength(1);
+  expect(JSON.parse(read(join(root, "secrets")))).toEqual({ KEY: key });
+}, 60_000);
+
+test("an update deploys the store the new hex is built with, with the token in the folder's .env, ships once the object hex points at answers as it, and deploys nothing when it already does", async () => {
+  published();
+  const before = commit("one");
+  writeFileSync(join(root, "deployed"), "the store before");
+  pointed();
+  const incoming = commit("two");
+  push();
+  git("reset", "-q", "--hard", before);
+
+  const update = await run(join(hex, "bin/update"), "--now");
+  expect(update.code).toBe(0);
+  expect(git("rev-parse", "HEAD")).toBe(incoming);
+  const version = read(join(root, "deployed"));
+  const [deployed, ...more] = deploys();
+  expect(more).toEqual([]);
+  expect(deployed).toStartWith(`deploy --config ${join(root, "cache")}/hex-check-`);
+  expect(deployed).toEndWith(
+    `/.hex/hub/store/wrangler.jsonc --var VERSION:${version} --secrets-file /dev/stdin`,
+  );
+  expect(read(join(root, "wrangler.log"))).toContain("token from-dotenv");
+  expect(JSON.parse(read(join(root, "secrets")))).toEqual({ KEY });
+
+  const later = commit("two", "words only");
+  push();
+  git("reset", "-q", "--hard", incoming);
+  expect((await run(join(hex, "bin/update"), "--now")).code).toBe(0);
+  expect(git("rev-parse", "HEAD")).toBe(later);
+  expect(deploys()).toHaveLength(1);
+}, 60_000);
+
+test("an update whose deployed store isn't the one hex points at, or doesn't answer as it, puts the store before it back and doesn't ship", async () => {
+  published();
+  const before = commit("one");
+  writeFileSync(join(root, "deployed"), "the store before");
+  pointed();
+  const incoming = commit("two");
+  push();
+  git("reset", "-q", "--hard", before);
+  answering = () => "a store elsewhere";
+
+  const update = await run(join(hex, "bin/update"), "--now");
+  expect(update.code).toBe(1);
+  expect(update.out).toContain(
+    `not updated: the store hex ${incoming.slice(0, 7)} needs didn't deploy`,
+  );
+  expect(update.out).toContain("within a minute: the store before it is back");
+  expect(read(join(root, "wrangler.log"))).toContain("rollback");
+  expect(read(join(root, "deployed"))).toBe("the store before");
+  expect(git("rev-parse", "HEAD")).toBe(before);
+}, 60_000);
+
+test("a move is refused while hex runs on another machine, or is moving there", async () => {
+  const marker = join(root, "xdg-state/hex/elsewhere");
+  mkdirSync(join(root, "xdg-state/hex"), { recursive: true });
+  writeFileSync(marker, "another-machine\n");
+  const away = await run(join(hex, "bin/hex"), "store", "move", store.url.origin, "hex");
+  expect(away.code).toBe(1);
+  expect(away.err).toContain("hex runs on another-machine");
+  writeFileSync(marker, "");
+  const moving = await run(join(hex, "bin/hex"), "store", "move", store.url.origin, "hex");
+  expect(moving.code).toBe(1);
+  expect(moving.err).toContain("hex is moving between machines");
+}, 120_000);

@@ -259,6 +259,57 @@ test("a commit whose hub can't start goes back to the last one General connected
   expect(git("rev-parse", "HEAD")).toBe(good);
 }, 20_000);
 
+test("a hub that keeps exiting while the store holding its records doesn't answer isn't taken for a bad commit: hex stays on it and keeps starting the hub", async () => {
+  const good = commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  writeFileSync(join(home, "state/good"), `${good}\n`);
+
+  const crashing = commit(
+    `import { appendFileSync } from 'fs'\nappendFileSync(process.env.HEX_DIR + '/state/hubs', 'start\\n')\nprocess.exit(1)\n`,
+    "a hub that exits while its store is down",
+  );
+
+  const gone = Bun.serve({ port: 0, fetch: () => new Response() });
+  const url = gone.url.origin;
+  await gone.stop(true);
+
+  writeFileSync(
+    join(home, "state/store.json"),
+    JSON.stringify({ url, name: "hex", key: "k".repeat(40) }),
+  );
+  const running = run();
+  await until(() => hubs().length >= 4);
+  running.kill("SIGTERM");
+  await running.exited;
+  expect(git("rev-parse", "HEAD")).toBe(crashing);
+  expect(existsSync(join(home, "state/bad"))).toBe(false);
+  expect(await new Response(running.stderr).text()).toContain(
+    `can't reach its records at ${url}: its hub keeps starting again, on the same commit`,
+  );
+}, 30_000);
+
+test("a hub that lost hex to another machine stays stopped: hex exits with its code, which hex.service doesn't restart, and isn't taken for a bad commit", async () => {
+  const good = commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  writeFileSync(join(home, "state/good"), `${good}\n`);
+
+  const lost = commit(
+    `import { appendFileSync } from 'fs'\nappendFileSync(process.env.HEX_DIR + '/state/hubs', 'start tenure=' + process.env.HEX_STORE_TENURE + '\\n')\nprocess.exit(3)\n`,
+    "a hub another machine took hex from",
+  );
+
+  const running = run({ HEX_STORE_TENURE: "7" });
+  expect(await running.exited).toBe(3);
+  expect(await new Response(running.stderr).text()).toContain(
+    "another machine holds hex now, so its hub stays stopped here",
+  );
+  expect(hubs()).toEqual(["start tenure=7"]);
+  expect(git("rev-parse", "HEAD")).toBe(lost);
+  expect(existsSync(join(home, "state/bad"))).toBe(false);
+  expect(existsSync(join(home, "state/hub.pid"))).toBe(false);
+  expect(readFileSync(join(BIN, "../systemd/hex.service"), "utf-8")).toMatch(
+    /^RestartPreventExitStatus=3$/mu,
+  );
+});
+
 const curlThatRecordsWhatGeneralIsTold = () => {
   const bin = join(home, "fake-bin");
   mkdirSync(bin);

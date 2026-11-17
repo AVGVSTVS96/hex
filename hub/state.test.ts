@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { z } from "zod";
 
 import { file } from "./store.ts";
+import { until } from "./until.ts";
 
 let dir = "";
 
@@ -22,9 +24,15 @@ const tag = (key: string, body: string) =>
 
 type Input = Record<string, string | boolean>;
 
+const Owed = z.object({
+  type: z.literal("owed"),
+  thread: z.literal("dm"),
+  said: z.array(z.object({ row: z.looseObject({ key: z.string() }), by: z.string() })),
+});
+
 const Blocked = z.object({ decision: z.literal("block"), reason: z.string() });
 
-async function hook(step: "busy" | "idle", input: Input) {
+async function hook(step: "busy" | "idle", input: Input, env: Record<string, string> = {}) {
   const run = Bun.spawn([process.execPath, join(import.meta.dir, "state.ts"), step], {
     stdin: new Blob([JSON.stringify({ session_id: "s", ...input })]),
     stdout: "pipe",
@@ -35,6 +43,7 @@ async function hook(step: "busy" | "idle", input: Input) {
       HEX_CHANNEL: "plugin:telegram@hex",
       HEX_HUB: "",
       MEMORY_DIR: "",
+      ...env,
     },
   });
 
@@ -102,4 +111,54 @@ test("a reaction mid-turn asks for no reply", async () => {
   });
   replied("telegram:dm:3");
   expect(await stop()).toBe("");
+});
+
+test("what a session's hooks can't keep while hex's store is unreachable goes to its hub, which keeps it once the store answers", async () => {
+  writeFileSync(
+    join(dir, "store.json"),
+    JSON.stringify({ url: "http://127.0.0.1:1", name: "gone", key: "k".repeat(32) }),
+  );
+  const lines: string[] = [];
+
+  const hub = createServer((socket) => {
+    let text = "";
+    socket.on("data", (chunk) => {
+      text += String(chunk);
+    });
+    socket.on("end", () => {
+      lines.push(...text.trim().split("\n"));
+    });
+  }).listen(join(dir, "hub.sock"));
+
+  try {
+    const atTheHub = { HEX_HUB: join(dir, "hub.sock") };
+    await hook("busy", { hook_event_name: "UserPromptSubmit", prompt: "typed here" }, atTheHub);
+    await hook("idle", { hook_event_name: "Stop", last_assistant_message: "Done." }, atTheHub);
+    await until(() => lines.length === 4);
+
+    const owed = lines.flatMap((line) => Owed.safeParse(JSON.parse(line)).data?.said ?? []);
+
+    expect(
+      owed.map(({ row: { key, ...row }, by }) => [key.startsWith("terminal:"), row, by]),
+    ).toEqual([
+      [
+        true,
+        { to: "dm", from: "terminal", author: "owner", body: "typed here", meta: { session: "s" } },
+        "s",
+      ],
+      [
+        true,
+        {
+          to: "dm",
+          from: "terminal",
+          author: "hex",
+          body: "Done.",
+          meta: { session: "s", unsent: "true" },
+        },
+        "s",
+      ],
+    ]);
+  } finally {
+    hub.close();
+  }
 });

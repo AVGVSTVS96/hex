@@ -10,7 +10,7 @@ import { history } from "./loaded.ts";
 import { holds, keysOf, problems, verdict } from "./notes.ts";
 import { busy, running, served, serving } from "./running.ts";
 import type { Session } from "./running.ts";
-import { asked, awayFile, open as openStore, sent } from "./store.ts";
+import { asked, awayFile, messagesSince, open as openStore, sent } from "./store.ts";
 import type { Row, Status, Store, Task, Thread } from "./store.ts";
 import { entry, render, waiting } from "./tasks.ts";
 import { zoneOf } from "./zone.ts";
@@ -42,7 +42,7 @@ const USAGE = `usage:
   hex recall <regex, in any case>
   hex sql '<a query, which can change nothing>'
   hex store copy <file>
-  hex store move <the address of the Durable Object that takes hex's records>
+  hex store move <the address of the Worker that takes hex's records> <the name of its object>, with its key in HEX_STORE_KEY
   hex watch`;
 
 const { values: flags, positionals } = parseArgs({
@@ -1042,7 +1042,7 @@ try {
               .flat()
               .toSorted((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
               .slice(last < 0 ? 0 : -last)
-          : await store.messages.since(since);
+          : (await Array.fromAsync(messagesSince(store, since))).flat();
 
       await log(
         rows.filter((row) => row.at > since && (flags.taken !== true || row.taken !== undefined)),

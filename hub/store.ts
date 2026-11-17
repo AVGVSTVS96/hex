@@ -6,14 +6,16 @@ import { Worker } from "node:worker_threads";
 
 import { z } from "zod";
 
+import { onlyReading } from "./store/db.ts";
 import { domains, migrate } from "./store/domains.ts";
 import type { Domains } from "./store/domains.ts";
+import type { Row } from "./store/messages.ts";
 import { remote } from "./store/remote.ts";
 import type { Home } from "./store/remote.ts";
 import { answering, client } from "./store/wire.ts";
 import type { Client } from "./store/wire.ts";
 
-export { awayFile } from "./store/remote.ts";
+export { awayFile, LostError, UnreachedError } from "./store/remote.ts";
 
 export type { MessageId } from "./store/db.ts";
 
@@ -145,7 +147,7 @@ export class File {
         reader.run("pragma query_only = on");
 
         try {
-          return reader.query(text).all(...bound);
+          return reader.query(onlyReading(text)).all(...bound);
         } finally {
           reader.close();
         }
@@ -322,6 +324,28 @@ export class File {
 
   private changes() {
     return ChangesRow.parse(this.db.query("select total_changes() as n").get()).n;
+  }
+}
+
+const MESSAGES_AT_ONCE = 500;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Every message after a time, oldest first, a page to a reply, since a home across the network can't answer with the whole log at once.
+export async function* messagesSince(store: Store, after = ""): AsyncGenerator<Row[]> {
+  for (let past = ""; ;) {
+    const page = await store.messages.since(after, past, MESSAGES_AT_ONCE);
+
+    if (page.length > 0) {
+      yield page;
+    }
+
+    const last = page.at(-1);
+
+    if (last === undefined || page.length < MESSAGES_AT_ONCE) {
+      return;
+    }
+
+    past = last.key;
   }
 }
 

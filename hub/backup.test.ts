@@ -152,7 +152,40 @@ test("the hub backs up the last night it missed at its start, and a failed one t
   const day = failed.key.slice("backup:failed@".length);
   expect(failed).toMatchObject({
     to: "beside:general",
-    body: `[backup] hex couldn't back up state/hex.db for ${day}: cloud didn't take it: no such sprite. The next try is at 3:00.`,
+    body: `[backup] hex couldn't back up its records for ${day}: cloud didn't take it: no such sprite. The next try is at 3:00.`,
   });
   expect(readdirSync(join(dir, "backups"))).toEqual([`hex-${day}.db`]);
+});
+
+test("a store that can't be reached leaves no backup file, and its failure goes to the hub's log when the store can't take it either", async () => {
+  const away = join(dir, "away");
+  mkdirSync(away);
+  writeFileSync(
+    join(away, "store.json"),
+    JSON.stringify({
+      url: "http://127.0.0.1:9",
+      name: "hex",
+      key: "a key long enough that nobody guesses it",
+    }),
+  );
+  expect(await failure(backup(away, "2026-10-19"))).toContain("didn't answer");
+  expect(readdirSync(join(away, "backups"))).toEqual([]);
+
+  const logged: string[] = [];
+  const write = process.stderr.write.bind(process.stderr);
+  process.stderr.write = (line: string | Uint8Array) => {
+    logged.push(String(line));
+
+    return true;
+  };
+
+  try {
+    const stop = nightly(away, dir, "general");
+    await until(() => logged.find((line) => line.includes("Telling the main thread failed too")));
+    stop();
+  } finally {
+    process.stderr.write = write;
+  }
+
+  expect(readdirSync(join(away, "backups"))).toEqual([]);
 });
