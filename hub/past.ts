@@ -64,24 +64,25 @@ export async function importLogs(store: Store, dir: string, zone: string): Promi
   }
 
   const turnsRepeatedByResumedOrForkedSessions = new Set<string>();
-  let added = 0;
 
-  for (const file of files) {
+  const rows = files.flatMap((file) => {
     try {
-      added += await take(file);
+      return take(file);
     } catch (error) {
       process.stderr.write(`hex couldn't read ${file} into hex.db: ${String(error)}\n`);
+
+      return [];
     }
-  }
+  });
 
-  return added;
+  return (await store.messages.past(rows)).length;
 
-  async function take(file: string): Promise<number> {
+  function take(file: string): [NewRow, string, string][] {
     const log = readFileSync(file, "utf-8");
     const session = /^# (\d{4}-\d{2}-\d{2}) · session (\S+)/u.exec(log);
 
     if (!session) {
-      return 0;
+      return [];
     }
 
     const [, day = "", id = ""] = session;
@@ -94,7 +95,7 @@ export async function importLogs(store: Store, dir: string, zone: string): Promi
 
     const heads = [...log.matchAll(HEAD)];
     const isAppSession = heads.some((head) => head[2] !== "terminal");
-    const rows: [NewRow, string][] = [];
+    const turns: [NewRow, string, string][] = [];
     let previousAt = "";
     let today = Temporal.PlainDate.from(day);
     let clock = "";
@@ -158,7 +159,7 @@ export async function importLogs(store: Store, dir: string, zone: string): Promi
       }
 
       previousAt = nextAfter(previousAt, minuteAt);
-      rows.push([
+      turns.push([
         {
           key: `${via}:past:${id}:${i}`,
           to,
@@ -168,10 +169,11 @@ export async function importLogs(store: Store, dir: string, zone: string): Promi
           meta: { log: file.slice(dir.length + 1), ...(author === "prompt" && { user: who }) },
         },
         previousAt,
+        id,
       ]);
     });
 
-    return (await store.messages.past(rows, id)).length;
+    return turns;
   }
 }
 

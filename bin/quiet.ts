@@ -54,7 +54,7 @@ async function midTurn() {
     .join(", ");
 }
 
-await new Promise<void>((resolve) => {
+await new Promise<void>((resolve, reject) => {
   let told = "";
   let timer: Timer | undefined;
   let queue = Promise.resolve();
@@ -71,7 +71,7 @@ await new Promise<void>((resolve) => {
     if (now === "") {
       timer ??= setTimeout(() => {
         timer = undefined;
-        queue = queue.then(settled);
+        queue = queue.then(settled).catch(reject);
       }, settle);
     } else {
       clearTimeout(timer);
@@ -88,7 +88,7 @@ await new Promise<void>((resolve) => {
   };
 
   const look = () => {
-    queue = queue.then(check);
+    queue = queue.then(check).catch(reject);
   };
 
   watch(sessions, look);

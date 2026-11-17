@@ -923,6 +923,41 @@ test("a deleted message is reported with its text when known, but the bot's own 
   expect(inbounds(received).some((line) => line.meta.message_id === mine.id)).toBe(false);
 });
 
+test("a deleted message is told in the order Discord sent it, even while the thread's status post is still being pinned", async () => {
+  const sends = here.send;
+  const { promise: pinned, resolve: pin } = Promise.withResolvers<undefined>();
+
+  here.send = async (input) =>
+    Object.assign(await sends(input), {
+      pin: async () => {
+        await pinned;
+      },
+    });
+
+  const posting = call("pin", { note: "Pinning" });
+  await until(() => done.some((step) => step.in === here.id && step.send?.content === "Pinning"));
+  here.send = sends;
+
+  const gone = say(here, 35, "never mind");
+  const after = { ...say(here, 36, "after the delete"), ...live(here) };
+  emit("messageDelete", gone);
+  emit("messageCreate", after);
+  await arrived(after.id);
+
+  const told = () => inbounds(received).findIndex((line) => line.meta.message_id === gone.id);
+
+  expect(await Promise.race([until(() => told() >= 0), Bun.sleep(1000).then(() => -1)])).not.toBe(
+    -1,
+  );
+  expect(told()).toBeLessThan(
+    inbounds(received).findIndex((line) => line.meta.message_id === after.id),
+  );
+
+  pin(undefined);
+  await posting;
+  await call("pin", { unpin: true });
+});
+
 test("reply buttons go on the last chunk, and a tap locks them on the choice and comes back as its label", async () => {
   const sent = await call("reply", { text: "merge it?", buttons: ["Yes", "No"], silent: true });
   const posted = lastPosted(here);
@@ -1267,6 +1302,40 @@ test("a vote on the bot's poll reaches its thread as the answer, a retracted vot
   expect(
     inbounds(received).some((line) => line.meta.poll === "Dinner?" || line.meta.vote === "Tacos"),
   ).toBe(false);
+});
+
+test("a vote taken back in the same tick it was cast leaves the poll's question unanswered, and taking back another option leaves its answer", async () => {
+  const answers = new Collection([
+    [1, { text: "Tacos" }],
+    [2, { text: "Ramen" }],
+  ]);
+
+  const dinner = say(here, 37, "", {
+    author: bot,
+    poll: { question: { text: "Dinner?" }, answers },
+  });
+
+  await open(state).questions.ask({
+    app: "discord",
+    thread: here.id,
+    message: dinner.id,
+    text: "Dinner?",
+    options: ["Tacos", "Ramen"],
+    poll: dinner.id,
+  });
+
+  const votes = () => inbounds(received).filter((line) => line.meta.poll_message_id === dinner.id);
+
+  emit("messagePollVoteAdd", { id: 1, poll: { message: dinner } }, OWNER);
+  emit("messagePollVoteRemove", { id: 1, poll: { message: dinner } }, OWNER);
+  await until(() => votes().length === 2);
+  expect((await question(dinner.id))?.answer).toBeUndefined();
+
+  emit("messagePollVoteAdd", { id: 1, poll: { message: dinner } }, OWNER);
+  await until(() => votes().length === 3);
+  emit("messagePollVoteRemove", { id: 2, poll: { message: dinner } }, OWNER);
+  await until(() => votes().length === 4);
+  expect((await question(dinner.id))?.answer).toMatchObject({ label: "Tacos" });
 });
 
 test("a DM is its own session named DM, a message reaches it while it works, and replies go back to the DM", async () => {

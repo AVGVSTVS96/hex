@@ -17,6 +17,9 @@ import { z } from "zod";
 
 import { file, File, open } from "./store.ts";
 import type { NewRow } from "./store.ts";
+import { objectStorage } from "./store/fake.ts";
+import { recordsIn } from "./store/storage.ts";
+import { client } from "./store/wire.ts";
 import { until } from "./until.ts";
 
 let dir: string;
@@ -106,6 +109,47 @@ test("the store a caller holds answers each call as its file does, one that retu
   expect(await failure(store.messages.deliver({ ...message, key: "42" }))).toContain("Error");
   await store.threads.keep("telegram", { "-100:7": { name: "General" } });
   expect(file(dir).threads.list()).toMatchObject([{ thread: "-100:7", name: "General" }]);
+});
+
+test("hex sql prints what a query reads, and hex store copy writes the records to a file a hex runs on", async () => {
+  file(dir).messages.deliver(message);
+
+  const hex = async (...args: string[]) => {
+    const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir, ...args], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    return {
+      code: await cli.exited,
+      out: await new Response(cli.stdout).text(),
+      err: await new Response(cli.stderr).text(),
+    };
+  };
+
+  expect(await hex("sql", "select key from messages")).toEqual({
+    code: 0,
+    out: `{"key":"${message.key}"}\n`,
+    err: "",
+  });
+  mkdirSync(join(dir, "copy"));
+  expect(await hex("store", "copy", join(dir, "copy", "hex.db"))).toMatchObject({ code: 0 });
+  expect(new File(join(dir, "copy")).messages.get(message.key)).toMatchObject(message);
+});
+
+test("thread names and ids reach every caller as lookups a name like toString finds nothing in, from a file or an object", async () => {
+  const storage = objectStorage();
+  recordsIn(storage);
+  storage.sql.exec("insert into _home (one, version) values (1, 0)");
+  const object = recordsIn(storage, dir);
+  const inObject = client((call) => Promise.resolve(JSON.stringify(object.call(call).reply)));
+
+  for (const store of [open(dir), inObject]) {
+    await store.threads.keep("telegram", { "-100:7": { name: "General" } });
+    const [names, ids] = await Promise.all([store.threads.names(), store.threads.ids()]);
+    expect([names["-100:7"], ids["-100:7"]]).toEqual(["General", "telegram:-100:7"]);
+    expect(["toString" in names, "constructor" in ids]).toEqual([false, false]);
+  }
 });
 
 test("a read of the file can change nothing, and a copy is a file a hex runs on", async () => {

@@ -2146,10 +2146,8 @@ async function carry(from: Hub, thread: string, to: string, name: string, where?
 
   const cwd = from.cwd(thread);
 
-  const [{ thread: dest, link }, chat] = await Promise.all([
-    target.place(name, where, undefined, cwd),
-    from.history(thread),
-  ]);
+  const { thread: dest, link } = await target.place(name, where, undefined, cwd);
+  const chat = await from.history(thread);
 
   const filled = (async () => {
     try {

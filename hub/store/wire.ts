@@ -12,9 +12,11 @@ const CallJson = z.object({
   absent: z.array(z.number()).optional(),
 });
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// JSON gives every object a prototype, so a lookup table a method made without one, like threads.names(), says so, or a key like toString would find Object's method.
 const ReplyJson = z.union([
   z.object({ error: z.string() }),
-  z.object({ value: z.unknown().optional() }),
+  z.object({ value: z.unknown().optional(), prototype: z.null().optional() }),
 ]);
 
 export type Reply = z.infer<typeof ReplyJson>;
@@ -60,7 +62,11 @@ export function answering(domains: Domains): (call: string) => Reply {
         return { error: `the store has no ${domain}.${method}` };
       }
 
-      return { value: answer(...args.map((arg, at) => (absent.includes(at) ? undefined : arg))) };
+      const value = answer(...args.map((arg, at) => (absent.includes(at) ? undefined : arg)));
+
+      return value !== null && value !== undefined && Object.getPrototypeOf(value) === null
+        ? { value, prototype: null }
+        : { value };
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error) };
     }
@@ -73,6 +79,10 @@ export function decode(text: string): unknown {
 
   if ("error" in reply) {
     throw new Error(reply.error);
+  }
+
+  if (reply.prototype === null) {
+    Object.setPrototypeOf(reply.value, null);
   }
 
   return reply.value;

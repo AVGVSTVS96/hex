@@ -388,11 +388,14 @@ export class Board extends Changes {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   /* A session whose process died (killed, crashed) leaves its record behind, so no file change
      says it's gone. */
-  refresh() {
+  async refresh() {
     clearTimeout(this.pending);
     this.stale = { threads: true, sessions: true };
+    const failed = await this.build();
 
-    return this.build();
+    if (failed !== undefined) {
+      throw failed;
+    }
   }
 
   strays(): Session[] {

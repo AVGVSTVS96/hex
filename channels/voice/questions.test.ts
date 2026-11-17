@@ -254,7 +254,7 @@ function chatKey(n: number, id?: number) {
 
 async function said(rows: Said[]) {
   await open(state).messages.past(
-    rows.map(([time, body, fields = {}], n): [NewRow, string] => [
+    rows.map(([time, body, fields = {}], n): [NewRow, string, string] => [
       {
         key: chatKey(n, fields.id),
         to: fields.to ?? DESK,
@@ -264,8 +264,8 @@ async function said(rows: Said[]) {
         ...(fields.meta && { meta: fields.meta }),
       },
       `2026-10-13T${time}.000Z`,
+      "session",
     ]),
-    "session",
   );
 }
 
