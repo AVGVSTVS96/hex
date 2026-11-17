@@ -262,10 +262,9 @@ inEachHome(
     const kept = store.messages.mark("-100:7");
     expect(kept).not.toBe(taken);
     expect(
-      store.messages.past(
-        [[{ ...message, key: "telegram:-100:46" }, "2020-01-01T00:00:00.000Z"]],
-        "session-a",
-      ),
+      store.messages.past([
+        [{ ...message, key: "telegram:-100:46" }, "2020-01-01T00:00:00.000Z", "session-a"],
+      ]),
     ).toEqual(["telegram:-100:46"]);
     expect(store.messages.mark("-100:7")).not.toBe(kept);
   },

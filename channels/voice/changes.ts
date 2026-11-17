@@ -36,9 +36,12 @@ export class Changes {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Runs one read at a time, so an older read never lands over a newer one: a call while one runs asks for one more after it, and resolves when that one ends. A read that fails is logged, so a listener that only starts it can't leave a rejection behind.
-export function oneAtATime(what: string, read: () => Promise<void>): () => Promise<void> {
-  let running: Promise<void> | undefined;
+// Runs one read at a time, so an older read never lands over a newer one: a call while one runs asks for one more after it, and resolves when that one ends. A read that fails is logged and resolves to its error, so a listener that only starts it can't leave a rejection behind, and a caller that answers from what it read can tell.
+export function oneAtATime(
+  what: string,
+  read: () => Promise<void>,
+): () => Promise<Error | undefined> {
+  let running: Promise<Error | undefined> | undefined;
   let again = false;
 
   return () => {
@@ -49,17 +52,23 @@ export function oneAtATime(what: string, read: () => Promise<void>): () => Promi
     }
 
     running = (async () => {
+      let failed: Error | undefined;
+
       do {
         again = false;
+        failed = undefined;
 
         try {
           await read();
         } catch (error) {
-          process.stderr.write(`voice: couldn't read ${what}: ${String(error)}\n`);
+          failed = error instanceof Error ? error : new Error(String(error));
+          process.stderr.write(`voice: couldn't read ${what}: ${failed.message}\n`);
         }
       } while (again);
 
       running = undefined;
+
+      return failed;
     })();
 
     return running;

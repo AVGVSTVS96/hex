@@ -107,13 +107,13 @@ export class Messages {
     );
   }
 
-  past(rows: [NewRow, string][], by: string): string[] {
+  past(rows: [row: NewRow, at: string, by: string][]): string[] {
     return this.write(() => {
       const at = this.db.query(
         "update messages set at = ?2, taken_at = ?2, observed_at = ?2 where key = ?1",
       );
 
-      return rows.flatMap(([row, when]) => {
+      return rows.flatMap(([row, when, by]) => {
         if (!this.deliver(row, by)) {
           return [];
         }

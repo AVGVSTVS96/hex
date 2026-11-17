@@ -105,6 +105,8 @@ const wordsBeforeFlags = new Map([
   ["recall", 1],
   ["log", 1],
   ["thread", 1],
+  ["sql", 1],
+  ["store", 2],
 ]);
 
 const takes =

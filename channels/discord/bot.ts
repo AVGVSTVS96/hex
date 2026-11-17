@@ -1500,7 +1500,7 @@ async function serve(token: string) {
       if (await gone(thread)) {
         const name = hub.name(thread) ?? thread;
         void hub.retire(thread);
-        await ledger.forget(thread);
+        ledger.forget(thread).catch(failed(`couldn't forget ${thread}'s questions and pin`));
 
         return `forgot "${name}": its Discord thread no longer exists`;
       }
@@ -1744,19 +1744,21 @@ async function serve(token: string) {
       return;
     }
 
-    await ledger.deleted(ch.id, msg.id);
-    await hub.deliver(ch.id, nameOf(ch), {
-      author: "other",
-      content: "(deleted a message)",
-      meta: {
-        user: "discord",
-        chat_id: ch.id,
-        message_id: msg.id,
-        ts: new Date().toISOString(),
-        deleted: "true",
-        ...(filled(msg.content) && { deleted_text: msg.content }),
-      },
-    });
+    await Promise.all([
+      ledger.deleted(ch.id, msg.id),
+      hub.deliver(ch.id, nameOf(ch), {
+        author: "other",
+        content: "(deleted a message)",
+        meta: {
+          user: "discord",
+          chat_id: ch.id,
+          message_id: msg.id,
+          ts: new Date().toISOString(),
+          deleted: "true",
+          ...(filled(msg.content) && { deleted_text: msg.content }),
+        },
+      }),
+    ]);
   }
 
   async function handleVote(
@@ -1784,7 +1786,6 @@ async function serve(token: string) {
 
     const vote = msg.poll.answers.get(answer.id)?.text ?? "";
     const who = await client.users.fetch(userId);
-    const question = await questionAt(ch.id, msg.id);
 
     await hub.deliver(
       ch.id,
@@ -1803,14 +1804,12 @@ async function serve(token: string) {
           poll: msg.poll.question.text ?? "",
         },
       },
-      removed
-        ? question?.answer?.label === vote
-          ? { reopened: { message: msg.id }, always: true }
-          : undefined
-        : question && {
-            answered: { message: msg.id, label: vote, via: "discord", again: true },
-            always: true,
-          },
+      {
+        ...(removed
+          ? { reopened: { message: msg.id, label: vote } }
+          : { answered: { message: msg.id, label: vote, via: "discord", again: true } }),
+        always: true,
+      },
     );
   }
 

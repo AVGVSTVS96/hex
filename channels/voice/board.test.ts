@@ -973,6 +973,20 @@ test("a session whose process died, leaving its record behind, is gone once the 
   rmSync(join(claude, "sessions", "57575757.json"));
 });
 
+test("a refresh that can't read hex's records fails, rather than answering from the board as it last read it", async () => {
+  const db = new Database(join(state, "hex.db"));
+  db.run("alter table task_agents rename to task_agents_away");
+
+  try {
+    expect(await board.refresh().then(() => "answered", String)).toContain("task_agents");
+  } finally {
+    db.run("alter table task_agents_away rename to task_agents");
+    db.close();
+  }
+
+  await board.refresh();
+});
+
 test("a session whose process runs under a thread's session is one of its agents, and neither hex's own check there nor a session T3 Code runs there is", async () => {
   const env = { ...process.env, HEX_CHANNEL: "", HEX_THREAD: "", HEX_OWNER: "" };
 
