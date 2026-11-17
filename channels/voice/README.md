@@ -135,8 +135,8 @@ handoff ──► hub told to stop (TERM) ──────────► engi
                       "I can't look that up or do it right now: <why> Nothing was checked or done."
 ```
 
-- With no handoff waiting it goes as an instruction instead, and once the hub is stopping every
-  handoff after it gets the same answer at once.
+- A stop with no handoff waiting goes as an instruction instead, and every handoff after it gets
+  the same answer at once. A turn that fails once its answer went out says nothing to the caller.
 - A call's session gives up on a failing API request after 3 retries (`CLAUDE_CODE_MAX_RETRIES`,
   set in `bin/session`) where Claude Code's own 10 take minutes, so the caller hears it in seconds.
   The hub still carries the turn on once turns go through again.

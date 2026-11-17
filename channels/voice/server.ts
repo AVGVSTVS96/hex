@@ -569,26 +569,28 @@ async function tell(
   return held;
 }
 
-/* OpenAI's delegation has no failed state and no timeout, so a handoff hex can't answer gets that as its result, as their guide has a failed task reported (https://developers.openai.com/api/docs/guides/live-delegation#keep-updates-accurate-and-useful): otherwise the voice keeps saying it's checking. With no handoff waiting it's a disclosure, which goes as an instruction. */
+/* OpenAI's delegation has no failed state and no timeout, so a handoff hex can't answer gets that as its result, as their guide has a failed task reported (https://developers.openai.com/api/docs/guides/live-delegation#keep-updates-accurate-and-useful): otherwise the voice keeps saying it's checking. A turn that fails once its answer went out left nothing unanswered, so the caller hears nothing of it; a stop with no handoff waiting is a disclosure, which goes as an instruction. */
 export function cantAnswer(why: string) {
   const call = live;
+  const handoff = call?.awaited;
 
-  if (!call) {
+  if (!call || !filled(handoff)) {
     return;
   }
 
-  const handoff = call.awaited;
   delete call.awaited;
   remember(call, "warned", `hex couldn't answer: ${why}`);
-  void (
-    filled(handoff)
-      ? send(call, "session.commentary.append", noAnswer(why), handoff)
-      : send(call, "session.instructions.append", unreachable(why))
-  ).catch(fineIfUnconfirmed);
+  void send(call, "session.commentary.append", noAnswer(why), handoff).catch(fineIfUnconfirmed);
 }
 
 export function stopsHere() {
   hexIsStopping = true;
+
+  if (live && !filled(live.awaited)) {
+    remember(live, "warned", STOPPING);
+    void send(live, "session.instructions.append", unreachable(STOPPING)).catch(fineIfUnconfirmed);
+  }
+
   cantAnswer(STOPPING);
 }
 

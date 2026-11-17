@@ -1367,6 +1367,22 @@ test("a handoff hex can't answer gets that as its result, so the caller hears wh
   );
 });
 
+test("a turn that fails once its answer went out says nothing to the caller", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.confirmAnswers();
+  engine.send({
+    type: "session.delegation.created",
+    delegation: { id: "d1", target: "client" },
+    offset_ms: 1500,
+  });
+  await until(() => engine.told.some((line) => line.meta?.delegation_id === "d1"));
+  await engine.tool("say", { delegation_id: "d1", text: "It passed." });
+  await engine.tool("hex cannot answer", { why: "its request to Claude failed (API Error: 503)." });
+  expect(engine.spoken.map((each) => each.content)).toEqual(["It passed."]);
+  expect(engine.instructed).toEqual([]);
+});
+
 test("hex stopping on the machine reaches the caller at once, and so does every handoff after it", async () => {
   await using engine = await appCall();
   await started(engine);
