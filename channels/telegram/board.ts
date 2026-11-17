@@ -55,9 +55,8 @@ function linkTo(thread: string, message: string | undefined) {
     : undefined;
 }
 
-function newest(store: Store, thread: string) {
-  const ids = store.messages
-    .said(thread, 20)
+async function newest(store: Store, thread: string) {
+  const ids = (await store.messages.said(thread, 20))
     .map((row) => Number(row.meta?.message_id ?? /^(?:\w+:)?-?\d+:(\d+)$/u.exec(row.key)?.[1]))
     .filter((id) => id > 0);
 
@@ -76,8 +75,16 @@ function proven(proof: string | undefined) {
   return url?.replace(/^https:\/\/t\.me\/c\//u, "");
 }
 
-export function lines(store: Store, sessions: Map<string, Session>, now = Date.now()): Lines {
-  const all = store.threads.list({ open: true });
+export async function lines(
+  store: Store,
+  sessions: Map<string, Session>,
+  now = Date.now(),
+): Promise<Lines> {
+  const [all, waiting, finished] = await Promise.all([
+    store.threads.list({ open: true }),
+    store.questions.list({ app: "telegram", waiting: true }),
+    store.tasks.finished(new Date(now - DAY).toISOString()),
+  ]);
 
   const threads = new Map(
     all.filter(({ app }) => app === "telegram").map((thread) => [thread.thread, thread]),
@@ -102,43 +109,44 @@ export function lines(store: Store, sessions: Map<string, Session>, now = Date.n
 
   const own = (thread: Thread) => sessions.get(thread.session ?? "");
 
-  const working = [...threads.values()].flatMap((thread): Line[] => {
-    const busyNow = (serving.get(thread.thread) ?? []).filter((session) => busy(session));
-    const turning = thread.session !== undefined && store.turns.atWork(thread.session);
+  const working = await Promise.all(
+    [...threads.values()].map(async (thread): Promise<Line[]> => {
+      const busyNow = (serving.get(thread.thread) ?? []).filter((session) => busy(session));
 
-    if (busyNow.length === 0 && !turning) {
-      return [];
-    }
+      const turning = thread.session !== undefined && (await store.turns.atWork(thread.session));
 
-    const told = [own(thread), ...busyNow].find(
-      (session) => session?.state === "working" && (session.detail ?? "") !== "",
-    );
+      if (busyNow.length === 0 && !turning) {
+        return [];
+      }
 
-    const link = linkTo(thread.thread, newest(store, thread.thread));
+      const told = [own(thread), ...busyNow].find(
+        (session) => session?.state === "working" && (session.detail ?? "") !== "",
+      );
 
-    const [task] =
-      told?.detail === undefined
-        ? store.tasks.list({ owner: thread.thread, status: ["open"], words: false })
-        : [];
+      const link = linkTo(thread.thread, await newest(store, thread.thread));
 
-    return [
-      {
-        title: thread.name,
-        line: cut(told?.detail ?? task?.title ?? ""),
-        at:
-          busyNow.length > 0
-            ? Math.min(...busyNow.map(since))
-            : Date.parse(
-                own(thread)?.began ?? store.messages.said(thread.thread, 1)[0]?.at ?? "",
-              ) || now,
-        ...(link !== undefined && { link }),
-      },
-    ];
-  });
+      const [task] =
+        told?.detail === undefined
+          ? await store.tasks.list({ owner: thread.thread, status: ["open"], words: false })
+          : [];
+
+      const began =
+        own(thread)?.began ?? (await store.messages.said(thread.thread, 1))[0]?.at ?? "";
+
+      return [
+        {
+          title: thread.name,
+          line: cut(told?.detail ?? task?.title ?? ""),
+          at: busyNow.length > 0 ? Math.min(...busyNow.map(since)) : Date.parse(began) || now,
+          ...(link !== undefined && { link }),
+        },
+      ];
+    }),
+  );
 
   const asked = new Map<string, { text: string; at: string; message: string }[]>();
 
-  for (const question of store.questions.list({ app: "telegram", waiting: true })) {
+  for (const question of waiting) {
     if (question.asker === undefined && threads.has(question.thread)) {
       asked.set(question.thread, [
         ...(asked.get(question.thread) ?? []),
@@ -147,50 +155,60 @@ export function lines(store: Store, sessions: Map<string, Session>, now = Date.n
     }
   }
 
-  const needs = [...threads.values()].flatMap((thread): Line[] => {
-    const questions = (asked.get(thread.thread) ?? []).toSorted((a, b) => b.at.localeCompare(a.at));
+  const needs = await Promise.all(
+    [...threads.values()].map(async (thread): Promise<Line[]> => {
+      const questions = (asked.get(thread.thread) ?? []).toSorted((a, b) =>
+        b.at.localeCompare(a.at),
+      );
 
-    const session = own(thread);
-    const blocked = session?.state === "blocked" && (session.needs ?? "") !== "";
-    const [last] = questions;
+      const session = own(thread);
+      const blocked = session?.state === "blocked" && (session.needs ?? "") !== "";
+      const [last] = questions;
 
-    if (!blocked && last === undefined) {
-      return [];
-    }
+      if (!blocked && last === undefined) {
+        return [];
+      }
 
-    const link = linkTo(thread.thread, last?.message ?? newest(store, thread.thread));
+      const link = linkTo(thread.thread, last?.message ?? (await newest(store, thread.thread)));
 
-    return [
-      {
-        title: thread.name,
-        line: cut((blocked ? session.needs : last?.text) ?? ""),
-        at: Math.max(blocked ? since(session) : 0, last === undefined ? 0 : Date.parse(last.at)),
-        ...(link !== undefined && { link }),
-        count: questions.length,
-      },
-    ];
-  });
+      return [
+        {
+          title: thread.name,
+          line: cut((blocked ? session.needs : last?.text) ?? ""),
+          at: Math.max(blocked ? since(session) : 0, last === undefined ? 0 : Date.parse(last.at)),
+          ...(link !== undefined && { link }),
+          count: questions.length,
+        },
+      ];
+    }),
+  );
 
-  const done = store.tasks.finished(new Date(now - DAY).toISOString()).flatMap((task): Line[] => {
-    const thread = threads.get(task.owner);
+  const done = await Promise.all(
+    finished.map(async (task): Promise<Line[]> => {
+      const thread = threads.get(task.owner);
 
-    if (thread === undefined) {
-      return [];
-    }
+      if (thread === undefined) {
+        return [];
+      }
 
-    const link = proven(task.proof) ?? linkTo(thread.thread, newest(store, thread.thread));
+      const link = proven(task.proof) ?? linkTo(thread.thread, await newest(store, thread.thread));
 
-    return [
-      {
-        title: thread.name,
-        line: cut(task.title),
-        at: Date.parse(task.closed ?? task.at),
-        ...(link !== undefined && { link }),
-      },
-    ];
-  });
+      return [
+        {
+          title: thread.name,
+          line: cut(task.title),
+          at: Date.parse(task.closed ?? task.at),
+          ...(link !== undefined && { link }),
+        },
+      ];
+    }),
+  );
 
-  return { w: latestFirst(working), n: latestFirst(needs), d: latestFirst(done) };
+  return {
+    w: latestFirst(working.flat()),
+    n: latestFirst(needs.flat()),
+    d: latestFirst(done.flat()),
+  };
 }
 
 /* The widget's two states, each within its 1024 bytes: working and waiting in the chat state, done
@@ -348,12 +366,12 @@ export class Keeper {
     );
   }
 
-  private now() {
-    return state(lines(this.store, running(this.store, this.claude)));
+  private async now() {
+    return state(await lines(this.store, await running(this.store, this.claude)));
   }
 
   private async post() {
-    const now = this.now();
+    const now = await this.now();
     const message = await this.paper.send(now);
     this.keep({ message });
     this.drew(now);
@@ -366,7 +384,7 @@ export class Keeper {
       return;
     }
 
-    const now = this.now();
+    const now = await this.now();
 
     if (content(now) === this.shown) {
       return;

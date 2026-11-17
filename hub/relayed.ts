@@ -36,6 +36,6 @@ if (from !== undefined && from !== "") {
   const run = ToolUse.parse(JSON.parse((await Bun.stdin.text()) || "{}")).tool_response;
 
   if (run) {
-    open(stateDir()).relays.relayed(from, run.threadId, run.runId, at);
+    await open(stateDir()).relays.relayed(from, run.threadId, run.runId, at);
   }
 }

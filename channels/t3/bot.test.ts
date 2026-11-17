@@ -78,12 +78,25 @@ echo "backgrounded · job12345 · test"`,
   await start();
 });
 
-const registered = () =>
+const registered = async () =>
   Object.fromEntries(
-    hexdb(join(dir, "hex", "state"))
-      .threads.list({ open: true })
-      .map((thread) => [thread.thread, thread]),
+    (await hexdb(join(dir, "hex", "state")).threads.list({ open: true })).map((thread) => [
+      thread.thread,
+      thread,
+    ]),
   );
+
+async function eventually<T>(check: () => Promise<T>): Promise<NonNullable<T>> {
+  for (;;) {
+    const value = await check();
+
+    if (value !== undefined && value !== null && value !== false) {
+      return value;
+    }
+
+    await Bun.sleep(20);
+  }
+}
 
 afterEach(() => {
   for (const socket of sockets.splice(0)) {
@@ -103,10 +116,10 @@ async function start() {
   await until(() => existsSync(join(dir, "state", "acp.sock")));
 }
 
-async function restart(down = () => {}) {
+async function restart(down: () => Promise<void> | void = () => {}) {
   bot.kill();
   await bot.exited;
-  down();
+  await down();
   rmSync(join(dir, "state", "acp.sock"), { force: true });
   await start();
 }
@@ -504,7 +517,7 @@ test("a session gets T3's MCP servers, and starts again with them when they chan
   mkdirSync(saved, { recursive: true });
   writeFileSync(join(saved, `${SESSION}.jsonl`), "");
   const hex = await session(sessionId);
-  await until(() => JSON.stringify(registered()).includes(SESSION));
+  await eventually(async () => JSON.stringify(await registered()).includes(SESSION));
   await hex.busy();
   hex.write(prompt, reply, done);
   await hex.idle();
@@ -541,7 +554,7 @@ test("a turn whose T3 connection closes stops its session, and a reconnected T3 
   mkdirSync(saved, { recursive: true });
   writeFileSync(join(saved, `${SESSION}.jsonl`), "");
   const hex = await session(sessionId);
-  await until(() => JSON.stringify(registered()).includes(SESSION));
+  await eventually(async () => JSON.stringify(await registered()).includes(SESSION));
   await hex.busy();
 
   const pid = sleepReapedOnKillLikeARealSession();
@@ -619,7 +632,7 @@ test("a thread offers T3 model and effort pickers, its session starts again with
   mkdirSync(saved, { recursive: true });
   writeFileSync(join(saved, `${SESSION}.jsonl`), "");
   const hex = await session(sessionId);
-  await until(() => JSON.stringify(registered()).includes(SESSION));
+  await eventually(async () => JSON.stringify(await registered()).includes(SESSION));
   await hex.busy();
   hex.write(prompt, reply, done);
   await hex.idle();
@@ -647,7 +660,7 @@ test("a thread offers T3 model and effort pickers, its session starts again with
   const fresh = await session(sessionId);
   await until(() => fresh.inbound().length);
   expect(fresh.inbound()[0]).toMatchObject({ type: "inbound", content: "again" });
-  expect(registered()[sessionId]).toMatchObject({ model: "fable", effort: "xhigh" });
+  expect((await registered())[sessionId]).toMatchObject({ model: "fable", effort: "xhigh" });
 });
 
 test("a thread T3 opens is kept only once it sends a prompt, so T3's provider check leaves nothing behind", async () => {
@@ -655,7 +668,7 @@ test("a thread T3 opens is kept only once it sends a prompt, so T3's provider ch
   await check.agent.request("session/new", { cwd: project, mcpServers: [] });
   await until(() => check.updates.length);
   check.socket.destroy();
-  expect(registered()).toEqual({});
+  expect(await registered()).toEqual({});
   expect(
     z
       .object({ projects: z.unknown() })
@@ -684,7 +697,7 @@ test("a known thread resumes, an unprompted one T3 opened before resumes as new,
     .catch(() => {});
   await until(() => lines("launched").length === 2);
   expect(lines("cwd")).toEqual([project, project]);
-  expect(registered()[unprompted]).toMatchObject({ name: "project", cwd: project });
+  expect((await registered())[unprompted]).toMatchObject({ name: "project", cwd: project });
   expect(
     agent.request("session/prompt", { sessionId: "nope", prompt: [{ type: "text", text: "hi" }] }),
   ).rejects.toThrow("Resource not found");
@@ -768,14 +781,14 @@ test("a turn rejoined after a hub restart follows the session running for its th
     join(dir, "agents"),
     JSON.stringify([{ id: "job12345", sessionId: SESSION, pid, status: "busy" }]),
   );
-  const row = registered()[sessionId];
+  const row = (await registered())[sessionId];
 
   if (row === undefined) {
     throw new Error("hex didn't keep the thread");
   }
 
-  await restart(() => {
-    hexdb(join(dir, "hex", "state")).threads.keep("t3", {
+  await restart(async () => {
+    await hexdb(join(dir, "hex", "state")).threads.keep("t3", {
       [sessionId]: { ...row, session: "f0e1d2c3-0000-4000-8000-000000000000" },
     });
   });
@@ -998,10 +1011,10 @@ test("a steer leaves the session running, its message reaches the session at its
     prompt: [{ type: "text", text: "and check the tests" }],
   });
 
-  await until(() =>
-    hexdb(join(dir, "hex", "state"))
-      .messages.untaken(sessionId)
-      .some((row) => row.body === "and check the tests"),
+  await eventually(async () =>
+    (await hexdb(join(dir, "hex", "state")).messages.untaken(sessionId)).some(
+      (row) => row.body === "and check the tests",
+    ),
   );
   const context = await toolCall(sessionId);
   expect(context).toContain("and check the tests");
@@ -1061,8 +1074,8 @@ test("a thread T3 deleted or never recorded closes in hex once T3 has had time t
   const gone = "deleted-0000-4000-8000-000000000000";
   const never = "never-00-0000-4000-8000-000000000000";
   const live = "live-000-0000-4000-8000-000000000000";
-  await restart(() => {
-    hexdb(join(dir, "hex", "state")).threads.keep("t3", {
+  await restart(async () => {
+    await hexdb(join(dir, "hex", "state")).threads.keep("t3", {
       [gone]: { name: "project" },
       [never]: { name: "project" },
       [live]: { name: "project" },
@@ -1072,29 +1085,33 @@ test("a thread T3 deleted or never recorded closes in hex once T3 has had time t
       [live, "docs: one line per file"],
     ]);
   });
-  expect(Object.keys(registered()).toSorted()).toEqual([gone, live, never].toSorted());
+  expect(Object.keys(await registered()).toSorted()).toEqual([gone, live, never].toSorted());
   await Bun.sleep(2100);
   const { agent } = await t3();
   const { sessionId } = await agent.request("session/new", { cwd: project, mcpServers: [] });
   agent
     .request("session/prompt", { sessionId, prompt: [{ type: "text", text: "hi" }] })
     .catch(() => {});
-  await until(() => registered()[gone] === undefined && registered()[never] === undefined);
-  expect(registered()[live]).toMatchObject({
+  await eventually(async () => {
+    const threads = await registered();
+
+    return threads[gone] === undefined && threads[never] === undefined;
+  });
+  expect((await registered())[live]).toMatchObject({
     name: "docs: one line per file",
     link: `t3code://threads/env-1/thread%3A${live}`,
   });
   expect(
-    hexdb(join(dir, "hex", "state"))
-      .threads.list({ app: "t3" })
-      .find((thread) => thread.thread === gone),
+    (await hexdb(join(dir, "hex", "state")).threads.list({ app: "t3" })).find(
+      (thread) => thread.thread === gone,
+    ),
   ).toMatchObject({ open: false, name: "project" });
 });
 
 test("a thread hex just kept stays open while T3 has yet to record it", async () => {
   const live = "live-000-0000-4000-8000-000000000000";
-  await restart(() => {
-    hexdb(join(dir, "hex", "state")).threads.keep("t3", { [live]: { name: "project" } });
+  await restart(async () => {
+    await hexdb(join(dir, "hex", "state")).threads.keep("t3", { [live]: { name: "project" } });
     recorded([[live, "docs: one line per file"]]);
   });
   const { agent } = await t3();
@@ -1102,15 +1119,15 @@ test("a thread hex just kept stays open while T3 has yet to record it", async ()
   agent
     .request("session/prompt", { sessionId, prompt: [{ type: "text", text: "hi" }] })
     .catch(() => {});
-  await until(() => registered()[sessionId]);
+  await eventually(async () => (await registered())[sessionId]);
   await until(() => lines("launched").length);
-  expect(registered()[sessionId]).toMatchObject({ name: "project" });
+  expect((await registered())[sessionId]).toMatchObject({ name: "project" });
 });
 
 test("a thread T3 recorded once and has no record of now stays open, since the records may be another install's", async () => {
   const linked = "linked-0-0000-4000-8000-000000000000";
-  await restart(() => {
-    hexdb(join(dir, "hex", "state")).threads.keep("t3", {
+  await restart(async () => {
+    await hexdb(join(dir, "hex", "state")).threads.keep("t3", {
       [linked]: { name: "project", link: "t3code://threads/env-0/thread%3Aold" },
     });
     recorded([["someone-else", "not hex"]]);
@@ -1123,7 +1140,7 @@ test("a thread T3 recorded once and has no record of now stays open, since the r
     .catch(() => {});
   await until(() => lines("launched").length);
   await Bun.sleep(100);
-  expect(Object.keys(registered()).toSorted()).toEqual([linked, sessionId].toSorted());
+  expect(Object.keys(await registered()).toSorted()).toEqual([linked, sessionId].toSorted());
 });
 
 test("a chat with no project works in hex's folder", async () => {
@@ -1273,7 +1290,7 @@ async function mirrored(turns: [string, string][]) {
   mkdirSync(saved, { recursive: true });
   writeFileSync(join(saved, `${SESSION}.jsonl`), "");
   const hex = await session(source);
-  await until(() => JSON.stringify(registered()).includes(SESSION));
+  await eventually(async () => JSON.stringify(await registered()).includes(SESSION));
   await hex.busy();
   hex.write(prompt, reply, done);
   await hex.idle();

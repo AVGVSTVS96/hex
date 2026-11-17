@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 
 import { z } from "zod";
 
-import { open } from "../../hub/store.ts";
+import { file } from "../../hub/store.ts";
 
 const HEX = join(import.meta.dir, "../..");
 const home = mkdtempSync(join(tmpdir(), "update-"));
@@ -36,11 +36,11 @@ const env = Object.fromEntries(
 );
 
 test("an update tells each thread that asked for it once what it asked for is live, and keeps the rest waiting", () => {
-  for (const file of ["bin/update", "bin/job", "hub"]) {
-    cpSync(join(HEX, file), join(hex, file), { recursive: true, dereference: true });
+  for (const path of ["bin/update", "bin/job", "hub"]) {
+    cpSync(join(HEX, path), join(hex, path), { recursive: true, dereference: true });
   }
 
-  open(state).threads.keep("telegram", { "-100:1": { name: "one" }, "-100:2": { name: "two" } });
+  file(state).threads.keep("telegram", { "-100:1": { name: "one" }, "-100:2": { name: "two" } });
   Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", join(home, "origin.git")]);
   git("init", "-q", "-b", "main");
   git("add", ".");

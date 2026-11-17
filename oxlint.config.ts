@@ -14,12 +14,12 @@ const longestFunctionIn = {
   "channels/buzz/bot.ts": 1105,
   "channels/buzz/memory.ts": 337,
   "channels/buzz/relay.ts": 256,
-  "channels/discord/bot.ts": 1227,
+  "channels/discord/bot.ts": 1231,
   "channels/voice/phone.test.ts": 219,
   "channels/voice/reconnect.test.ts": 304,
-  "hub/hub.ts": 1014,
-  "hub/mcp.ts": 300,
-  "hub/sessions.ts": 356,
+  "hub/hub.ts": 1108,
+  "hub/mcp.ts": 302,
+  "hub/sessions.ts": 375,
 };
 
 export default defineConfig({

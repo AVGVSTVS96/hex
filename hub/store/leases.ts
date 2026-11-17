@@ -1,14 +1,12 @@
-import type { Database } from "bun:sqlite";
-
 import { z } from "zod";
 
 import { now } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Sql, Write } from "./db.ts";
 
 const HolderRow = z.object({ holder: z.string() });
 
 export class Leases {
-  private readonly db: Database;
+  private readonly db: Sql;
   private readonly write: Write;
 
   constructor({ db, write }: Core) {

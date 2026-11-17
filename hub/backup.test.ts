@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { backup, nightly } from "./backup.ts";
-import { open } from "./store.ts";
+import { file } from "./store.ts";
 import { until } from "./until.ts";
 
 let dir: string;
@@ -25,7 +25,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "backup-"));
   path = process.env.PATH;
   named = process.env.HEX_COMPUTER;
-  open(dir).messages.deliver({
+  file(dir).messages.deliver({
     key: "telegram:-100:42",
     to: "-100:7",
     from: "telegram",
@@ -69,8 +69,8 @@ async function failure(work: Promise<unknown>): Promise<string> {
   throw new Error("it didn't fail");
 }
 
-const saved = (file: string) => {
-  const copy = new Database(file, { readonly: true });
+const saved = (backedUp: string) => {
+  const copy = new Database(backedUp, { readonly: true });
   const rows = copy.query("select body from messages").all();
 
   copy.close();
@@ -143,7 +143,7 @@ test("the hub backs up the last night it missed at its start, and a failed one t
   const stop = nightly(dir, dir, "general");
 
   const failed = await until(() =>
-    open(dir)
+    file(dir)
       .messages.untaken()
       .find((row) => row.from === "backup"),
   );

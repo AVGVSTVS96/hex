@@ -32,6 +32,7 @@ export type Where = { app: string; thread: string; session?: string };
 export class Chats {
   private readonly changes = new Changes();
   private readonly seen = new Map<string, { mark: string; said: string; chat: Chat }>();
+  private readonly reading = new Map<string, Promise<Chat>>();
   private readonly stops: (() => void)[];
   private readonly state: string;
 
@@ -44,27 +45,45 @@ export class Chats {
     ];
   }
 
-  of(where: Where): Chat {
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // One read of a chat at a time, so a slower read never records an older chat over a newer one.
+  of(where: Where): Promise<Chat> {
+    const id = `${where.app}:${where.thread}`;
+    const earlier = this.reading.get(id);
+
+    const next = (async () => {
+      await earlier?.catch(() => null);
+
+      return await this.read(where, id);
+    })();
+
+    this.reading.set(id, next);
+
+    return next;
+  }
+
+  private async read(where: Where, id: string): Promise<Chat> {
     const kept = store(this.state);
     const sends = writable(where.app, where.thread);
-    const mark = `${kept.messages.mark(where.thread)}:${sends}`;
-    const id = `${where.app}:${where.thread}`;
+    const mark = `${await kept.messages.mark(where.thread)}:${sends}`;
     const seen = this.seen.get(id);
 
     if (seen?.mark === mark) {
       return seen.chat;
     }
 
-    const turns = history(kept, where.thread).map((turn) => ({
+    const turns = (await history(kept, where.thread)).map((turn) => ({
       ...turn,
       text: typed(turn.text, turn.media?.filter((item) => !pictureOf(item.id)).length ?? 0),
     }));
 
-    const waiting = owners(kept.messages.untaken(where.thread)).map(({ key, body, at, meta }) => {
-      const media = carried(meta);
+    const waiting = owners(await kept.messages.untaken(where.thread)).map(
+      ({ key, body, at, meta }) => {
+        const media = carried(meta);
 
-      return { key, text: typed(body, media?.length ?? 0), at, ...(media && { media }) };
-    });
+        return { key, text: typed(body, media?.length ?? 0), at, ...(media && { media }) };
+      },
+    );
 
     const fresh = {
       sends,
@@ -87,11 +106,11 @@ export class Chats {
 
   async next(where: () => Where, after: number, wait: number) {
     const end = Date.now() + wait;
-    let chat = this.of(where());
+    let chat = await this.of(where());
 
     while (chat.version === after && Date.now() < end) {
       await this.changes.changes(this.changes.version, end - Date.now());
-      chat = this.of(where());
+      chat = await this.of(where());
     }
 
     return chat;
@@ -107,7 +126,7 @@ export class Chats {
     keyTheAppNamedSoARetryDeliversOnce: string,
     media: Item[] = [],
   ) {
-    const taken = say(where.app, where.thread, {
+    const taken = await say(where.app, where.thread, {
       content: caption(text, media),
       key: keyTheAppNamedSoARetryDeliversOnce,
       meta: { user: "hex app", ts: new Date().toISOString(), ...mediaMeta(media) },

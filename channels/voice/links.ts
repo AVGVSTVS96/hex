@@ -7,6 +7,7 @@ import { open } from "@hex/hub";
 import type { MessageId } from "@hex/hub";
 
 import type { Item } from "./activity.ts";
+import { oneAtATime } from "./changes.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* A relay is a message any hex thread sent a T3 thread: the thread's work is the relay's until
@@ -75,6 +76,11 @@ export class Links {
   private readonly unwatch?: () => void;
   private relays = "";
   private pending: ReturnType<typeof setTimeout> | undefined;
+  private readonly reread = oneAtATime("T3 Code's threads", async () => {
+    if (await this.read()) {
+      this.changed();
+    }
+  });
 
   constructor(
     state: string,
@@ -98,16 +104,17 @@ export class Links {
         this.schedule();
       }
     });
-    this.relays = JSON.stringify(open(state).relays.list());
-    this.unwatch = open(state).watch(() => {
-      const relays = JSON.stringify(open(state).relays.list());
 
-      if (relays !== this.relays) {
-        this.relays = relays;
+    const relaysChanged = oneAtATime("hex's relays", async () => {
+      if (JSON.stringify(await open(state).relays.list()) !== this.relays) {
         this.schedule();
       }
     });
-    this.read();
+
+    this.unwatch = open(state).watch(() => {
+      void relaysChanged();
+    });
+    void this.reread();
   }
 
   close() {
@@ -260,14 +267,11 @@ export class Links {
 
     this.pending = setTimeout(() => {
       this.pending = undefined;
-
-      if (this.read()) {
-        this.changed();
-      }
+      void this.reread();
     }, REFRESH);
   }
 
-  private read() {
+  private async read() {
     const db = this.db;
 
     if (db === undefined) {
@@ -275,6 +279,9 @@ export class Links {
     }
 
     try {
+      const relays = await open(this.state).relays.list();
+      this.relays = JSON.stringify(relays);
+
       const rows = db
         .query<{ key: string; thread: string; title: string }, []>(
           `select json_extract(p.payload_json, '$.nativeThreadRef.nativeId') key, json_extract(p.payload_json, '$.appThreadId') thread, t.title
@@ -343,35 +350,33 @@ export class Links {
         start(one.id, one.parent, one.since, !HANDED[one.status]);
       }
 
-      const relayed = open(this.state)
-        .relays.list()
-        .flatMap(({ from, thread, run: task, at }): Delegation[] => {
-          const ran = run.get(task);
-          const hex = keys.get(thread);
+      const relayed = relays.flatMap(({ from, thread, run: task, at }): Delegation[] => {
+        const ran = run.get(task);
+        const hex = keys.get(thread);
 
-          if (!ran || from === `t3:${hex}`) {
-            return [];
-          }
+        if (!ran || from === `t3:${hex}`) {
+          return [];
+        }
 
-          const behind = handed.findLast((one) => one.parent === from && one.id === thread);
-          start(thread, from, at, !HANDED[(behind ?? ran).status]);
+        const behind = handed.findLast((one) => one.parent === from && one.id === thread);
+        start(thread, from, at, !HANDED[(behind ?? ran).status]);
 
-          return behind
-            ? []
-            : [
-                omit({
-                  ...ran,
-                  id: thread,
-                  task,
-                  parent: from,
-                  result: handedBack(ran.result),
-                  hex,
-                  link: this.deep(thread),
-                  latest: ran.latest === 1,
-                  relay: true,
-                }),
-              ];
-        });
+        return behind
+          ? []
+          : [
+              omit({
+                ...ran,
+                id: thread,
+                task,
+                parent: from,
+                result: handedBack(ran.result),
+                hex,
+                link: this.deep(thread),
+                latest: ran.latest === 1,
+                relay: true,
+              }),
+            ];
+      });
 
       handed.push(...relayed);
 

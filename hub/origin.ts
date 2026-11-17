@@ -23,31 +23,28 @@ function keyOfEditedMessageOrOwn(row: Row | undefined): string | undefined {
 
 const present = (text: string | undefined): text is string => text !== undefined && text !== "";
 
-export function origin(
+export async function origin(
   store: Store,
   owner: string | undefined,
   takenBefore?: string,
   hex = join(import.meta.dir, ".."),
-): string | undefined {
+): Promise<string | undefined> {
   if (!present(owner)) {
     return;
   }
 
-  const thread = store.threads.key(owner);
-  const names = store.threads.names();
+  const [thread, names] = await Promise.all([store.threads.key(owner), store.threads.names()]);
 
-  if (!(thread in names)) {
-    return besideRun(store, thread, names, hex);
+  if (!Object.hasOwn(names, thread)) {
+    return await besideRun(store, thread, names, hex);
   }
 
-  const newestWords = store.messages
-    .said(thread, -1, takenBefore)
-    .findLast(
-      (row) =>
-        row.taken !== undefined &&
-        (!present(takenBefore) || row.taken.at < takenBefore) &&
-        saysWords(row),
-    );
+  const newestWords = (await store.messages.said(thread, -1, takenBefore)).findLast(
+    (row) =>
+      row.taken !== undefined &&
+      (!present(takenBefore) || row.taken.at < takenBefore) &&
+      saysWords(row),
+  );
 
   const message = keyOfEditedMessageOrOwn(newestWords);
   const name = names[thread];
@@ -58,8 +55,13 @@ export function origin(
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A session beside a thread worked for the row it was started for, not for the owner's newest words there.
-function besideRun(store: Store, session: string, names: Record<string, string>, hex: string) {
-  const ran = store.messages.ranFor(session);
+async function besideRun(
+  store: Store,
+  session: string,
+  names: Record<string, string>,
+  hex: string,
+) {
+  const ran = await store.messages.ranFor(session);
   const thread = ran === null ? undefined : besideWhat(ran.to);
 
   if (ran === null || thread === undefined) {
@@ -74,7 +76,7 @@ const JOB =
 
 const HookInput = z.object({ hook_event_name: z.string().optional() });
 
-function handoffLine(event: string | undefined): string | undefined {
+async function handoffLine(event: string | undefined): Promise<string | undefined> {
   const thread = served({
     HEX_CHANNEL: process.env.HEX_CHANNEL,
     HEX_THREAD: process.env.HEX_THREAD,
@@ -90,7 +92,11 @@ function handoffLine(event: string | undefined): string | undefined {
 
   const from =
     present(owner) && threadSubagentOrJob
-      ? origin(open(stateDir()), owner, thread === undefined ? process.env.HEX_FROM_AT : undefined)
+      ? await origin(
+          open(stateDir()),
+          owner,
+          thread === undefined ? process.env.HEX_FROM_AT : undefined,
+        )
       : undefined;
 
   const job = thread === undefined && event !== "SubagentStart" && present(process.env.HEX_OWNER);
@@ -102,7 +108,7 @@ if (import.meta.main) {
   try {
     const input = (await Bun.stdin.text()) || "{}";
     const { hook_event_name: event } = HookInput.parse(JSON.parse(input));
-    const line = handoffLine(event);
+    const line = await handoffLine(event);
 
     if (present(line)) {
       console.log(

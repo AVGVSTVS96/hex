@@ -35,6 +35,13 @@ function parseLines(chunk: string) {
     .map((line) => HubLineSchema.parse(JSON.parse(line)));
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Resolves once a build has read the records as they are now, since one asked for while another runs follows it.
+function built() {
+  // oxlint-disable-next-line typescript/dot-notation -- build is private, and its end is the signal that the view is current
+  return questions["build"]();
+}
+
 function listed(id: string) {
   const question = questions.find(id);
 
@@ -61,23 +68,24 @@ function savedMarks() {
     .parse(JSON.parse(readFileSync(join(state, "voice", "marks.json"), "utf-8")));
 }
 
-function ledger(
+async function ledger(
   kept: (Omit<Question, "app"> & Partial<Pick<Question, "app">>)[],
   pins: Record<string, Omit<Pin, "app" | "thread" | "note"> & { note?: string }> = {},
 ) {
   const store = open(state);
-  store.write(() => {
-    store.db.run("delete from questions");
-    store.db.run("delete from pins");
+  const [wereAsked, werePinned] = await Promise.all([store.questions.list(), store.pins.list()]);
 
-    for (const question of kept) {
-      store.questions.ask({ app: "telegram", ...question });
-    }
+  for (const { app, thread } of [...wereAsked, ...werePinned]) {
+    await store.pins.forgotten(app, thread);
+  }
 
-    for (const [thread, pin] of Object.entries(pins)) {
-      store.pins.pinned({ app: "telegram", thread, note: pin.text, ...pin });
-    }
-  });
+  for (const question of kept) {
+    await store.questions.ask({ app: "telegram", ...question });
+  }
+
+  for (const [thread, pin] of Object.entries(pins)) {
+    await store.pins.pinned({ app: "telegram", thread, note: pin.text, ...pin });
+  }
 }
 
 function asked(message: number, text: string, options: string[], fields: Partial<Question> = {}) {
@@ -96,7 +104,7 @@ beforeEach(async () => {
   state = mkdtempSync(join(tmpdir(), "questions-"));
   mkdirSync(join(state, "telegram"));
   mkdirSync(join(state, "voice"));
-  open(state).threads.keep("telegram", {
+  await open(state).threads.keep("telegram", {
     [GROUP]: { name: "hex", link: "https://t.me/c/1234/1" },
     [DESK]: { name: "desk", link: "https://t.me/c/1234/5" },
   });
@@ -228,13 +236,25 @@ type Said = [
   }>,
 ];
 
+async function checkSaid(to: string) {
+  const rows = await open(state).read(
+    `select body from messages where "to" = ? and "from" = 'check'`,
+    to,
+  );
+
+  return z
+    .array(z.object({ body: z.string() }))
+    .parse(rows)
+    .map((row) => row.body);
+}
+
 function chatKey(n: number, id?: number) {
   return `telegram:${GROUP}:${id ?? 100 + n}`;
 }
 
-function said(rows: Said[]) {
-  open(state).messages.past(
-    rows.map(([time, body, fields = {}], n): [NewRow, string] => [
+async function said(rows: Said[]) {
+  await open(state).messages.past(
+    rows.map(([time, body, fields = {}], n): [NewRow, string, string] => [
       {
         key: chatKey(n, fields.id),
         to: fields.to ?? DESK,
@@ -244,13 +264,13 @@ function said(rows: Said[]) {
         ...(fields.meta && { meta: fields.meta }),
       },
       `2026-10-13T${time}.000Z`,
+      "session",
     ]),
-    "session",
   );
 }
 
-test("a question comes with hex's last two messages in the hour before it in its thread, and only what the owner read there as hex's explanation", () => {
-  said([
+test("a question comes with hex's last two messages in the hour before it in its thread, and only what the owner read there as hex's explanation", async () => {
+  await said([
     ["16:59:00", "Too old."],
     ["18:01:00", "Old news."],
     ["18:02:00", "Caddy gives a short domain.", { id: 50 }],
@@ -270,30 +290,30 @@ test("a question comes with hex's last two messages in the hour before it in its
     ["18:59:58", "**Which one serves the pages?**"],
     ["18:59:59", "A or B", { id: 9 }],
   ]);
-  ledger([asked(8, "Ship it?", ["Yes", "No"])]);
+  await ledger([asked(8, "Ship it?", ["Yes", "No"])]);
 
   const question = asked(9, "**Which one serves the pages?**\nA or B", ["Caddy", "Tailscale"], {
     at: "2026-10-13T19:00:00.000Z",
   });
 
-  expect(before(open(state), "telegram", question)).toEqual([
+  expect(await before(open(state), "telegram", question)).toEqual([
     "Caddy gives a short domain.",
     "The plan, A on the left.",
   ]);
-  expect(before(open(state), "telegram", question, 10)).toEqual(["Caddy giv…", "The plan,…"]);
-  expect(before(open(state), "telegram", { ...question, at: "2026-10-13T18:01:30.000Z" })).toEqual([
-    "Old news.",
-  ]);
+  expect(await before(open(state), "telegram", question, 10)).toEqual(["Caddy giv…", "The plan,…"]);
+  expect(
+    await before(open(state), "telegram", { ...question, at: "2026-10-13T18:01:30.000Z" }),
+  ).toEqual(["Old news."]);
 });
 
 test("a question asked in General or a DM comes with none of hex's messages before it, which are about any project, and its ask's words are its own message, under its thread's project, and a note on it goes where it was asked", async () => {
   const DM = "6001";
-  open(state).threads.keep("telegram", {
+  await open(state).threads.keep("telegram", {
     [GROUP]: { name: "hex" },
     [DESK]: { name: "desk" },
     [DM]: { name: "DM" },
   });
-  said([
+  await said([
     ["18:20:00", "Your call failed: OpenAI is out of credit.", { to: GROUP }],
     ["18:30:00", "notes: Logseq names no writer device.", { to: GROUP }],
     ["18:40:00", "Comparison is done: all three products compared.", { to: DM }],
@@ -309,9 +329,9 @@ test("a question asked in General or a DM comes with none of hex's messages befo
     at: "2026-10-13T19:00:00.000Z",
   });
 
-  expect(before(open(state), "telegram", name)).toEqual([]);
-  expect(before(open(state), "telegram", row)).toEqual([]);
-  ledger([name, row]);
+  expect(await before(open(state), "telegram", name)).toEqual([]);
+  expect(await before(open(state), "telegram", row)).toEqual([]);
+  await ledger([name, row]);
   writeFileSync(
     join(state, "voice", "check.json"),
     JSON.stringify({
@@ -342,18 +362,19 @@ test("a question asked in General or a DM comes with none of hex's messages befo
       checks.push(why);
     },
   });
+  await built();
   expect(questions.find("check:panel-row")).toMatchObject({
     topic: "desk",
     places: [{ place: "DM" }],
   });
-  open(state).threads.file(DESK, "website");
+  await open(state).threads.file(DESK, "website");
   await until(() => questions.find("check:panel-row")?.topic === "website");
-  expect(questions.words("check:panel-row")).toEqual({
+  expect(await questions.words("check:panel-row")).toEqual({
     place: "DM",
     at: "2026-10-13T19:00:00.000Z",
     text: "Website: add the panel row?",
   });
-  expect(questions.words(`telegram:${GROUP}:9`)).toBeUndefined();
+  expect(await questions.words(`telegram:${GROUP}:9`)).toBeUndefined();
   expect(await questions.note("check:panel-row", "which row?", "app")).toEqual({
     thread: `telegram:${DM}`,
     topic: "DM",
@@ -364,12 +385,12 @@ test("a question asked in General or a DM comes with none of hex's messages befo
   expect(lines[0]).toMatchObject({ type: "inbound", thread: DM });
 });
 
-test("a question the check hasn't rewritten yet keeps its own words on the card and hex's messages before it, whole, as its words", () => {
-  said([
+test("a question the check hasn't rewritten yet keeps its own words on the card and hex's messages before it, whole, as its words", async () => {
+  await said([
     ["18:20:00", "Caddy gives a short domain."],
     ["18:30:00", `**Caddy** needs a server. ${"More. ".repeat(150).trim()}`],
   ]);
-  ledger([
+  await ledger([
     asked(9, "Caddy or Tailscale?\nCaddy is mine.", ["Caddy", "Tailscale"], {
       at: "2026-10-13T19:00:00.000Z",
     }),
@@ -382,17 +403,18 @@ test("a question the check hasn't rewritten yet keeps its own words on the card 
       checks.push(why);
     },
   });
+  await built();
   expect(questions.find(`telegram:${DESK}:9`)?.context).toBe("Caddy is mine.");
-  expect(questions.words(`telegram:${DESK}:9`)).toEqual({
+  expect(await questions.words(`telegram:${DESK}:9`)).toEqual({
     place: "desk",
     at: "2026-10-13T19:00:00.000Z",
     text: `Caddy gives a short domain.\n\n**Caddy** needs a server. ${"More. ".repeat(150).trim()}`,
   });
-  expect(questions.words(`telegram:${DESK}:8`)).toBeUndefined();
-  expect(questions.words("check:gone")).toBeUndefined();
+  expect(await questions.words(`telegram:${DESK}:8`)).toBeUndefined();
+  expect(await questions.words("check:gone")).toBeUndefined();
 });
 
-test("the check's asks read their words from their first place that has them: a question, a plain message, a pinned post or a call", () => {
+test("the check's asks read their words from their first place that has them: a question, a plain message, a pinned post or a call", async () => {
   const calls = join(state, "calls");
   mkdirSync(calls);
   writeFileSync(
@@ -405,11 +427,11 @@ test("the check's asks read their words from their first place that has them: a 
       summary: "They want the laptop tonight.",
     }),
   );
-  said([
+  await said([
     ["18:20:00", "Caddy gives a short domain."],
     ["18:25:00", "Which one serves the pages?", { id: 70 }],
   ]);
-  ledger(
+  await ledger(
     [asked(9, "Caddy or Tailscale?", ["Caddy", "Tailscale"], { at: "2026-10-13T19:00:00.000Z" })],
     {
       [GROUP]: {
@@ -467,35 +489,36 @@ test("the check's asks read their words from their first place that has them: a 
       checks.push(why);
     },
   });
-  expect(questions.words("check:question")).toEqual({
+  await built();
+  expect(await questions.words("check:question")).toEqual({
     place: "desk",
     at: "2026-10-13T19:00:00.000Z",
     text: "Caddy gives a short domain.\n\nWhich one serves the pages?\n\nCaddy or Tailscale?",
   });
-  expect(questions.words("check:message")).toEqual({
+  expect(await questions.words("check:message")).toEqual({
     place: "desk",
     at: "2026-10-13T18:25:00.000Z",
     text: "Caddy gives a short domain.\n\nWhich one serves the pages?",
   });
-  expect(questions.words("check:pin")).toEqual({
+  expect(await questions.words("check:pin")).toEqual({
     place: "General",
     at: "2026-10-13T10:00:00.000Z",
     text: "On you:\n• Pick a host",
   });
-  expect(questions.words("check:plan")).toEqual({
+  expect(await questions.words("check:plan")).toEqual({
     place: "desk",
     at: "2026-10-13T10:00:00.000Z",
     text: "Desk: the help site.",
   });
-  expect(questions.words("check:call")).toEqual({
+  expect(await questions.words("check:call")).toEqual({
     place: "Morning call",
     at: "2026-10-13T08:05:00.000Z",
     text: "They want the laptop tonight.",
   });
 });
 
-test("open questions come newest first with a link to each, answered and settled ones drop out", () => {
-  ledger([
+test("open questions come newest first with a link to each, answered and settled ones drop out", async () => {
+  await ledger([
     asked(1, "Ship it?", ["Yes", "No"]),
     asked(2, "Rename it?", ["Yes", "No"], { answer: { label: "No", at: "", via: "telegram" } }),
     asked(3, "Which color?", ["Mint", "Coral"]),
@@ -507,6 +530,7 @@ test("open questions come newest first with a link to each, answered and settled
       checks.push(why);
     },
   });
+  await built();
   expect(
     questions.view.asks.map((question) => [
       question.question,
@@ -544,8 +568,8 @@ test("open questions come newest first with a link to each, answered and settled
   ]);
 });
 
-test("General's questions sit under General, the name its places and its run go by, not the name hex.db keeps", () => {
-  ledger([
+test("General's questions sit under General, the name its places and its run go by, not the name hex.db keeps", async () => {
+  await ledger([
     {
       thread: GROUP,
       message: 7,
@@ -561,6 +585,7 @@ test("General's questions sit under General, the name its places and its run go 
       checks.push(why);
     },
   });
+  await built();
   expect(
     questions.view.asks.map((question) => [
       question.topic,
@@ -570,7 +595,7 @@ test("General's questions sit under General, the name its places and its run go 
 });
 
 test("the check’s version of a question stands in for every place that asked it, and newer questions lead", async () => {
-  ledger([
+  await ledger([
     asked(1, "Twilio?", ["Upgrade", "Not yet"]),
     asked(2, "Upgrade Twilio now?", ["Go", "Wait"]),
     asked(9, "Brand new?", ["Yes", "No"]),
@@ -619,6 +644,7 @@ test("the check’s version of a question stands in for every place that asked i
       checks.push(why);
     },
   });
+  await built();
   expect(questions.view.asks.map((question) => question.id)).toEqual([
     `telegram:${DESK}:9`,
     "check:twilio",
@@ -668,7 +694,7 @@ test("the check’s version of a question stands in for every place that asked i
 });
 
 test("an answer that lands in the ledger takes the question off the list, and undo asks for its buttons back", async () => {
-  ledger([asked(1, "Ship it?", ["Yes", "No"])]);
+  await ledger([asked(1, "Ship it?", ["Yes", "No"])]);
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
@@ -676,6 +702,7 @@ test("an answer that lands in the ledger takes the question off the list, and un
       checks.push(why);
     },
   });
+  await built();
   const version = questions.version;
   await questions.answer(`telegram:${DESK}:1`, "Yes", "app");
   expect(await until(() => lines[0])).toEqual({
@@ -685,7 +712,9 @@ test("an answer that lands in the ledger takes the question off the list, and un
     label: "Yes",
     via: "app",
   });
-  ledger([asked(1, "Ship it?", ["Yes", "No"], { answer: { label: "Yes", at: "", via: "app" } })]);
+  await ledger([
+    asked(1, "Ship it?", ["Yes", "No"], { answer: { label: "Yes", at: "", via: "app" } }),
+  ]);
   await questions.changes(version, 2000);
   expect(questions.view.asks).toEqual([]);
   await questions.undo(`telegram:${DESK}:1`, "app");
@@ -698,7 +727,7 @@ test("an answer that lands in the ledger takes the question off the list, and un
 });
 
 test("a question that takes several answers says so, and its picks go back together as one answer", async () => {
-  ledger([
+  await ledger([
     asked(1, "Which projects go public?", ["iikb (my pick)", "brim", "denoise"], {
       poll: "p1",
       multiple: true,
@@ -710,6 +739,7 @@ test("a question that takes several answers says so, and its picks go back toget
     t3Home: "/nonexistent",
     check: () => {},
   });
+  await built();
   await until(() => questions.view.asks.length === 2);
 
   const [several, one] = [1, 2].map((message) =>
@@ -743,7 +773,7 @@ test("a question that takes several answers says so, and its picks go back toget
 });
 
 test("a note reaches the thread that asked and leaves the question open, with nothing settled", async () => {
-  ledger([asked(1, "Ship it?", ["Yes", "No"])]);
+  await ledger([asked(1, "Ship it?", ["Yes", "No"])]);
   writeFileSync(
     join(state, "voice", "check.json"),
     JSON.stringify({
@@ -772,6 +802,7 @@ test("a note reaches the thread that asked and leaves the question open, with no
       checks.push(why);
     },
   });
+  await built();
   expect(
     await questions.note(`telegram:${DESK}:1`, "i wish i could get more context", "app"),
   ).toEqual({ thread: `telegram:${DESK}`, topic: "desk", settled: 0, missed: 0 });
@@ -801,8 +832,9 @@ test("a note reaches the thread that asked and leaves the question open, with no
 });
 
 test("an answer or a note with a photo reaches the thread as words carrying the photo, even when its words are one of the buttons", async () => {
-  ledger([asked(1, "Ship it?", ["Yes", "No"])]);
+  await ledger([asked(1, "Ship it?", ["Yes", "No"])]);
   questions = new Questions(state, { t3Database: "/nonexistent", t3Home: "/nonexistent" });
+  await built();
   const photo: Item = { id: "m1", kind: "photo", images: [join(state, "m1.jpg")] };
   await questions.note(`telegram:${DESK}:1`, "this one?", "app", [photo]);
   await questions.answer(`telegram:${DESK}:1`, "Yes", "app", [photo]);
@@ -827,7 +859,7 @@ test("an answer or a note with a photo reaches the thread as words carrying the 
 });
 
 test("not needed takes a question off the list, settles its copies and tells its thread, and undo brings it back", async () => {
-  ledger([asked(1, "Ship it?", ["Yes", "No"])]);
+  await ledger([asked(1, "Ship it?", ["Yes", "No"])]);
   writeFileSync(
     join(state, "voice", "check.json"),
     JSON.stringify({
@@ -856,6 +888,7 @@ test("not needed takes a question off the list, settles its copies and tells its
       checks.push(why);
     },
   });
+  await built();
   expect(await questions.dismiss(`telegram:${DESK}:1`, "app")).toEqual({
     thread: `telegram:${DESK}`,
     topic: "desk",
@@ -879,7 +912,7 @@ test("not needed takes a question off the list, settles its copies and tells its
   expect(await rejection(questions.answer(`telegram:${DESK}:1`, "Yes", "app"))).toContain(
     "already answered or settled",
   );
-  ledger([
+  await ledger([
     asked(1, "Ship it?", ["Yes", "No"], {
       settled: { note: "✓ Not needed, said in the app", at: "" },
     }),
@@ -918,7 +951,7 @@ test("not needed takes a question off the list, settles its copies and tells its
 });
 
 test("an answer its buttons can’t take settles every copy, and undo reopens them and tells the thread it no longer stands, even right away", async () => {
-  ledger([
+  await ledger([
     asked(1, "Twilio?", ["Upgrade", "Not yet"]),
     asked(2, "Upgrade Twilio now?", ["Go", "Wait"]),
   ]);
@@ -954,6 +987,7 @@ test("an answer its buttons can’t take settles every copy, and undo reopens th
       checks.push(why);
     },
   });
+  await built();
   expect(await questions.answer("check:twilio", "after the launch", "app")).toEqual({
     thread: `telegram:${DESK}`,
     topic: "desk",
@@ -1030,7 +1064,7 @@ async function discordHub() {
 }
 
 test("a not needed with one hub down still reaches the rest and says what it missed, and the copy left open can be settled later", async () => {
-  ledger([
+  await ledger([
     asked(1, "Twilio?", ["Upgrade", "Not yet"]),
     { ...asked(2, "Upgrade Twilio now?", ["Go", "Wait"]), app: "discord" },
   ]);
@@ -1042,6 +1076,7 @@ test("a not needed with one hub down still reaches the rest and says what it mis
       checks.push(why);
     },
   });
+  await built();
   await until(() => questions.find("check:twilio"));
   expect(await questions.dismiss("check:twilio", "app")).toEqual({
     thread: `telegram:${DESK}`,
@@ -1058,7 +1093,7 @@ test("a not needed with one hub down still reaches the rest and says what it mis
   expect(twilio).toBeDefined();
   expect(twilio?.partly).toBeUndefined();
 
-  ledger([
+  await ledger([
     {
       ...asked(1, "Twilio?", ["Upgrade", "Not yet"]),
       settled: { note: "✓ Not needed, said in the app", at: "" },
@@ -1091,7 +1126,7 @@ test("a not needed with one hub down still reaches the rest and says what it mis
 });
 
 test("an answer that missed a copy is finished by the same answer, which only settles it, and no other answer goes over it", async () => {
-  ledger([
+  await ledger([
     asked(1, "Twilio?", ["Upgrade", "Not yet"]),
     { ...asked(2, "Upgrade Twilio now?", ["Upgrade", "Not yet"]), app: "discord" },
   ]);
@@ -1103,6 +1138,7 @@ test("an answer that missed a copy is finished by the same answer, which only se
       checks.push(why);
     },
   });
+  await built();
   await until(() => questions.find("check:twilio"));
   expect(await questions.answer("check:twilio", "Upgrade", "app")).toEqual({
     thread: `telegram:${DESK}`,
@@ -1110,7 +1146,7 @@ test("an answer that missed a copy is finished by the same answer, which only se
     settled: 1,
     missed: 1,
   });
-  ledger([
+  await ledger([
     {
       ...asked(1, "Twilio?", ["Upgrade", "Not yet"]),
       answer: { label: "Upgrade", at: "", via: "app" },
@@ -1152,7 +1188,7 @@ test("an option labelled Not needed that missed a copy is finished as the answer
     asks: [{ ...TWILIO, options: options.map((label) => ({ label, value: label })) }],
   };
 
-  ledger([
+  await ledger([
     asked(1, "Twilio?", options),
     { ...asked(2, "Upgrade Twilio now?", options), app: "discord" },
   ]);
@@ -1164,9 +1200,10 @@ test("an option labelled Not needed that missed a copy is finished as the answer
       checks.push(why);
     },
   });
+  await built();
   await until(() => questions.find("check:twilio"));
   await questions.answer("check:twilio", "Not needed", "app");
-  ledger([
+  await ledger([
     { ...asked(1, "Twilio?", options), answer: { label: "Not needed", at: "", via: "app" } },
     { ...asked(2, "Upgrade Twilio now?", options), app: "discord" },
   ]);
@@ -1191,7 +1228,7 @@ test("an option labelled Not needed that missed a copy is finished as the answer
 });
 
 test("a question asked again while an earlier answer missed a copy is answered on the new copy, and the missed one only settles", async () => {
-  ledger([
+  await ledger([
     asked(1, "Twilio?", ["Upgrade", "Not yet"]),
     { ...asked(2, "Twilio?", ["Upgrade", "Not yet"]), app: "discord" },
     asked(3, "Twilio, again?", ["Upgrade", "Not yet"]),
@@ -1204,9 +1241,10 @@ test("a question asked again while an earlier answer missed a copy is answered o
       checks.push(why);
     },
   });
+  await built();
   await until(() => questions.find("check:twilio"));
   await questions.answer("check:twilio", "Upgrade", "app");
-  ledger([
+  await ledger([
     {
       ...asked(1, "Twilio?", ["Upgrade", "Not yet"]),
       answer: { label: "Upgrade", at: "", via: "app" },
@@ -1246,7 +1284,7 @@ test("a question asked again while an earlier answer missed a copy is answered o
 });
 
 test("an undo with a hub down takes back what it can, keeps the rest, and finishes when tried again", async () => {
-  ledger([
+  await ledger([
     asked(1, "Twilio?", ["Upgrade", "Not yet"]),
     { ...asked(2, "Upgrade Twilio now?", ["Go", "Wait"]), app: "discord" },
   ]);
@@ -1259,6 +1297,7 @@ test("an undo with a hub down takes back what it can, keeps the rest, and finish
       checks.push(why);
     },
   });
+  await built();
   await until(() => questions.find("check:twilio"));
   expect(await questions.answer("check:twilio", "Upgrade", "app")).toEqual({
     thread: `telegram:${DESK}`,
@@ -1269,7 +1308,7 @@ test("an undo with a hub down takes back what it can, keeps the rest, and finish
   await discord.stop();
   expect(await rejection(questions.undo("check:twilio", "app"))).toContain("undo again to finish");
   await until(() => lines.some((line) => line.type === "reopen"));
-  ledger([
+  await ledger([
     asked(1, "Twilio?", ["Upgrade", "Not yet"]),
     {
       ...asked(2, "Upgrade Twilio now?", ["Go", "Wait"]),
@@ -1288,7 +1327,7 @@ test("an undo with a hub down takes back what it can, keeps the rest, and finish
   try {
     await questions.undo("check:twilio", "app");
     await until(() => discord.heard.some((line) => line.type === "reopen"));
-    ledger([
+    await ledger([
       asked(1, "Twilio?", ["Upgrade", "Not yet"]),
       { ...asked(2, "Upgrade Twilio now?", ["Go", "Wait"]), app: "discord" },
     ]);
@@ -1306,7 +1345,7 @@ test("an undo with a hub down takes back what it can, keeps the rest, and finish
 });
 
 test("a question asked again over an earlier answer can be answered, and one undo takes back both", async () => {
-  ledger([asked(1, "Ship it?", ["Yes", "No"]), asked(3, "Ship it now?", ["Yes", "No"])]);
+  await ledger([asked(1, "Ship it?", ["Yes", "No"]), asked(3, "Ship it now?", ["Yes", "No"])]);
 
   const check = (refs: number[]) => {
     writeFileSync(
@@ -1339,9 +1378,10 @@ test("a question asked again over an earlier answer can be answered, and one und
       checks.push(why);
     },
   });
+  await built();
   await until(() => questions.find("check:ship"));
   await questions.dismiss("check:ship", "app");
-  ledger([
+  await ledger([
     {
       ...asked(1, "Ship it?", ["Yes", "No"]),
       settled: { note: "✓ Not needed, said in the app", at: "" },
@@ -1410,6 +1450,7 @@ test("a stuck item with a request goes to General once, however fast it is tappe
       checks.push(why);
     },
   });
+  await built();
   const [, twice] = await Promise.allSettled([questions.act("disk"), questions.act("disk")]);
   expect(twice).toMatchObject({
     status: "rejected",
@@ -1623,13 +1664,13 @@ test("a closed thread's open question stays a check's ref, so answering the ques
 test("a question names every place it was asked, each thread once at its open question, pinned post or message, with the best link its app has, the ones that open first, and its pages apart from its answers", async () => {
   const DM = "777";
   const THREAD = "1560000000000000001";
-  open(state).threads.keep("telegram", {
+  await open(state).threads.keep("telegram", {
     [GROUP]: { name: "hex", link: "https://t.me/c/1234/1" },
     [DESK]: { name: "desk", link: "https://t.me/c/1234/5" },
     [DM]: { name: "DM", link: "https://t.me/hexbot" },
   });
   mkdirSync(join(state, "discord"));
-  open(state).threads.keep("discord", {
+  await open(state).threads.keep("discord", {
     [THREAD]: { name: "urgent fix", link: `https://discord.com/channels/42/${THREAD}` },
   });
   const calls = join(state, "calls");
@@ -1638,7 +1679,7 @@ test("a question names every place it was asked, each thread once at its open qu
     join(calls, "live_1.json"),
     JSON.stringify({ id: "live_1", title: "Apple charges", started: "2026-10-13T18:00:00.000Z" }),
   );
-  ledger(
+  await ledger(
     [
       asked(1, "Order the laptop?", ["Ordered", "Not yet"]),
       {
@@ -1703,6 +1744,7 @@ test("a question names every place it was asked, each thread once at its open qu
       checks.push(why);
     },
   });
+  await built();
   const [laptop] = questions.view.asks;
   expect(laptop).toMatchObject({
     options: [
@@ -1752,9 +1794,9 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
   };
 
   const byHand = { message: 2, text: "Status: by hand", at: "2026-10-13T10:00:00.000Z" };
-  ledger([asked(1, "Ship it?", ["Yes", "No"])], { [DESK]: pin, [GROUP]: byHand });
+  await ledger([asked(1, "Ship it?", ["Yes", "No"])], { [DESK]: pin, [GROUP]: byHand });
   const store = open(state);
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-1001234:40",
     to: DESK,
     from: "telegram",
@@ -1763,7 +1805,7 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
     meta: { user: "owner" },
   });
 
-  const task = store.tasks.create({
+  const task = await store.tasks.create({
     title: "Fix the login page",
     message: "telegram:-1001234:40",
     owner: DESK,
@@ -1776,12 +1818,13 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
       checks.push(why);
     },
   });
+  await built();
 
   const shown = `Site: example.com\n\n**Waiting on you**\n- Ship it?\n\n**Open**\n- ${task.title}`;
-  expect(questions.of(`telegram:${DESK}`).pin).toBe(shown);
-  expect(questions.of(`telegram:${GROUP}`).pin).toBe("Status: by hand");
+  expect((await questions.of(`telegram:${DESK}`)).pin).toBe(shown);
+  expect((await questions.of(`telegram:${GROUP}`)).pin).toBe("Status: by hand");
 
-  store.pins.pinned({
+  await store.pins.pinned({
     app: "telegram",
     thread: DESK,
     ...pin,
@@ -1789,7 +1832,7 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
   });
   await Bun.sleep(150);
   expect(checks).toEqual([]);
-  store.pins.pinned({ app: "telegram", thread: DESK, ...pin, note: "Site: example.org" });
+  await store.pins.pinned({ app: "telegram", thread: DESK, ...pin, note: "Site: example.org" });
   await until(() => checks.length);
   expect(checks).toEqual(["a pinned post changed"]);
 });
@@ -1899,7 +1942,7 @@ test("a check's links keep only what opens a page or an app on the phone", () =>
   expect(verdict.asks[0]?.links?.map((link) => link.url)).toEqual(urls.slice(0, 5));
 });
 
-test("an answer with no buttons is kept for good, other marks and unfinished answers for 14 days", () => {
+test("an answer with no buttons is kept for good, other marks and unfinished answers for 14 days", async () => {
   const old = new Date(Date.now() - 20 * 24 * 60 * 60_000).toISOString();
 
   const answers = {
@@ -1925,6 +1968,7 @@ test("an answer with no buttons is kept for good, other marks and unfinished ans
       checks.push(why);
     },
   });
+  await built();
   questions.read("t3-done-1");
   const marks = savedMarks();
   expect([Object.keys(marks.answers), Object.keys(marks.read)]).toEqual([
@@ -1979,6 +2023,7 @@ test("an old answer whose undo stops partway is kept until it is undone again", 
       checks.push(why);
     },
   });
+  await built();
   await new Promise((resolve) => {
     hub.close(resolve);
   });
@@ -1987,7 +2032,7 @@ test("an old answer whose undo stops partway is kept until it is undone again", 
 });
 
 test("an ask read out by its own id, which a check then takes up under one of its own, is still answered by the id the caller heard", async () => {
-  ledger([asked(9, "Ship it?", ["Yes", "No"])]);
+  await ledger([asked(9, "Ship it?", ["Yes", "No"])]);
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
@@ -1995,6 +2040,7 @@ test("an ask read out by its own id, which a check then takes up under one of it
       checks.push(why);
     },
   });
+  await built();
   const heard = `telegram:${DESK}:9`;
   expect(questions.find(heard)).toBeDefined();
   const version = questions.version;
@@ -2023,7 +2069,7 @@ test("an ask read out by its own id, which a check then takes up under one of it
       ],
     }),
   );
-  open(state).questions.ask(asked(8, "Unrelated?", ["A"]));
+  await open(state).questions.ask(asked(8, "Unrelated?", ["A"]));
   await questions.changes(version, 2000);
   await until(() => questions.view.asks.some((question) => question.id === "check:ship"));
   expect(questions.find(heard)?.id).toBe("check:ship");
@@ -2050,8 +2096,8 @@ test("an ask read out by its own id, which a check then takes up under one of it
   expect(questions.answered("check:ship")).toBe(false);
 });
 
-function twoTwilios(fields: Partial<Question> = {}) {
-  ledger([
+async function twoTwilios(fields: Partial<Question> = {}) {
+  await ledger([
     asked(1, "Twilio?", ["Upgrade", "Not yet"], fields),
     asked(2, "Upgrade Twilio now?", ["Upgrade", "Wait"], fields),
   ]);
@@ -2073,7 +2119,7 @@ test("a check's ask undone after a later check let it go stays one card, and ans
     );
   };
 
-  twoTwilios();
+  await twoTwilios();
   check([
     {
       id: "check:twilio",
@@ -2095,9 +2141,10 @@ test("a check's ask undone after a later check let it go stays one card, and ans
       checks.push(why);
     },
   });
+  await built();
   await questions.answer("check:twilio", "Upgrade", "app");
   let version = questions.version;
-  twoTwilios({ answer: { label: "Upgrade", at: "", via: "app" } });
+  await twoTwilios({ answer: { label: "Upgrade", at: "", via: "app" } });
   check([]);
   await questions.changes(version, 2000);
   await until(() => !questions.view.asks.length);
@@ -2105,7 +2152,7 @@ test("a check's ask undone after a later check let it go stays one card, and ans
   await questions.undo("check:twilio", "app");
   await until(() => lines.filter((line) => line.type === "reopen").length === 2);
   version = questions.version;
-  twoTwilios();
+  await twoTwilios();
   await questions.changes(version, 2000);
   await until(() => questions.view.asks.length);
   expect(questions.view.asks.map((question) => [question.id, question.question])).toEqual([
@@ -2121,14 +2168,14 @@ test("a check's ask undone after a later check let it go stays one card, and ans
   ]);
 
   version = questions.version;
-  twoTwilios({ answer: { label: "Upgrade", at: "", via: "app" } });
+  await twoTwilios({ answer: { label: "Upgrade", at: "", via: "app" } });
   await questions.changes(version, 2000);
   await until(() => !questions.view.asks.length);
   lines.length = 0;
   await questions.undo("check:twilio", "app");
   await until(() => lines.filter((line) => line.type === "reopen").length === 2);
   version = questions.version;
-  twoTwilios();
+  await twoTwilios();
   await questions.changes(version, 2000);
   await until(() => questions.view.asks.length);
   expect(questions.view.asks.map((question) => question.id)).toEqual(["check:twilio"]);
@@ -2142,7 +2189,7 @@ test("a check's ask undone after a later check let it go stays one card, and ans
 });
 
 test("an answer still on its way counts as given, so an undo it turns away is not taken for one that went through", async () => {
-  ledger([asked(1, "Ship it?", ["Yes", "No"])]);
+  await ledger([asked(1, "Ship it?", ["Yes", "No"])]);
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
@@ -2150,6 +2197,7 @@ test("an answer still on its way counts as given, so an undo it turns away is no
       checks.push(why);
     },
   });
+  await built();
   const id = `telegram:${DESK}:1`;
   const going = questions.answer(id, "Yes", "app");
   expect(await rejection(questions.undo(id, "app"))).toContain("still on its way");
@@ -2159,7 +2207,7 @@ test("an answer still on its way counts as given, so an undo it turns away is no
 });
 
 test("a check's ask names the ids its questions were listed under before it took them up, so the app keeps what was typed on them", async () => {
-  ledger([
+  await ledger([
     asked(1, "Twilio?", ["Upgrade", "Not yet"]),
     asked(2, "Upgrade Twilio now?", ["Upgrade", "Wait"]),
   ]);
@@ -2170,6 +2218,7 @@ test("a check's ask names the ids its questions were listed under before it took
       checks.push(why);
     },
   });
+  await built();
   expect(questions.view.asks.map((question) => [question.id, question.was])).toEqual([
     [`telegram:${DESK}:2`, undefined],
     [`telegram:${DESK}:1`, undefined],
@@ -2206,7 +2255,7 @@ test("a check's ask names the ids its questions were listed under before it took
   ]);
 });
 
-test("an ask the owner's rules give to hex leaves their list, its open question settles, and its thread gets it back once", () => {
+test("an ask the owner's rules give to hex leaves their list, its open question settles, and its thread gets it back once", async () => {
   const ledgers = { telegram: [asked(1, "bun or pnpm?", ["bun (my pick)", "pnpm"])] };
   const ref = { app: "telegram", thread: DESK, message: 1 };
 
@@ -2235,20 +2284,14 @@ test("an ask the owner's rules give to hex leaves their list, its open question 
   expect(verdict.settle).toEqual([{ ...ref, note: "Back to hex: its call" }]);
   expect(verdict.back).toMatchObject([{ id: "check:monorepo-pm", from: [ref] }]);
 
-  const store = open(state);
-  handBack(state, verdict.back, { [`telegram:${DESK}`]: "desk" });
-  handBack(
+  await handBack(state, verdict.back, { [`telegram:${DESK}`]: "desk" });
+  await handBack(
     state,
     verdict.back.map((item) => ({ ...item, id: "check:monorepo-tool" })),
     { [`telegram:${DESK}`]: "desk" },
   );
 
-  const told = store.db
-    .query<{ body: string }, [string]>(
-      `select body from messages where "to" = ? and "from" = 'check'`,
-    )
-    .all(`beside:${DESK}`)
-    .map((row) => row.body);
+  const told = await checkSaid(`beside:${DESK}`);
 
   expect(told).toHaveLength(1);
   expect(told[0]).toContain("bun or pnpm for the monorepos?");
@@ -2267,8 +2310,8 @@ test("what the check handed back to hex is listed as decided with its reason, an
     from: [ref],
   };
 
-  handBack(state, [back], { [`telegram:${DESK}`]: "desk" });
-  ledger([
+  await handBack(state, [back], { [`telegram:${DESK}`]: "desk" });
+  await ledger([
     asked(1, "bun or pnpm?", ["bun (my pick)", "pnpm"], {
       settled: { note: "Back to hex: its call", at: new Date().toISOString() },
     }),
@@ -2289,6 +2332,7 @@ test("what the check handed back to hex is listed as decided with its reason, an
       checks.push(why);
     },
   });
+  await built();
   await until(() => questions.view.decided.length === 2);
   expect(questions.view.asks).toEqual([]);
   expect(
@@ -2318,7 +2362,7 @@ test("what the check handed back to hex is listed as decided with its reason, an
       meta: { user: "hex app" },
     },
   ]);
-  ledger([asked(1, "bun or pnpm?", ["bun (my pick)", "pnpm"])]);
+  await ledger([asked(1, "bun or pnpm?", ["bun (my pick)", "pnpm"])]);
   await until(() => questions.view.asks.length === 1 && questions.view.decided.length === 0);
   expect(questions.view.asks[0]).toMatchObject({ id, topic: "desk" });
 
@@ -2338,29 +2382,21 @@ test("what the check handed back to hex is listed as decided with its reason, an
   expect(verdict.settle).toEqual([]);
 });
 
-test("General hears of the first failed check in a run of them, and of the first after one succeeds", () => {
-  const store = open(state);
-  store.threads.keep("telegram", { [GROUP]: { name: "hex" } });
+test("General hears of the first failed check in a run of them, and of the first after one succeeds", async () => {
+  await open(state).threads.keep("telegram", { [GROUP]: { name: "hex" } });
   mkdirSync(join(state, "voice", "check"), { recursive: true });
 
-  const told = () =>
-    store.db
-      .query<{ body: string }, [string]>(
-        `select body from messages where "to" = ? and "from" = 'check'`,
-      )
-      .all(GROUP)
-      .map((row) => row.body);
-
-  failed(state, "monday: the check hit a limit");
-  failed(state, "tuesday: the check hit a limit");
-  expect(told()).toHaveLength(1);
-  expect(told()[0]).toContain("monday: the check hit a limit");
+  await failed(state, "monday: the check hit a limit");
+  await failed(state, "tuesday: the check hit a limit");
+  const told = await checkSaid(GROUP);
+  expect(told).toHaveLength(1);
+  expect(told[0]).toContain("monday: the check hit a limit");
   expect(readFileSync(join(state, "voice", "check", "error"), "utf-8")).toBe(
     "tuesday: the check hit a limit\n",
   );
   rmSync(join(state, "voice", "check", "error"));
-  failed(state, "wednesday: the check hit a limit");
-  expect(told()).toHaveLength(2);
+  await failed(state, "wednesday: the check hit a limit");
+  expect(await checkSaid(GROUP)).toHaveLength(2);
 });
 
 test("an ask stays only while a place still asks it: an open question, an open thread's pinned post, a recent call, or a message from the last three days", () => {
@@ -2448,8 +2484,8 @@ test("a check's ask keeps why hex picks and what each option does, for the app's
   });
 });
 
-test("each option that stands for a poll's option shows its screenshot at its shape, redrawn too, raw and once a check takes it up and renames it", () => {
-  ledger([
+test("each option that stands for a poll's option shows its screenshot at its shape, redrawn too, raw and once a check takes it up and renames it", async () => {
+  await ledger([
     asked(7, "One call button?", ["One (my pick)", "Both"], {
       shots: [png(state, "one", 40, 20), png(state, "both", 10, 20)],
       poll: "p7",
@@ -2461,6 +2497,7 @@ test("each option that stands for a poll's option shows its screenshot at its sh
     t3Home: "/nonexistent",
     check: () => {},
   });
+  await built();
   const raw = `telegram:${DESK}:7`;
   expect(questions.find(raw)?.options.map((option) => [option.shot, option.shape])).toEqual([
     [0, 2],
@@ -2475,6 +2512,7 @@ test("each option that stands for a poll's option shows its screenshot at its sh
     t3Home: "/nonexistent",
     check: () => {},
   });
+  await built();
   expect(questions.find(raw)?.options[1]?.shape).toBe(3);
   expect(questions.find(`telegram:${DESK}:8`)?.options.map((option) => option.shot)).toEqual([
     undefined,
@@ -2513,6 +2551,7 @@ test("each option that stands for a poll's option shows its screenshot at its sh
     t3Home: "/nonexistent",
     check: () => {},
   });
+  await built();
   expect(questions.find("check:button")?.options.map((option) => option.shot)).toEqual([
     1,
     0,
@@ -2523,8 +2562,8 @@ test("each option that stands for a poll's option shows its screenshot at its sh
   expect(questions.shot("check:button", 2)).toBeUndefined();
 });
 
-test("a question shows the pictures hex sent with it, each at its shape, by the id the app reads them by", () => {
-  said([
+test("a question shows the pictures hex sent with it, each at its shape, by the id the app reads them by", async () => {
+  await said([
     ["18:00:00", "The new m?", { id: 40 }],
     [
       "18:00:02",
@@ -2540,12 +2579,13 @@ test("a question shows the pictures hex sent with it, each at its shape, by the 
       },
     ],
   ]);
-  ledger([asked(40, "The new m?", ["This one", "Not it"], { attached: [41] })]);
+  await ledger([asked(40, "The new m?", ["This one", "Not it"], { attached: [41] })]);
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
     check: () => {},
   });
+  await built();
 
   expect(questions.find(`telegram:${DESK}:40`)?.pictures).toEqual([
     // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads a picture's width over height by this name
@@ -2553,8 +2593,8 @@ test("a question shows the pictures hex sent with it, each at its shape, by the 
   ]);
 });
 
-test("an ask the check made shows the pictures of the messages it names", () => {
-  said([
+test("an ask the check made shows the pictures of the messages it names", async () => {
+  await said([
     ["18:00:00", "Flights tab is live.", { id: 40 }],
     [
       "18:00:02",
@@ -2598,6 +2638,7 @@ test("an ask the check made shows the pictures of the messages it names", () => 
     t3Home: "/nonexistent",
     check: () => {},
   });
+  await built();
 
   expect(questions.find("check:sheet")?.pictures).toEqual([
     // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads a picture's width over height by this name

@@ -17,7 +17,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
-import { open } from "../../hub/store.ts";
+import { file } from "../../hub/store.ts";
 
 const Args = z.array(z.string());
 
@@ -49,7 +49,7 @@ env.XDG_STATE_HOME = join(home, "xdg");
 const session = { HEX_CHANNEL: "plugin:t3@hex", HEX_THREAD: "stray-key" };
 
 beforeAll(() => {
-  for (const file of [
+  for (const path of [
     "bin/job",
     "bin/hex",
     "bin/session",
@@ -68,8 +68,10 @@ beforeAll(() => {
     "hub/beside.ts",
     "hub/origin.ts",
     "hub/mcp.ts",
+    "hub/kept.ts",
+    "hub/ordered.ts",
   ]) {
-    cpSync(join(HEX, file), join(home, ".hex", file), { dereference: true, recursive: true });
+    cpSync(join(HEX, path), join(home, ".hex", path), { dereference: true, recursive: true });
   }
 
   for (const [app, threads] of Object.entries({
@@ -77,7 +79,7 @@ beforeAll(() => {
     telegram: { "-100123:101": { name: "orchard" } },
     discord: { "555": { name: "urgent fix" } },
   })) {
-    open(join(home, "state")).threads.keep(app, threads);
+    file(join(home, "state")).threads.keep(app, threads);
   }
 
   mkdirSync(join(home, "fake"));
@@ -184,13 +186,13 @@ test("a job General or a session beside a thread starts reports beside it, so Ge
     stderr: "pipe",
   }).exited;
 
-  const told = open(join(home, "state"))
+  const told = file(join(home, "state"))
     .messages.untaken()
     .find((row) => row.key.startsWith("job:mail@"));
 
   expect(told?.to).toBe("beside:-100123:101");
   expect(told?.body).toContain("This work comes from my conversation in orchard");
-  open(join(home, "state")).db.run("delete from messages where key = ?", [told?.key ?? ""]);
+  file(join(home, "state")).db.run("delete from messages where key = ?", [told?.key ?? ""]);
 });
 
 test("an agent job goes to a machine with room, from the folder it was started from", () => {
@@ -318,7 +320,7 @@ test("a job session's prompts are hex's words in hex.db, the first and every lat
     { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-100:1" },
   );
 
-  const rows = open(state)
+  const rows = file(state)
     .messages.since()
     .map(({ to, from, author, body, taken }) => ({ to, from, author, body, by: taken?.by }));
 
@@ -329,7 +331,7 @@ test("a job session's prompts are hex's words in hex.db, the first and every lat
     { to: "mine-1", from: "terminal", author: "owner", body: "what is up", by: "mine-1" },
     { to: "-100:1", from: "terminal", author: "hex", body: "narration", by: "chat-1" },
   ]);
-  expect(open(state).messages.said("-100:1")[0]?.meta).toEqual({
+  expect(file(state).messages.said("-100:1")[0]?.meta).toEqual({
     session: "chat-1",
     unsent: "true",
   });
@@ -565,7 +567,7 @@ function resume(config: string, ...gone: string[]) {
 const stoppedByASignal = { EXIT_CODE: "killed", EXIT_STATUS: "TERM" };
 const finishedByItself = { EXIT_CODE: "exited", EXIT_STATUS: "0" };
 
-const jobsOn = (store = "state") => open(join(home, store)).jobs;
+const jobsOn = (store = "state") => file(join(home, store)).jobs;
 
 const end = (unit: string, how = stoppedByASignal) =>
   Bun.spawnSync(["bun", job, "--ended", unit, "t3:stray-key", jobsOn().get(unit)?.run ?? ""], {
@@ -852,7 +854,7 @@ test("on a machine hex moved away from, a job's end and hex's commands go to the
   run(["leftover", "make", "all"], session);
   writeFileSync(marker, "twin-x\n");
   rmSync(join(home, "ssh.log"), { force: true });
-  open(join(home, "twin")).threads.keep("t3", { "stray-key": { name: "hex" } });
+  file(join(home, "twin")).threads.keep("t3", { "stray-key": { name: "hex" } });
   end("leftover", finishedByItself);
 
   const there: unknown[] = toldOn("twin", "%[job] leftover ended%");
@@ -920,13 +922,13 @@ test("a job's end waits out a move, and one that can't reach hex is kept until h
 
   expect(told("%[job] far ended%")).toEqual([]);
   expect(
-    readdirSync(join(home, "state/jobs")).filter((file) => file.startsWith("far@")),
+    readdirSync(join(home, "state/jobs")).filter((name) => name.startsWith("far@")),
   ).toHaveLength(1);
 
   resume(join(home, "claude"));
 
   expect(told("%[job] far ended%")).toHaveLength(1);
-  expect(readdirSync(join(home, "state/jobs")).filter((file) => file.startsWith("far@"))).toEqual(
+  expect(readdirSync(join(home, "state/jobs")).filter((name) => name.startsWith("far@"))).toEqual(
     [],
   );
 });
@@ -1122,7 +1124,7 @@ test("a job its machine's shutdown stopped after hex left it is marked so in the
   rmSync(marker);
   expect(ending.exitCode).toBe(0);
   expect(jobsOn("twin").get("left")?.stopped?.why).toBe("shutdown");
-  expect(open(join(home, "state")).seen.get("job:left", "stopped")).toBe("");
+  expect(file(join(home, "state")).seen.get("job:left", "stopped")).toBe("");
   jobsOn("twin").ended("left", here, runStarted);
 });
 

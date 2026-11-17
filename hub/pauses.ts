@@ -4,6 +4,7 @@ import * as claude from "./claude.ts";
 import type { Failed } from "./failing.ts";
 import type { Keep } from "./kept.ts";
 import type { Line } from "./mcp.ts";
+import { ordered } from "./ordered.ts";
 import { present } from "./present.ts";
 import type { Runs } from "./runs.ts";
 import type { Threads } from "./threads.ts";
@@ -33,10 +34,27 @@ export function sessionPauses({
   turns: ReturnType<typeof sessionTurns>;
   kept: Keep;
   serving: () => boolean;
-  turnEnded: (thread: string) => void;
+  turnEnded: (thread: string) => Promise<void>;
   failed: Failed;
 }) {
   const pauses = runs.part((): Pause => ({}));
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Whether the paused session's turn left something unanswered, ending it in hex's record if so: one check at a time for each session, so the next reads what the one before it ended.
+  const ending = ordered();
+
+  const ended = (session: string) =>
+    ending(session, async () => {
+      if (
+        !(await kept(async (store) => (await store.turns.unanswered(session)).length > 0, false))
+      ) {
+        return false;
+      }
+
+      await kept((store) => store.turns.handled(session), undefined);
+
+      return true;
+    });
 
   function of(thread: string): Readonly<Pause> {
     return pauses.of(thread);
@@ -66,19 +84,12 @@ export function sessionPauses({
       }
     }
 
-    if (
-      !pause.paused ||
-      !present(session) ||
-      !kept((store) => store.turns.unanswered(session).length > 0, false)
-    ) {
+    if (!pause.paused || !present(session) || !(yield* Effect.promise(() => ended(session)))) {
       return;
     }
 
     process.stderr.write(`hub: ${thread}'s session paused mid-turn: ${needs}\n`);
-    kept((store) => {
-      store.turns.handled(session);
-    }, undefined);
-    turnEnded(thread);
+    void turnEnded(thread);
     const refusal = claude.refused(claude.transcript(threads.cwd(thread), session));
     const { model } = threads.of(thread);
 

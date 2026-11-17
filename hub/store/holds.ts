@@ -1,10 +1,9 @@
-import type { Database } from "bun:sqlite";
-
 import { z } from "zod";
 
 import { found, KeyValues, now, TextOrAbsent, TextOrNull } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Sql, Write } from "./db.ts";
 import type { Messages } from "./messages.ts";
+import type { Threads } from "./threads.ts";
 
 export type Held = { thread: string; ended?: string; ending?: string; woke?: string };
 
@@ -56,6 +55,16 @@ const WakingRow = z.object({ count: z.number(), oldest: TextOrAbsent });
 
 const NumberValues = z.array(z.tuple([z.number()]));
 
+export function when(at: string, zone?: string) {
+  return new Date(at).toLocaleString("en-US", {
+    timeZone: zone,
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
 function holdNumber(id: string) {
   const n = /^h-(\d+)$/u.exec(id)?.[1];
 
@@ -67,14 +76,74 @@ function holdNumber(id: string) {
 }
 
 export class Holds {
-  private readonly db: Database;
+  private readonly db: Sql;
   private readonly write: Write;
   private readonly messages: Messages;
+  private readonly threads: Threads;
 
-  constructor({ db, write }: Core, messages: Messages) {
+  constructor({ db, write }: Core, messages: Messages, threads: Threads) {
     this.db = db;
     this.write = write;
     this.messages = messages;
+    this.threads = threads;
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A hold and the word of it to each held thread that is working land in one write.
+  place(hold: NewHold, { zone, working }: { zone?: string | undefined; working: string[] }): Hold {
+    return this.write(() => {
+      const placed = this.create(hold);
+      const by = this.threads.names()[placed.by] ?? placed.by;
+      const ends = `${placed.until !== undefined && placed.until !== "" ? `at ${when(placed.until, zone)}, or ` : ""}when my word lifts it`;
+
+      for (const { thread } of placed.threads.filter((held) => working.includes(held.thread))) {
+        this.messages.deliver({
+          key: `hold:${placed.id}@${thread}`,
+          to: thread,
+          from: "hold",
+          author: "prompt",
+          body: `[hold ${placed.id}] ${by} put this thread on hold: ${placed.why}. Finish the step you're on, commit it, and start nothing new until the hold ends; hex wakes this thread when it does, ${ends}.`,
+          meta: { user: "hold" },
+        });
+      }
+
+      return placed;
+    });
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Wakes the threads a hold freed, a few at once, each with the word that its hold ended: when to look again, if any still wait.
+  wake(at: string, { patience, atOnce }: { patience: number; atOnce: number }): string | undefined {
+    return this.write(() => {
+      const waking = this.waking(patience, at);
+      let room = atOnce - waking.count;
+      const woken = new Set<string>();
+
+      for (const { id, thread, why, ending } of this.freed()) {
+        if (woken.has(thread)) {
+          continue;
+        }
+
+        if (room-- <= 0) {
+          break;
+        }
+
+        woken.add(thread);
+
+        const key = `hold:${id}@${thread}:ended`;
+        this.messages.deliver({
+          key,
+          to: thread,
+          from: "hold",
+          author: "prompt",
+          body: `[hold ${id} ended] ${ending}. The hold on this thread (${why}) is over: pick up where you stopped.`,
+          meta: { user: "hold" },
+        });
+        this.woke(thread, key);
+      }
+
+      return woken.size > 0 ? new Date(Date.parse(at) + patience).toISOString() : waking.until;
+    });
   }
 
   create({ threads, by, why, message, until }: NewHold): Hold {

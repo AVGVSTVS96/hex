@@ -96,8 +96,13 @@ function asTelegramShowsIt(row: Row, edits: Map<string, string>): Message[] {
   ];
 }
 
-function latest(store: Store, thread: string, count: number, rows = count * 2): Message[] {
-  const newest = store.messages.said(thread, rows);
+async function latest(
+  store: Store,
+  thread: string,
+  count: number,
+  rows = count * 2,
+): Promise<Message[]> {
+  const newest = await store.messages.said(thread, rows);
 
   const edits = new Map(
     newest
@@ -109,11 +114,16 @@ function latest(store: Store, thread: string, count: number, rows = count * 2): 
 
   return showing.length >= count || newest.length < rows
     ? showing.slice(-count)
-    : latest(store, thread, count, rows * 4);
+    : await latest(store, thread, count, rows * 4);
 }
 
-function messages(store: Store, thread: string, count = LATEST_MESSAGES): Message[] {
-  const waiting = owners(store.messages.untaken(thread)).map((row): Message => {
+async function messages(store: Store, thread: string, count = LATEST_MESSAGES): Promise<Message[]> {
+  const [said, untaken] = await Promise.all([
+    latest(store, thread, count),
+    store.messages.untaken(thread),
+  ]);
+
+  const waiting = owners(untaken).map((row): Message => {
     const files = filesOf(row);
 
     return {
@@ -124,13 +134,13 @@ function messages(store: Store, thread: string, count = LATEST_MESSAGES): Messag
     };
   });
 
-  return [...latest(store, thread, count), ...waiting].slice(-count);
+  return [...said, ...waiting].slice(-count);
 }
 
 const lineOf = (message?: Message) =>
   [message?.text.trim().split("\n", 1)[0], message?.files?.[0]?.name].find(filled);
 
-export function list(store: Store): Chat[] {
+export async function list(store: Store): Promise<Chat[]> {
   const telegram = clients.get(APP);
 
   if (!telegram) {
@@ -139,42 +149,45 @@ export function list(store: Store): Chat[] {
 
   const { hub } = telegram;
 
-  const chats = hub.threads().flatMap((thread) => {
-    const name = hub.name(thread);
+  const chats = await Promise.all(
+    hub.threads().map(async (thread) => {
+      const name = hub.name(thread);
 
-    if (!filled(name)) {
-      return [];
-    }
+      if (!filled(name)) {
+        return [];
+      }
 
-    const rank = hub.fresh(thread) ? 0 : thread === hub.main ? 1 : 2;
-    const line = lineOf(messages(store, thread, 1).at(-1));
+      const rank = hub.fresh(thread) ? 0 : thread === hub.main ? 1 : 2;
 
-    return [
-      {
-        rank,
-        at: store.messages.said(thread, 1)[0]?.at ?? "",
-        chat: {
-          id: `${APP}:${thread}`,
-          name: rank === 1 ? "General" : name,
-          ...(filled(line) && { line }),
-          ...(rank < 2 && { pinned: true }),
+      const [recent, said] = await Promise.all([
+        messages(store, thread, 1),
+        store.messages.said(thread, 1),
+      ]);
+
+      const line = lineOf(recent.at(-1));
+
+      return [
+        {
+          rank,
+          at: said[0]?.at ?? "",
+          chat: {
+            id: `${APP}:${thread}`,
+            name: rank === 1 ? "General" : name,
+            ...(filled(line) && { line }),
+            ...(rank < 2 && { pinned: true }),
+          },
         },
-      },
-    ];
-  });
+      ];
+    }),
+  );
 
   return chats
+    .flat()
     .toSorted((a, b) => a.rank - b.rank || b.at.localeCompare(a.at))
     .map(({ chat }) => chat);
 }
 
 function changed(store: Store, thread: string, after: string) {
-  const moved = () => store.messages.mark(thread) !== after;
-
-  if (moved()) {
-    return Promise.resolve();
-  }
-
   return new Promise<void>((resolve) => {
     const done = () => {
       clearTimeout(timer);
@@ -182,13 +195,23 @@ function changed(store: Store, thread: string, after: string) {
       resolve();
     };
 
+    const check = async () => {
+      try {
+        if ((await store.messages.mark(thread)) !== after) {
+          done();
+        }
+      } catch {
+        done();
+      }
+    };
+
     const timer = setTimeout(done, HELD_FOR_A_CHANGE);
 
     const stop = store.watch(() => {
-      if (moved()) {
-        done();
-      }
+      void check();
     });
+
+    void check();
   });
 }
 
@@ -199,7 +222,9 @@ export async function read(store: Store, chat: string, after?: string) {
     await changed(store, thread, after);
   }
 
-  return { version: store.messages.mark(thread), messages: messages(store, thread) };
+  const version = await store.messages.mark(thread);
+
+  return { version, messages: await messages(store, thread) };
 }
 
 const content = (text: string, photos: number) =>
@@ -217,10 +242,10 @@ const photoMeta = (photos: Photo[]) =>
           .join("; "),
       };
 
-export function send(chat: string, text: string, id: string, photos: Photo[] = []) {
+export async function send(chat: string, text: string, id: string, photos: Photo[] = []) {
   const { app, thread } = placeOf(chat);
 
-  const taken = say(app, thread, {
+  const taken = await say(app, thread, {
     content: content(text, photos.length),
     key: `iikb-${id}`,
     meta: { user: "iikb", ts: new Date().toISOString(), ...photoMeta(photos) },
@@ -232,7 +257,8 @@ export function send(chat: string, text: string, id: string, photos: Photo[] = [
 }
 
 async function file(store: Store, key: string, at: number) {
-  const kept = store.messages.get(key)?.from === APP ? await heldFile(store, key, at) : undefined;
+  const kept =
+    (await store.messages.get(key))?.from === APP ? await heldFile(store, key, at) : undefined;
 
   return kept
     ? new Response(Bun.file(kept.path), { headers: { "content-type": kept.type } })
@@ -273,7 +299,7 @@ async function route(
   const chat = decodeURIComponent(path);
 
   if (request.method === "GET" && chat === "") {
-    return Response.json({ name: "hex", chats: list(store) });
+    return Response.json({ name: "hex", chats: await list(store) });
   }
 
   if (request.method === "GET") {
@@ -297,7 +323,7 @@ async function route(
     return status(502, UNREACHABLE);
   }
 
-  send(chat, text, id, await keep(photos, id, files));
+  await send(chat, text, id, await keep(photos, id, files));
   await store.synced();
 
   return status(204);

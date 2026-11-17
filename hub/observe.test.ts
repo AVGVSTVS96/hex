@@ -14,7 +14,7 @@ import { join } from "node:path";
 
 import { clock, drain, nap, observe, record, within } from "./observe.ts";
 import type { Answer, Pass } from "./observe.ts";
-import { open } from "./store.ts";
+import { file } from "./store.ts";
 import { fakeClaude, flags } from "./testing.ts";
 import type { Reply } from "./testing.ts";
 
@@ -67,7 +67,7 @@ beforeEach(() => {
     `#!/bin/sh\ncase "$1" in\n  note) printf '%s\\n' "$2" >> "${dir}/noted" ;;\n  recall) grep -E -- "$2" "${dir}/memories" ;;\nesac\n`,
   );
   chmodSync(memo, 0o755);
-  const store = open(dir);
+  const store = file(dir);
   store.messages.deliver({
     key: "telegram:-100:40",
     to: "-100:7",
@@ -112,7 +112,7 @@ test("the turn's messages reach the pass, which writes notes for the owner's no 
     profile: null,
   }));
 
-  open(dir).messages.deliver(
+  file(dir).messages.deliver(
     {
       key: "telegram:-100:51",
       to: "-100:7",
@@ -191,7 +191,7 @@ test("a pass that fails hands its messages to the next one, and one that died do
   await observe(dir, "s", { ask: answering(asked), memo });
   expect(asked).toHaveLength(1);
 
-  const store = open(dir);
+  const store = file(dir);
   store.messages.deliver({
     key: "telegram:-100:60",
     to: "-100:7",
@@ -214,7 +214,7 @@ test("a pass that fails hands its messages to the next one, and one that died do
 test("a pass takes what the session had taken when its turn ended, not the next turn's message", async () => {
   const by = new Date().toISOString();
   await Bun.sleep(2);
-  const store = open(dir);
+  const store = file(dir);
   store.messages.deliver({
     key: "telegram:-100:70",
     to: "-100:7",
@@ -259,9 +259,9 @@ test("the profile is rewritten to the current truth, and one that misquotes the 
   const seen: string[] = [];
   await observe(dir, "s", { ask: answering(seen, () => ({ notes: [], profile })), memo });
   expect(seen[0]).toContain("<profile>\n(none yet)\n</profile>");
-  expect(open(dir).profiles.current()).toBe(profile);
+  expect(file(dir).profiles.current()).toBe(profile);
 
-  const store = open(dir);
+  const store = file(dir);
   store.messages.deliver({
     key: "telegram:-100:80",
     to: "-100:7",
@@ -284,7 +284,7 @@ test("the profile is rewritten to the current truth, and one that misquotes the 
   });
   expect(asked[1]).toContain("Your last profile wasn't kept");
   expect(asked[1]).toContain('- Ships "whenever" [telegram:-100:80]');
-  expect(open(dir).profiles.current()).toBe('# Always\n- Ships "any day now" [telegram:-100:80]');
+  expect(file(dir).profiles.current()).toBe('# Always\n- Ships "any day now" [telegram:-100:80]');
   expect(asked[1]).toContain(
     'Fix that draft rather than starting over:\n<draft>\n# Always\n- Ships "whenever" [telegram:-100:80]\n</draft>',
   );
@@ -315,7 +315,7 @@ test("a profile line may only quote the owner, by the key of the message it quot
   });
   expect(asked[1]).toContain("names no message of the owner's for its quote");
   expect(asked[2]).toContain("[schedule:nightly:1] isn't the owner's message");
-  expect(open(dir).profiles.current()).toBe(
+  expect(file(dir).profiles.current()).toBe(
     '# Always\n- Ships "on fridays only" [telegram:-100:50]',
   );
 });
@@ -329,7 +329,7 @@ test("a profile that kept misquoting is logged and its turn is done, so it costs
     })),
     memo,
   });
-  expect(open(dir).profiles.current()).toBe("");
+  expect(file(dir).profiles.current()).toBe("");
   await observe(dir, "s", { ask: answering(asked), memo });
   expect(asked).toHaveLength(3);
 });
@@ -341,7 +341,7 @@ test("a time reads the way notes write it, on the owner’s clock", () => {
 
 test("a turn with no message of the owner's gets no pass, and its messages are done", async () => {
   await observe(dir, "s", { ask: answering([]), memo });
-  const store = open(dir);
+  const store = file(dir);
   store.messages.deliver(
     { key: "terminal:job", to: "s", from: "terminal", author: "hex", body: "Backup ran." },
     "s",
@@ -353,7 +353,7 @@ test("a turn with no message of the owner's gets no pass, and its messages are d
 });
 
 test("a retry writes no note twice", async () => {
-  open(dir).messages.deliver(
+  file(dir).messages.deliver(
     {
       key: "terminal:answer",
       to: "s",
@@ -376,7 +376,7 @@ test("a retry writes no note twice", async () => {
 });
 
 test("an app session's last words in its terminal reach the pass as what the owner doesn't see", async () => {
-  open(dir).messages.deliver(
+  file(dir).messages.deliver(
     {
       key: "terminal:summed",
       to: "-100:7",
@@ -412,7 +412,7 @@ test("the Stop hook keeps a T3 turn's answer as hex's reply in T3, whatever prom
   });
 
   expect(await hook.exited).toBe(0);
-  const [answer] = open(dir).messages.said("t3-thread");
+  const [answer] = file(dir).messages.said("t3-thread");
   expect(answer).toMatchObject({
     from: "t3",
     author: "hex",
@@ -423,7 +423,7 @@ test("the Stop hook keeps a T3 turn's answer as hex's reply in T3, whatever prom
 });
 
 test("turns wait in hex.db and one drainer works through them oldest first, while a lease is held the turn waits for its holder", async () => {
-  const store = open(dir);
+  const store = file(dir);
   const seen: string[] = [];
   store.passes.wait({ session: "a", by: "" });
   store.passes.wait({ session: "b", by: "" });
@@ -443,7 +443,7 @@ test("turns wait in hex.db and one drainer works through them oldest first, whil
 });
 
 test("a holder renews its own lease, and a turn that throws leaves the queue to the next", async () => {
-  const store = open(dir);
+  const store = file(dir);
   expect(store.leases.take("observe", "me", 0)).toBe(true);
   expect(store.leases.take("observe", "me", 60_000)).toBe(true);
   await Bun.sleep(2);
@@ -485,7 +485,7 @@ printf '%s %s\\n' "$2" "$3" > "${dir}/napped"
   await nap(
     napper,
     () => Promise.resolve("never asked"),
-    () => false,
+    () => Promise.resolve(false),
   );
   expect(existsSync(join(dir, "napped"))).toBe(false);
   const failed = nap(napper, () => Promise.reject(new Error("API Error: 529")));

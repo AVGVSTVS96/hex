@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { Author } from "../../hub/store.ts";
-import { open } from "../../hub/store.ts";
+import { file } from "../../hub/store.ts";
 
 const BIN = join(import.meta.dir, "../../bin");
 const SESSION = "b7e2c5a9-0000-4000-8000-000000000000";
@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 function kept(thread: string, turns: [Author, string][]) {
-  const store = open(join(home, "state"));
+  const store = file(join(home, "state"));
 
   for (const [i, [author, body]] of turns.entries()) {
     store.messages.deliver(

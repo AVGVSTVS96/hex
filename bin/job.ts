@@ -193,9 +193,9 @@ async function stdinThatEnds(): Promise<string> {
   return Buffer.concat(chunks).toString();
 }
 
-function openThreadIdByKeyOrId(word: string): string | undefined {
-  const key = store.threads.key(word);
-  const found = store.threads.list({ open: true }).find(({ thread }) => thread === key);
+async function openThreadIdByKeyOrId(word: string): Promise<string | undefined> {
+  const key = await store.threads.key(word);
+  const found = (await store.threads.list({ open: true })).find(({ thread }) => thread === key);
 
   return found && `${found.app}:${key}`;
 }
@@ -271,17 +271,17 @@ async function tell(unit: string, owner: string, said: string, at: string, ends?
   }
 
   if (ends !== undefined) {
-    store.jobs.ended(unit, ends.machine, ends.run);
+    await store.jobs.ended(unit, ends.machine, ends.run);
   }
 
-  const to = store.threads.key(owner);
+  const to = await store.threads.key(owner);
 
   const from =
     besideWhat(to) === undefined
       ? undefined
-      : origin(store, process.env.HEX_FROM, process.env.HEX_FROM_AT);
+      : await origin(store, process.env.HEX_FROM, process.env.HEX_FROM_AT);
 
-  store.messages.deliver({
+  await store.messages.deliver({
     key: `job:${unit}@${at}`,
     to,
     from: "job",
@@ -297,7 +297,7 @@ async function toldStopped(unit: string, run: string, why: StopReason, at: strin
   const there = await whereHexIs(0);
 
   if (there === "here") {
-    store.jobs.stopped(unit, hostname(), run, why, at);
+    await store.jobs.stopped(unit, hostname(), run, why, at);
   } else if (there !== "moving") {
     await onMachine(there, [
       join(import.meta.dir, "job"),
@@ -311,13 +311,13 @@ async function toldStopped(unit: string, run: string, why: StopReason, at: strin
   }
 }
 
-function nameOf(owner: string) {
-  const key = store.threads.key(owner);
+async function nameOf(owner: string) {
+  const key = await store.threads.key(owner);
 
-  const ran = store.messages.ranFor(key);
+  const ran = await store.messages.ranFor(key);
   const thread = besideWhat(key) ?? (ran === null ? undefined : besideWhat(ran.to)) ?? key;
 
-  return store.threads.names()[thread] ?? thread;
+  return (await store.threads.names())[thread] ?? thread;
 }
 
 if (mode === "--owner") {
@@ -350,10 +350,13 @@ if (mode === "--owner") {
   }
 
   const output = lastOutput(unit);
-  const key = store.threads.key(owner);
+  const key = await store.threads.key(owner);
   const thread = besideWhat(key) ?? key;
 
-  if (!store.messages.took(key) && !store.threads.list().some((each) => each.thread === thread)) {
+  if (
+    !(await store.messages.took(key)) &&
+    !(await store.threads.list()).some((each) => each.thread === thread)
+  ) {
     console.error(
       `job: ${unit} ended, but no app has the thread ${owner} yet; its end waits there`,
     );
@@ -404,7 +407,7 @@ if (mode === "--owner") {
 } else if (mode === "--stopped") {
   const [unit = "", machine = "", run = "", why, at] = rest;
 
-  store.jobs.stopped(unit, machine, run, StopReasonColumn.parse(why), at);
+  await store.jobs.stopped(unit, machine, run, StopReasonColumn.parse(why), at);
 } else if (mode === "--running") {
   for (const asked of rest) {
     const [unit = "", run] = asked.split("=");
@@ -503,7 +506,7 @@ if (mode === "--owner") {
     }
   }
 
-  const jobs = store.jobs.list();
+  const jobs = await store.jobs.list();
   const elsewhereNow = await stillOnTheirMachines(jobs.filter(({ machine }) => machine !== here));
 
   for (const job of jobs) {
@@ -521,7 +524,7 @@ if (mode === "--owner") {
     }
 
     if (now.state === "ended") {
-      store.jobs.ended(unit, machine, run);
+      await store.jobs.ended(unit, machine, run);
       continue;
     }
 
@@ -535,7 +538,7 @@ if (mode === "--owner") {
     }
 
     if (now.state === "unknown" && stillThere && machine !== here) {
-      store.jobs.ended(unit, machine, run);
+      await store.jobs.ended(unit, machine, run);
       await stopped(
         unit,
         kept.owner,
@@ -578,7 +581,7 @@ if (mode === "--owner") {
             : undefined;
 
     if (leftToItsOwner !== undefined) {
-      store.jobs.ended(unit, machine, run);
+      await store.jobs.ended(unit, machine, run);
       await stopped(
         unit,
         kept.owner,
@@ -629,7 +632,7 @@ if (mode === "--owner") {
   rmSync(machinesGone, { force: true });
   rmSync(resuming, { force: true });
 } else if ((await whereHexIs()) === "here") {
-  const given = rest.length > 1 ? openThreadIdByKeyOrId(rest[0] ?? "") : undefined;
+  const given = rest.length > 1 ? await openThreadIdByKeyOrId(rest[0] ?? "") : undefined;
   const jobOwner = given ?? reportsTo();
   const after = given === undefined ? rest : rest.slice(1);
   const [first = "", ...afterFirst] = after;
@@ -658,7 +661,7 @@ if (mode === "--owner") {
   const session = agent ? conversationToResumeBy(command) : undefined;
 
   if (isSet(session) && task !== undefined) {
-    store.tasks.addAgents(task, [session]);
+    await store.tasks.addAgents(task, [session]);
   } else if (task !== undefined) {
     console.error(`job: only a claude job's session can be linked to ${task}`);
   }
@@ -903,10 +906,10 @@ function endOf(path: string) {
   }
 }
 
-function pruneOldLogs() {
+async function pruneOldLogs() {
   for (const file of readdirSync(records).filter((each) => each.endsWith(".log"))) {
     const log = join(records, file);
-    const running = store.jobs.get(file.replace(/\.log$/u, "")) !== undefined;
+    const running = (await store.jobs.get(file.replace(/\.log$/u, ""))) !== undefined;
     const written = statSync(log, { throwIfNoEntry: false })?.mtimeMs ?? Date.now();
 
     if (!running && Date.now() - written > LOGS_KEPT_FOR_THEIR_THREADS_MS) {
@@ -962,7 +965,7 @@ async function launch(
     return 1;
   }
 
-  const before = store.jobs.get(unit);
+  const before = await store.jobs.get(unit);
 
   if (
     fresh &&
@@ -977,18 +980,18 @@ async function launch(
 
   mkdirSync(records, { recursive: true });
 
+  const agent = basename(kept.command[0] ?? "") === "claude";
+  const name = `${await nameOf(kept.owner)}/${unit}`;
   const startedAt = new Date().toISOString();
-  store.jobs.started(unit, hostname(), startedAt, kept);
+  await store.jobs.started(unit, hostname(), startedAt, kept);
 
   const log = join(records, `${unit}.log`);
 
   if (fresh) {
     writeFileSync(log, "");
-    pruneOldLogs();
+    await pruneOldLogs();
   }
 
-  const agent = basename(kept.command[0] ?? "") === "claude";
-  const name = `${nameOf(kept.owner)}/${unit}`;
   const run = agent ? [`${import.meta.dir}/place`, name, ...args] : kept.command;
   const roomToStopAndTellItsThread = ["-p", "TimeoutStopSec=90s"];
   const givesWayToTheAgentsLikeWhatTheyRun = agent ? [] : ["-p", "Nice=10"];
@@ -999,7 +1002,7 @@ async function launch(
       .nothrow();
 
   if (started.exitCode !== 0) {
-    store.jobs.ended(unit, hostname(), startedAt);
+    await store.jobs.ended(unit, hostname(), startedAt);
   }
 
   return started.exitCode;

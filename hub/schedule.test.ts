@@ -8,7 +8,7 @@ import { study } from "./ideas.ts";
 import type { Session } from "./running.ts";
 import { check, nextRun, parse } from "./schedule.ts";
 import type { Job } from "./schedule.ts";
-import { open } from "./store.ts";
+import { file } from "./store.ts";
 
 let dir: string;
 let hexDir: string;
@@ -39,57 +39,59 @@ function schedulesJson(text: string) {
   writeFileSync(join(hexDir, "schedules.json"), text);
 }
 
-function jobs(file: Record<string, Job>) {
-  schedulesJson(JSON.stringify(file));
+function jobs(table: Record<string, Job>) {
+  schedulesJson(JSON.stringify(table));
 }
 
-const nobody = () => new Map<string, Session>();
+const nobody = () => Promise.resolve(new Map<string, Session>());
 
-function checkWith(minute: number, sessions: () => Map<string, Session> = nobody) {
-  check(dir, hexDir, "general", minute, study, sessions);
+async function checkWith(minute: number, sessions: () => Promise<Map<string, Session>> = nobody) {
+  await check(dir, hexDir, "general", minute, study, sessions);
 }
 
 const working = () =>
-  new Map<string, Session>([["run-1", { id: "run-1", pid: 1, status: "busy", started: 0 }]]);
+  Promise.resolve(
+    new Map<string, Session>([["run-1", { id: "run-1", pid: 1, status: "busy", started: 0 }]]),
+  );
 
 const runs = () => fired().filter((key) => key.startsWith("schedule:"));
 
-function checkEachMinuteAndListFired(from: number, to: number) {
+async function checkEachMinuteAndListFired(from: number, to: number) {
   for (let minute = from; minute <= to; minute++) {
-    checkWith(minute);
+    await checkWith(minute);
   }
 
   return fired();
 }
 
 function fired() {
-  return open(dir)
+  return file(dir)
     .messages.untaken()
     .map((row) => row.key);
 }
 
 function takeAll() {
-  for (const row of open(dir).messages.untaken()) {
-    open(dir).messages.take(row.key, "session");
+  for (const row of file(dir).messages.untaken()) {
+    file(dir).messages.take(row.key, "session");
   }
 }
 
-test("a job fires at its minute on the owner's clock, once, beside the main thread", () => {
+test("a job fires at its minute on the owner's clock, once, beside the main thread", async () => {
   jobs({ heartbeat: { cron: "45 * * * *", prompt: "Hourly check" } });
-  expect(checkEachMinuteAndListFired(at(18, 14, 40), at(18, 14, 50))).toEqual([
+  expect(await checkEachMinuteAndListFired(at(18, 14, 40), at(18, 14, 50))).toEqual([
     "schedule:heartbeat@2026-10-18T21:45Z",
   ]);
-  expect(open(dir).messages.get("schedule:heartbeat@2026-10-18T21:45Z")).toMatchObject({
+  expect(file(dir).messages.get("schedule:heartbeat@2026-10-18T21:45Z")).toMatchObject({
     to: "beside:general",
     from: "schedule",
     body: "[heartbeat] Hourly check",
   });
   expect(
-    open(dir).messages.get("schedule:heartbeat@2026-10-18T21:45Z")?.meta?.late,
+    file(dir).messages.get("schedule:heartbeat@2026-10-18T21:45Z")?.meta?.late,
   ).toBeUndefined();
 });
 
-test("steps, ranges, lists and Sunday as 0 or 7 fire where cron does", () => {
+test("steps, ranges, lists and Sunday as 0 or 7 fire where cron does", async () => {
   jobs({
     leisure: { cron: "17 */3 * * *", prompt: "Leisure" },
     weekdays: { cron: "0 9 * * 1-5", prompt: "Morning" },
@@ -99,7 +101,7 @@ test("steps, ranges, lists and Sunday as 0 or 7 fire where cron does", () => {
   const keys: string[] = [];
 
   for (let minute = at(18, 0); minute < at(19, 0); minute++) {
-    check(dir, hexDir, "general", minute);
+    await check(dir, hexDir, "general", minute);
     keys.push(...fired());
     takeAll();
   }
@@ -110,7 +112,7 @@ test("steps, ranges, lists and Sunday as 0 or 7 fire where cron does", () => {
   expect(keys.some((key) => key.startsWith("schedule:weekdays@"))).toBe(false);
 });
 
-test("an at fires once at each time it lists, and never again after", () => {
+test("an at fires once at each time it lists, and never again after", async () => {
   jobs({
     treat: {
       at: ["2026-10-20 16:00", "2026-10-20T18:00"],
@@ -121,16 +123,16 @@ test("an at fires once at each time it lists, and never again after", () => {
   const keys: string[] = [];
 
   for (let minute = at(20, 15, 59); minute <= at(20, 18, 1); minute++) {
-    check(dir, hexDir, "general", minute);
+    await check(dir, hexDir, "general", minute);
     keys.push(...fired());
     takeAll();
   }
 
   expect(keys).toEqual(["schedule:treat@2026-10-20T23:00Z", "schedule:treat@2026-10-21T01:00Z"]);
-  expect(open(dir).messages.get(keys[0] ?? "")?.to).toBe("topic");
+  expect(file(dir).messages.get(keys[0] ?? "")?.to).toBe("topic");
 });
 
-test("an at fires once when clocks go back, and as far past the jump as it was set when they skip it", () => {
+test("an at fires once when clocks go back, and as far past the jump as it was set when they skip it", async () => {
   jobs({
     back: { at: "2026-11-01 01:30", prompt: "Back" },
     ahead: { at: "2027-03-14 02:30", prompt: "Ahead" },
@@ -142,7 +144,7 @@ test("an at fires once when clocks go back, and as far past the jump as it was s
     [utc(2027, 3, 14, 8), utc(2027, 3, 14, 12)],
   ] as const) {
     for (let minute = from; minute <= to; minute++) {
-      check(dir, hexDir, "general", minute);
+      await check(dir, hexDir, "general", minute);
       keys.push(...fired());
       takeAll();
     }
@@ -151,28 +153,28 @@ test("an at fires once when clocks go back, and as far past the jump as it was s
   expect(keys).toEqual(["schedule:back@2026-11-01T08:30Z", "schedule:ahead@2027-03-14T10:30Z"]);
 });
 
-test("after the hub was down, each job fires its newest missed slot once, marked late", () => {
+test("after the hub was down, each job fires its newest missed slot once, marked late", async () => {
   jobs({
     heartbeat: { cron: "45 * * * *", prompt: "Hourly check" },
     nightly: { cron: "0 3 * * *", prompt: "Nightly" },
   });
-  check(dir, hexDir, "general", at(18, 9));
-  check(dir, hexDir, "general", at(18, 14, 50));
+  await check(dir, hexDir, "general", at(18, 9));
+  await check(dir, hexDir, "general", at(18, 14, 50));
   expect(fired()).toEqual(["schedule:heartbeat@2026-10-18T21:45Z"]);
-  expect(open(dir).messages.get("schedule:heartbeat@2026-10-18T21:45Z")?.meta?.late).toBe("true");
+  expect(file(dir).messages.get("schedule:heartbeat@2026-10-18T21:45Z")?.meta?.late).toBe("true");
 });
 
-test("the first check ever fires nothing from before it", () => {
+test("the first check ever fires nothing from before it", async () => {
   jobs({ heartbeat: { cron: "* * * * *", prompt: "Every minute" } });
-  check(dir, hexDir, "general", at(18, 9));
+  await check(dir, hexDir, "general", at(18, 9));
   expect(fired()).toEqual([]);
-  check(dir, hexDir, "general", at(18, 9, 1));
+  await check(dir, hexDir, "general", at(18, 9, 1));
   expect(fired()).toEqual(["schedule:heartbeat@2026-10-18T16:01Z"]);
 });
 
-test("a job fires every time it comes due, even while its last message waits to be taken", () => {
+test("a job fires every time it comes due, even while its last message waits to be taken", async () => {
   jobs({ heartbeat: { cron: "45 * * * *", prompt: "Hourly check" } });
-  checkEachMinuteAndListFired(at(18, 9), at(18, 12));
+  await checkEachMinuteAndListFired(at(18, 9), at(18, 12));
   expect(fired()).toEqual([
     "schedule:heartbeat@2026-10-18T16:45Z",
     "schedule:heartbeat@2026-10-18T17:45Z",
@@ -180,29 +182,29 @@ test("a job fires every time it comes due, even while its last message waits to 
   ]);
 });
 
-test("a broken schedules.json fires nothing, says why once, and its jobs catch up once it loads", () => {
+test("a broken schedules.json fires nothing, says why once, and its jobs catch up once it loads", async () => {
   jobs({ heartbeat: { cron: "45 * * * *", prompt: "Hourly check" } });
-  check(dir, hexDir, "general", at(18, 9));
+  await check(dir, hexDir, "general", at(18, 9));
   schedulesJson('{ "heartbeat": { "cron": "hourly", "prompt": "x" } }');
-  checkEachMinuteAndListFired(at(18, 9, 40), at(18, 9, 50));
-  const [broken, ...rest] = open(dir).messages.untaken();
+  await checkEachMinuteAndListFired(at(18, 9, 40), at(18, 9, 50));
+  const [broken, ...rest] = file(dir).messages.untaken();
   expect(rest).toEqual([]);
   expect(broken?.body).toContain('"hourly" is not a five-field cron expression');
   expect(broken?.to).toBe("beside:general");
   takeAll();
   jobs({ heartbeat: { cron: "45 * * * *", prompt: "Hourly check" } });
-  check(dir, hexDir, "general", at(18, 9, 51));
+  await check(dir, hexDir, "general", at(18, 9, 51));
   expect(fired()).toEqual(["schedule:heartbeat@2026-10-18T16:45Z"]);
-  expect(open(dir).messages.get("schedule:heartbeat@2026-10-18T16:45Z")?.meta?.late).toBe("true");
+  expect(file(dir).messages.get("schedule:heartbeat@2026-10-18T16:45Z")?.meta?.late).toBe("true");
 });
 
-test("a schedules.json gone for a while leaves its jobs to catch up once it is back", () => {
+test("a schedules.json gone for a while leaves its jobs to catch up once it is back", async () => {
   jobs({ heartbeat: { cron: "45 * * * *", prompt: "Hourly check" } });
-  check(dir, hexDir, "general", at(18, 9));
+  await check(dir, hexDir, "general", at(18, 9));
   rmSync(join(hexDir, "schedules.json"));
-  checkEachMinuteAndListFired(at(18, 9, 40), at(18, 9, 50));
+  await checkEachMinuteAndListFired(at(18, 9, 40), at(18, 9, 50));
   jobs({ heartbeat: { cron: "45 * * * *", prompt: "Hourly check" } });
-  check(dir, hexDir, "general", at(18, 9, 51));
+  await check(dir, hexDir, "general", at(18, 9, 51));
   expect(fired()).toEqual(["schedule:heartbeat@2026-10-18T16:45Z"]);
 });
 
@@ -243,7 +245,7 @@ test("a job needs a prompt and a cron or an at it can read", () => {
   });
 });
 
-test("a job that names an idea is handed to its check every minute, with its slot when one came due, and at most daily", () => {
+test("a job that names an idea is handed to its check every minute, with its slot when one came due, and at most daily", async () => {
   expect(() =>
     parse(JSON.stringify({ broken: { cron: "0 9 * * 1", idea: "four", prompt: "x" } })),
   ).toThrow("idea must be");
@@ -254,7 +256,7 @@ test("a job that names an idea is handed to its check every minute, with its slo
   const checked: [string, string | undefined, number | undefined][] = [];
 
   for (let minute = at(19, 8, 59); minute <= at(19, 9, 1); minute++) {
-    check(dir, hexDir, "general", minute, (_, name, job, __, slot) => {
+    await check(dir, hexDir, "general", minute, (_, name, job, __, slot) => {
       checked.push([name, job.idea, slot]);
     });
   }
@@ -267,7 +269,7 @@ test("a job that names an idea is handed to its check every minute, with its slo
   expect(fired()).toEqual([]);
 });
 
-test("a check job runs beside its thread, where a job with a thread runs in it", () => {
+test("a check job runs beside its thread, where a job with a thread runs in it", async () => {
   expect(() =>
     parse(JSON.stringify({ broken: { cron: "45 * * * *", check: "yes", prompt: "x" } })),
   ).toThrow("check must be true or false");
@@ -275,12 +277,12 @@ test("a check job runs beside its thread, where a job with a thread runs in it",
     mail: { cron: "45 * * * *", check: true, thread: "topic", prompt: "Check my mail." },
     standup: { cron: "45 * * * *", thread: "topic", prompt: "Standup." },
   });
-  check(dir, hexDir, "general", at(19, 8, 44));
-  check(dir, hexDir, "general", at(19, 8, 45));
+  await check(dir, hexDir, "general", at(19, 8, 44));
+  await check(dir, hexDir, "general", at(19, 8, 45));
   const slot = `${new Date(at(19, 8, 45) * 60_000).toISOString().slice(0, 16)}Z`;
 
-  expect(open(dir).messages.get(`schedule:mail@${slot}`)?.to).toBe("beside:topic");
-  expect(open(dir).messages.get(`schedule:standup@${slot}`)?.to).toBe("topic");
+  expect(file(dir).messages.get(`schedule:mail@${slot}`)?.to).toBe("beside:topic");
+  expect(file(dir).messages.get(`schedule:standup@${slot}`)?.to).toBe("topic");
 });
 
 test("a daily cron fires once on the day clocks skip its minute, and once on the day they repeat it", () => {
@@ -318,80 +320,80 @@ test("a watch is a job with the name the owner knows it by", () => {
   ).toThrow("watch must be");
 });
 
-test("signals that come in a burst fire a job that runs on them once, beside the main thread, saying why", () => {
+test("signals that come in a burst fire a job that runs on them once, beside the main thread, saying why", async () => {
   jobs({ "catch-up": { on: ["job-failed", "pace"], cron: "4 7 * * *", prompt: "Catch up." } });
-  checkWith(at(19, 8, 0));
+  await checkWith(at(19, 8, 0));
 
   for (const unit of ["a", "b", "c"]) {
-    open(dir).scheduler.signal("job-failed", `[job] ${unit} ended: failed (exit 1).\nits output`);
+    file(dir).scheduler.signal("job-failed", `[job] ${unit} ended: failed (exit 1).\nits output`);
   }
 
-  open(dir).scheduler.signal("nobody-listens", "x");
-  checkWith(at(19, 8, 1));
+  file(dir).scheduler.signal("nobody-listens", "x");
+  await checkWith(at(19, 8, 1));
 
-  const [run, ...more] = open(dir).messages.untaken();
+  const [run, ...more] = file(dir).messages.untaken();
   expect(more).toEqual([]);
   expect(run).toMatchObject({ to: "beside:general", meta: { schedule: "catch-up" } });
   expect(run?.body).toBe(
     "[catch-up] Catch up.\n\nWhy now:\n- [job] a ended: failed (exit 1).\n- [job] b ended: failed (exit 1).\n- [job] c ended: failed (exit 1).",
   );
-  expect(open(dir).scheduler.signals()).toEqual([]);
+  expect(file(dir).scheduler.signals()).toEqual([]);
 });
 
-test("signals that come while a run waits or works fold into one run after it", () => {
+test("signals that come while a run waits or works fold into one run after it", async () => {
   jobs({ "catch-up": { on: ["stalled"], prompt: "Catch up." } });
-  checkWith(at(19, 8, 0));
-  open(dir).scheduler.signal("stalled", "one");
-  checkWith(at(19, 8, 1));
-  open(dir).scheduler.signal("stalled", "two");
-  checkWith(at(19, 8, 2));
+  await checkWith(at(19, 8, 0));
+  file(dir).scheduler.signal("stalled", "one");
+  await checkWith(at(19, 8, 1));
+  file(dir).scheduler.signal("stalled", "two");
+  await checkWith(at(19, 8, 2));
   expect(runs()).toHaveLength(1);
 
-  const [first] = open(dir).messages.untaken();
-  open(dir).messages.take(first?.key ?? "", "run-1");
-  open(dir).turns.turned("run-1", true);
-  open(dir).scheduler.signal("stalled", "three");
+  const [first] = file(dir).messages.untaken();
+  file(dir).messages.take(first?.key ?? "", "run-1");
+  file(dir).turns.turned("run-1", true);
+  file(dir).scheduler.signal("stalled", "three");
 
-  checkWith(at(19, 8, 3), working);
+  await checkWith(at(19, 8, 3), working);
   expect(runs()).toEqual([]);
 
-  open(dir).turns.turned("run-1", false);
-  checkWith(at(19, 8, 4), working);
-  const [next, ...others] = open(dir).messages.untaken();
+  file(dir).turns.turned("run-1", false);
+  await checkWith(at(19, 8, 4), working);
+  const [next, ...others] = file(dir).messages.untaken();
   expect(others).toEqual([]);
   expect(next?.body).toBe("[catch-up] Catch up.\n\nWhy now:\n- two\n- three");
 });
 
-test("a run whose session died mid-turn doesn't hold signals back", () => {
+test("a run whose session died mid-turn doesn't hold signals back", async () => {
   jobs({ "catch-up": { on: ["stalled"], prompt: "Catch up." } });
-  checkWith(at(19, 8, 0));
-  open(dir).scheduler.signal("stalled", "one");
-  checkWith(at(19, 8, 1));
+  await checkWith(at(19, 8, 0));
+  file(dir).scheduler.signal("stalled", "one");
+  await checkWith(at(19, 8, 1));
   takeAll();
-  open(dir).turns.turned("session", true);
-  open(dir).scheduler.signal("stalled", "two");
-  checkWith(at(19, 8, 2));
+  file(dir).turns.turned("session", true);
+  file(dir).scheduler.signal("stalled", "two");
+  await checkWith(at(19, 8, 2));
   expect(
-    open(dir)
+    file(dir)
       .messages.untaken()
       .map((row) => row.body),
   ).toEqual(["[catch-up] Catch up.\n\nWhy now:\n- two"]);
 });
 
-test("a session of hex's mid-turn that writes nothing for half an hour signals stalled once each quiet stretch", () => {
+test("a session of hex's mid-turn that writes nothing for half an hour signals stalled once each quiet stretch", async () => {
   const claude = join(dir, "claude");
   const before = process.env.CLAUDE_CONFIG_DIR;
   process.env.CLAUDE_CONFIG_DIR = claude;
 
   try {
-    const file = transcript("/work", "quiet");
-    mkdirSync(join(file, ".."), { recursive: true });
-    writeFileSync(file, "{}\n");
+    const log = transcript("/work", "quiet");
+    mkdirSync(join(log, ".."), { recursive: true });
+    writeFileSync(log, "{}\n");
     const minute = at(19, 8, 0);
 
     const wrote = (minutesBefore: number) => {
       const when = (minute - minutesBefore) * 60;
-      utimesSync(file, when, when);
+      utimesSync(log, when, when);
     };
 
     const session: Session = {
@@ -404,29 +406,33 @@ test("a session of hex's mid-turn that writes nothing for half an hour signals s
       name: "Topic",
     };
 
-    const sessions = () => new Map([["quiet", session]]);
+    const sessions = () => Promise.resolve(new Map([["quiet", session]]));
     jobs({ "catch-up": { on: ["stalled"], prompt: "Catch up." } });
 
     wrote(29);
-    checkWith(minute, sessions);
+    await checkWith(minute, sessions);
     expect(fired()).toEqual([]);
 
     wrote(31);
-    checkWith(minute + 1, sessions);
-    checkWith(minute + 2, sessions);
+    await checkWith(minute + 1, sessions);
+    await checkWith(minute + 2, sessions);
     takeAll();
-    checkWith(minute + 3, sessions);
+    await checkWith(minute + 3, sessions);
     expect(fired()).toEqual([]);
 
     expect(
-      open(dir)
+      file(dir)
         .messages.since()
         .filter((row) => row.to === "signal:stalled"),
     ).toHaveLength(1);
 
-    checkWith(minute + 4, () => new Map([["quiet", { ...session, status: "idle" }]]));
+    await checkWith(minute + 4, () =>
+      Promise.resolve(new Map([["quiet", { ...session, status: "idle" }]])),
+    );
     wrote(40);
-    checkWith(minute + 5, () => new Map([["quiet", { ...session, thread: undefined }]]));
+    await checkWith(minute + 5, () =>
+      Promise.resolve(new Map([["quiet", { ...session, thread: undefined }]])),
+    );
     expect(fired()).toEqual([]);
   } finally {
     if (before === undefined) {

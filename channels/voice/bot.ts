@@ -31,7 +31,7 @@ const handlers: Handlers<typeof tools> = {
 
 const eachCallGetsAFreshSessionThatReadsTheCallChat = () => true;
 
-const hub = startHub({
+const hub = await startHub({
   stateDir,
   channel: process.env.VOICE_CHANNEL ?? "plugin:voice@hex",
   server,
@@ -53,8 +53,8 @@ const hub = startHub({
 
 serve(
   {
-    deliver: (content, meta) => {
-      hub.deliver(THREAD, THREAD, {
+    deliver: async (content, meta) => {
+      await hub.deliver(THREAD, THREAD, {
         content,
         meta,
         author: filled(meta.callee)

@@ -168,7 +168,7 @@ export function threadSessions({
   connect: number;
   reconnect: number;
   turnBegan: (thread: string) => void;
-  turnEnded: (thread: string) => void;
+  turnEnded: (thread: string) => Promise<void>;
   startFailed: (thread: string) => void;
 }) {
   const standings = runs.part((): Standing => ({ phase: { is: "stopped" }, work: ownedWork() }));
@@ -211,7 +211,10 @@ export function threadSessions({
     }
 
     if (phase.is === "launching") {
-      fail(thread, planned ? error.reason : error instanceof Error ? error.message : String(error));
+      void fail(
+        thread,
+        planned ? error.reason : error instanceof Error ? error.message : String(error),
+      );
     } else if (phase.is === "recovering") {
       become(thread, { is: "stopped" });
     }
@@ -341,7 +344,7 @@ export function threadSessions({
     }
 
     const { again } = phase;
-    waiting.markAll(thread);
+    yield* Effect.promise(() => waiting.markAll(thread));
     let daemonChecked: Promise<void> | undefined;
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -353,7 +356,7 @@ export function threadSessions({
         return;
       }
 
-      waiting.cut(thread, threads.current(thread));
+      yield* Effect.promise(() => waiting.cut(thread, threads.current(thread)));
       daemonChecked = claude.restartStaleDaemon();
       const session = threads.get(thread)?.session;
 
@@ -387,16 +390,25 @@ export function threadSessions({
     );
   }
 
-  function fail(thread: string, reason: string) {
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // The thread stays launching while the store is asked what the failure leaves, so a message meanwhile waits for what comes of it instead of starting another session, and only a failure whose start is still the thread's phase then acts.
+  async function fail(thread: string, reason: string) {
     const { phase } = standingOf(thread);
 
     if (phase.is !== "launching") {
       return;
     }
 
+    const lost = await failing.lost(thread, reason);
+    await waiting.markAll(thread);
+
+    if (standingOf(thread).phase !== phase) {
+      return;
+    }
+
     become(thread, { is: "stopped" });
 
-    if (failing.lost(thread, reason)) {
+    if (lost) {
       launch(thread, threads.of(thread).name, { again: phase.again });
 
       return;
@@ -404,11 +416,13 @@ export function threadSessions({
 
     startFailed(thread);
     failing.failure(thread, reason, phase.again === true);
-    turnEnded(thread);
+    await turnEnded(thread);
   }
 
-  function retry() {
-    for (const thread of failing.retries((held) => standings.get(held)?.phase.is === "stopped")) {
+  async function retry() {
+    for await (const thread of failing.retries(
+      (held) => standings.get(held)?.phase.is === "stopped",
+    )) {
       launch(thread, threads.get(thread)?.name ?? thread, { again: true });
     }
   }
@@ -451,7 +465,8 @@ export function threadSessions({
         const running = yield* channelless(phase, () => sessionOf(thread), { reconnect, connect });
 
         if (!running) {
-          gone(thread);
+          yield* Effect.promise(() => waiting.cut(thread, threads.current(thread)));
+          void ended(thread, phase);
 
           return;
         }
@@ -504,19 +519,24 @@ export function threadSessions({
   const restarted = (thread: string, phase: Launching, running: claude.Agent, id: string) =>
     Effect.andThen(respawn(thread, running, id), channelOrRestart(thread, phase));
 
-  function gone(thread: string) {
-    const started = standingOf(thread).phase.is === "launching";
-    waiting.cut(thread, threads.current(thread));
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A thread whose session is gone, once what it took is given back (waiting.cut): only while the thread is still in the phase that saw it go.
+  async function ended(thread: string, phase: Readonly<Phase>) {
+    if (standingOf(thread).phase !== phase) {
+      return;
+    }
+
+    const started = phase.is === "launching";
 
     if (started) {
-      fail(thread, "its session ended before its channel connected");
+      await fail(thread, "its session ended before its channel connected");
     } else {
       become(thread, { is: "stopped" });
     }
 
     if (thread === main) {
       revive();
-    } else if (!started && waiting.forNext(thread).length) {
+    } else if (!started && (await waiting.forNext(thread)).length > 0) {
       launch(thread, threads.get(thread)?.name ?? thread);
     }
   }
@@ -534,7 +554,7 @@ export function threadSessions({
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Sessions that outlived the hub (a hub restart) reconnect, or recover. A fresh main thread's launch never resumes, so one still running waits for its session instead of starting another.
-  function hubStarted(running: claude.Agent[]) {
+  async function hubStarted(running: claude.Agent[]) {
     const outlived = new Set(
       threads
         .ids()
@@ -548,21 +568,31 @@ export function threadSessions({
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // One that was mid-turn when the hub stopped, with no session running for it (a reboot, or hex moved to another machine), has nothing to reconnect: its next session gets what it left at once. The list is from a supervisor that answered, so a session missing from it isn't running.
-    const cutShort = threads
-      .ids()
-      .filter(
-        (thread) => !outlived.has(thread) && kept((store) => store.turns.midTurn(thread), false),
-      );
+    const midTurn = await Promise.all(
+      threads
+        .ids()
+        .filter((thread) => !outlived.has(thread))
+        .map(async (thread) =>
+          (await kept((store) => store.turns.midTurn(thread), false)) ? [thread] : [],
+        ),
+    );
+
+    const cutShort = midTurn.flat();
 
     for (const thread of [...outlived, ...cutShort]) {
-      if (standingOf(thread).phase.is !== "stopped") {
+      const { phase } = standingOf(thread);
+
+      if (phase.is !== "stopped") {
         continue;
       }
 
       if (outlived.has(thread)) {
         recover(thread);
       } else {
-        gone(thread);
+        void (async () => {
+          await waiting.cut(thread, threads.current(thread));
+          await ended(thread, phase);
+        })();
       }
     }
 

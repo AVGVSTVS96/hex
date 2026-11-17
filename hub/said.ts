@@ -47,24 +47,36 @@ function newest(rows: (Row & { job?: string; ended?: boolean })[], room: number)
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // What a thread's session is shown at its prompt: what hex's other sessions said in its chat since it was last shown, or for a new one since its thread's own sessions last took a message, or its job last ran there, so it knows what the owner is answering; and for a timed job run beside the thread, what that job's earlier runs said there, so it tells the owner nothing twice.
-export function said(store: Store, thread: string, session: string, prompt = ""): string {
-  const shown = store.seen.get(session, "said");
+export async function said(
+  store: Store,
+  thread: string,
+  session: string,
+  prompt = "",
+): Promise<string> {
   const key = KEY_ON_OPENING_CHANNEL_TAG.exec(prompt)?.[1];
-  const row = key === undefined ? null : store.messages.get(key);
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Read before the messages are, so one that lands while they're read is shown next time rather than never, and on the store's clock, which stamped them.
+  const [shownNow, shown, row] = await Promise.all([
+    store.clock.now(),
+    store.seen.get(session, "said"),
+    key === undefined ? null : store.messages.get(key),
+  ]);
+
   const schedule = row?.meta?.schedule;
 
   const besideRun = row !== null && besideWhat(row.to) !== undefined;
 
   const runs =
     besideRun && schedule !== undefined
-      ? store.messages.saidByEarlierRuns(row.to, thread, schedule, session)
+      ? await store.messages.saidByEarlierRuns(row.to, thread, schedule, session)
       : [];
 
   const since =
     shown === ""
       ? besideRun
         ? (runs[0]?.at ?? row.at)
-        : (store.messages.lastTakenIn(thread, session) ?? "")
+        : ((await store.messages.lastTakenIn(thread, session)) ?? "")
       : shown;
 
   const from =
@@ -86,13 +98,13 @@ export function said(store: Store, thread: string, session: string, prompt = "")
   const shownAsRuns = new Set(runs.map((run) => run.key));
 
   const others = newest(
-    store.messages
-      .saidByOthers(thread, session, since)
-      .filter((each) => !shownAsRuns.has(each.key)),
+    (await store.messages.saidByOthers(thread, session, since)).filter(
+      (each) => !shownAsRuns.has(each.key),
+    ),
     ROOM - earlier.join("\n").length,
   );
 
-  store.seen.show(session, "said", new Date().toISOString());
+  await store.seen.show(session, "said", shownNow);
 
   return [
     others.length > 0
@@ -115,7 +127,7 @@ if (import.meta.main) {
     const thread = process.env.HEX_THREAD;
 
     if (session !== undefined && session !== "" && thread !== undefined && thread !== "") {
-      const out = said(open(stateDir()), thread, session, prompt);
+      const out = await said(open(stateDir()), thread, session, prompt);
 
       if (out !== "") {
         console.log(out);

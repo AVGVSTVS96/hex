@@ -78,8 +78,6 @@ export function failedStarts({
       `hub: ${thread}'s session failed to start, ${failing.count} in a row: ${reason}\n`,
     );
 
-    waiting.markAll(thread);
-
     if (!again || failing.count === 1) {
       failed(thread, reason);
     }
@@ -94,7 +92,7 @@ export function failedStarts({
     ) {
       failing.told = true;
       const body = `[hub] hex couldn't start the session of ${app} thread "${threads.get(thread)?.name ?? thread}" ${failing.count} times in a row: ${reason}. Its next message starts it again.`;
-      kept(
+      void kept(
         (store) =>
           store.messages.deliver({
             key: `hub:${app}:${thread}:failing@${randomUUID()}`,
@@ -111,7 +109,7 @@ export function failedStarts({
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Claude Code failed a start for not finding the session it resumed or forked, and no project folder has its conversation, so the thread lets go of it once a note is kept that tells its next session why it starts without it. One another folder has fails as any start does.
-  function lost(thread: string, reason: string) {
+  async function lost(thread: string, reason: string) {
     const known = threads.get(thread);
     const start = starting.of(thread);
     const session = /source session (\S+) not found/u.exec(reason)?.[1];
@@ -129,8 +127,8 @@ export function failedStarts({
     const body = `[hub] Claude Code no longer has the conversation of session ${session}, which this thread was to continue, so you're a new session without it; say so when you reply.`;
 
     if (
-      !kept((store) => {
-        store.messages.deliver({
+      !(await kept(async (store) => {
+        await store.messages.deliver({
           key,
           to: thread,
           from: "hub",
@@ -140,7 +138,7 @@ export function failedStarts({
         });
 
         return true;
-      }, false)
+      }, false))
     ) {
       return false;
     }
@@ -184,18 +182,20 @@ export function failedStarts({
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A thread whose session failed to start keeps its prompt and the messages it was handed waiting, and the main thread is always running, so each starts again once starts go through. Once for each failed start a message set off: one that fails even then has a problem of its own, and waits for its next message. Each is yielded as it's marked retried, so its start begins before the next thread is looked at.
-  function* retries(stopped: (thread: string) => boolean) {
+  async function* retries(stopped: (thread: string) => boolean) {
     for (const [thread, start] of starting.all()) {
+      const { failing } = start;
+
       if (
-        !start.failing ||
-        start.failing.retried === true ||
+        !failing ||
+        failing.retried === true ||
         !stopped(thread) ||
-        !(thread === main || start.opening || waiting.forNext(thread).length)
+        !(thread === main || start.opening || (await waiting.forNext(thread)).length > 0)
       ) {
         continue;
       }
 
-      start.failing.retried = true;
+      failing.retried = true;
       yield thread;
     }
   }

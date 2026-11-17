@@ -7,34 +7,42 @@ function linked(text: string, url: string | undefined) {
   return url !== undefined && url !== "" ? `[${text.replaceAll(/[[\]]/gu, "")}](${url})` : text;
 }
 
-export function statusPost(
+export async function statusPost(
   store: Store,
   thread: string,
   note: string,
   room: number,
   link?: Link,
-): string {
-  const waiting = store.questions
-    .list({ thread, waiting: true })
-    .map(
-      (question) =>
-        `- ${question.asker ? linked(`Answered: ${clip(question.text, 110)}`, link?.(thread, question.answer?.message ?? question.message)) : linked(clip(question.text, 120), link?.(thread, question.message))}`,
+): Promise<string> {
+  const tasks = async (status: "open" | "idea") =>
+    await Promise.all(
+      (await store.tasks.list({ owner: thread, status: [status] })).map(
+        async (task) =>
+          `- ${linked(clip(task.title, 120), await latest(store, thread, task, link))}`,
+      ),
     );
 
-  const tasks = (status: "open" | "idea") =>
-    store.tasks
-      .list({ owner: thread, status: [status] })
-      .map((task) => `- ${linked(clip(task.title, 120), latest(store, thread, task, link))}`);
+  const [questions, open, ideas, lastDone] = await Promise.all([
+    store.questions.list({ thread, waiting: true }),
+    tasks("open"),
+    tasks("idea"),
+    store.tasks.lastDone(thread, 5),
+  ]);
 
-  const done = store.tasks
-    .lastDone(thread, 5)
-    .map((task) => `- ${linked(clip(task.title, 120), firstLinkIn(task.proof))}`);
+  const waiting = questions.map(
+    (question) =>
+      `- ${question.asker ? linked(`Answered: ${clip(question.text, 110)}`, link?.(thread, question.answer?.message ?? question.message)) : linked(clip(question.text, 120), link?.(thread, question.message))}`,
+  );
+
+  const done = lastDone.map(
+    (task) => `- ${linked(clip(task.title, 120), firstLinkIn(task.proof))}`,
+  );
 
   const sections = (
     [
       [HEADINGS[0], waiting],
-      [HEADINGS[1], tasks("open")],
-      [HEADINGS[2], tasks("idea")],
+      [HEADINGS[1], open],
+      [HEADINGS[2], ideas],
       [HEADINGS[3], done],
     ] as const
   ).flatMap(([header, lines]) =>
@@ -50,10 +58,10 @@ export function statusPost(
   return [head, fit(sections, room - (head ? head.length + 2 : 0))].filter(Boolean).join("\n\n");
 }
 
-function latest(store: Store, thread: string, task: Task, link: Link | undefined) {
-  const ownerLastAskedHere = task.words
-    .map((words) => store.messages.get(words.message))
-    .findLast((row) => row?.to === thread);
+async function latest(store: Store, thread: string, task: Task, link: Link | undefined) {
+  const ownerLastAskedHere = (
+    await Promise.all(task.words.map((words) => store.messages.get(words.message)))
+  ).findLast((row) => row?.to === thread);
 
   return ownerLastAskedHere
     ? link?.(

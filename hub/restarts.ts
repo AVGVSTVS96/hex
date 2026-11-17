@@ -1,7 +1,9 @@
 import { z } from "zod";
 
 import { besideOf } from "./beside.ts";
+import { tracked } from "./kept.ts";
 import { open } from "./store.ts";
+import type { NewRow } from "./store.ts";
 
 const RESTART_SCHEDULED = "5eb03494b6584870a536b337290809b3";
 const MINUTE = 60_000;
@@ -77,7 +79,7 @@ export function restarts(
       return;
     }
 
-    store.messages.deliver({
+    void tell({
       key: `restarts:${day}`,
       to: besideOf(main),
       from: "restarts",
@@ -86,6 +88,14 @@ export function restarts(
       meta: { user: "restarts" },
     });
   };
+
+  async function tell(row: NewRow) {
+    try {
+      await tracked(store.messages.deliver(row));
+    } catch (error) {
+      process.stderr.write(`hub: couldn't tell General: ${row.body}: ${String(error)}\n`);
+    }
+  }
 
   const follow = async () => {
     let journald: Bun.Subprocess<"ignore", "pipe", "inherit">;

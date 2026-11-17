@@ -44,11 +44,11 @@ const FIELDS = Object.values({
   fork: "fork",
 } satisfies { [Field in keyof Saved]-?: Field });
 
-export type Threads = ReturnType<typeof openThreads>;
+export type Threads = Awaited<ReturnType<typeof openThreads>>;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The app's open threads, from hex.db, and the session each is on. The hub starts only once it can read them, so no save closes threads it never loaded, and each change is saved as it's made.
-export function openThreads({
+// The app's open threads, from hex.db, and the session each is on. The hub starts only once it can read them, so no save closes threads it never loaded, and each change is saved as it's made, one save after another, so an earlier one never lands last.
+export async function openThreads({
   app,
   db,
   kept,
@@ -62,12 +62,12 @@ export function openThreads({
   link: ((thread: string) => string | undefined) | undefined;
 }) {
   const saved = new Map<string, Saved>(
-    db.threads
-      .list({ app, open: true })
-      .map(({ app: _app, open: _open, link: _link, thread, model, ...known }) => [
+    (await db.threads.list({ app, open: true })).map(
+      ({ app: _app, open: _open, link: _link, thread, model, ...known }) => [
         thread,
         { ...known, ...(present(model) && { model: family(model) }) },
-      ]),
+      ],
+    ),
   );
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -75,16 +75,30 @@ export function openThreads({
   const unsaved = new Map<string, string>();
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // hex.db keeps a closed thread's row, with its name, for whatever reads one. The app gives each thread's link as it knows it now; one it can't give keeps the last it gave.
-  function save() {
-    kept((store) => {
-      store.threads.keep(
+  // hex.db keeps a closed thread's row, with its name, for whatever reads one. The app gives each thread's link as it knows it now; one it can't give keeps the last it gave. Changes made while a save is on its way go in the one after it, which takes the threads as they are when it starts.
+  let saving: Promise<void> = Promise.resolve();
+  let queued = false;
+
+  function save(): Promise<void> {
+    if (queued) {
+      return saving;
+    }
+
+    queued = true;
+    const previous = saving;
+
+    saving = kept(async (store) => {
+      await previous;
+      queued = false;
+      await store.threads.keep(
         app,
         Object.fromEntries(
           [...saved].map(([thread, known]) => [thread, { ...known, ...linkOf(thread) }]),
         ),
       );
     }, undefined);
+
+    return saving;
   }
 
   function linkOf(thread: string) {
@@ -161,7 +175,7 @@ export function openThreads({
 
   function open(thread: string, known: Saved) {
     saved.set(thread, known);
-    save();
+    void save();
   }
 
   function update(thread: string, patch: Patch) {
@@ -171,7 +185,9 @@ export function openThreads({
       return;
     }
 
-    for (const field of FIELDS.filter((given) => given in patch)) {
+    const changed = FIELDS.filter((given) => given in patch && patch[given] !== known[given]);
+
+    for (const field of changed) {
       const value = patch[field];
 
       if (value === undefined) {
@@ -181,14 +197,16 @@ export function openThreads({
       }
     }
 
-    save();
+    if (changed.length > 0) {
+      void save();
+    }
   }
 
   function close(thread: string) {
     const session = saved.get(thread)?.session ?? "";
     saved.delete(thread);
     unsaved.delete(thread);
-    save();
+    void save();
 
     return session;
   }
@@ -222,7 +240,7 @@ export function openThreads({
     update(thread, { session, fork: undefined });
   }
 
-  save();
+  void save();
 
   return {
     get,

@@ -338,7 +338,12 @@ function threadTags(thread: string, parent?: string): string[][] {
     : [["e", thread, "", "reply"]];
 }
 
-function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof authTagSchema>) {
+const unsaved = (what: string) => (cause: unknown) =>
+  void process.stderr.write(`buzz hub: couldn't save ${what}: ${String(cause)}\n`);
+
+type AuthTag = z.output<typeof authTagSchema>;
+
+async function serve(url: string, secretKey: Uint8Array, authTag: AuthTag) {
   const [, owner] = authTag;
   const relay = connectRelay({ url, secretKey, authTag });
   const me = relay.pubkey;
@@ -418,7 +423,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
 
     homes.set(thread, channel);
     keep(CHANNELS_FILE, Object.fromEntries(homes));
-    hub.save();
+    hub.save().catch(unsaved(`${thread}'s link`));
   }
 
   async function channelOf(thread: string): Promise<string> {
@@ -1073,12 +1078,12 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
             i === 0 ? args.reply_to : undefined,
           );
 
-          hub.sent(thread, { key: sent.id, content });
+          await hub.sent(thread, { key: sent.id, content });
           sentIds.push(sent.id);
         }
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
-        hub.sent(thread, {
+        await hub.sent(thread, {
           content: chunks.slice(sentIds.length).join("\n"),
           meta: { failed: msg },
         });
@@ -1131,7 +1136,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     },
     edit_message: async (caller, args) => {
       if (args.settled === true) {
-        ledger.settled(caller, args.message_id, "✓ Settled");
+        await ledger.settled(caller, args.message_id, "✓ Settled");
       }
 
       if (args.text === undefined) {
@@ -1149,7 +1154,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
       }
 
       const edited = await edit(target, args.text);
-      hub.sent(caller, {
+      await hub.sent(caller, {
         key: edited.id,
         content: args.text,
         meta: { edited: "true", message_id: target.id },
@@ -1228,7 +1233,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
 
   const call = dispatch(tools, handlers);
 
-  const hub = startHub({
+  const hub = await startHub({
     stateDir: STATE_DIR,
     channel: "plugin:buzz@hex",
     server,
@@ -1249,13 +1254,13 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     },
     questions: {
       answer: (thread, key, label, via) => {
-        ledger.answered(thread, key, label, via);
+        ledger.answered(thread, key, label, via).catch(unsaved(`an answer in ${thread}`));
       },
       settle: (thread, key, note) => {
-        ledger.settled(thread, key, note);
+        ledger.settled(thread, key, note).catch(unsaved(`a settled question in ${thread}`));
       },
       reopen: (thread, key) => {
-        ledger.reopened(thread, key);
+        ledger.reopened(thread, key).catch(unsaved(`a reopened question in ${thread}`));
       },
     },
     hexDir: process.env.HEX_DIR,
@@ -1419,7 +1424,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     }
 
     reactions.set(event.id, { thread, emoji: event.content, meta });
-    hub.deliver(thread, hub.name(thread) ?? (await nameOf(event.pubkey)), {
+    await hub.deliver(thread, hub.name(thread) ?? (await nameOf(event.pubkey)), {
       key: event.id,
       author: authorOf(event),
       content: `(reaction: ${event.content})`,
@@ -1440,7 +1445,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     }
 
     const meta = await about(event, offered.thread, await channelOf(offered.thread));
-    hub.deliver(offered.thread, hub.name(offered.thread) ?? meta.user ?? "", {
+    await hub.deliver(offered.thread, hub.name(offered.thread) ?? meta.user ?? "", {
       key: event.id,
       author: authorOf(event),
       content: offered.choices[index]?.label ?? "",
@@ -1451,7 +1456,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
   async function handleDeletion(event: Event): Promise<void> {
     const id = tag(event, "e") ?? "";
     const reaction = reactions.get(id);
-    const keptByHexDbSinceTheRelayHidesDeletedEvents = hub.said(id);
+    const keptByHexDbSinceTheRelayHidesDeletedEvents = await hub.said(id);
     const found = keptByHexDbSinceTheRelayHidesDeletedEvents;
     const wasReactionOrTap = isGiven(found?.meta?.reaction) || isGiven(found?.meta?.button);
     const said = wasReactionOrTap ? undefined : found;
@@ -1470,7 +1475,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
       deletion.deleted_text = said.body;
     }
 
-    hub.deliver(
+    await hub.deliver(
       thread,
       hub.name(thread) ?? meta.user ?? "",
       reaction
@@ -1567,7 +1572,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
       meta,
     };
 
-    hub.deliver(thread, name, delivered);
+    await hub.deliver(thread, name, delivered);
   }
 
   let cursor = load(CURSOR_FILE, cursorSchema, { at: start, ids: [] });
@@ -1754,5 +1759,5 @@ if (!isGiven(RELAY_URL) || !isGiven(PRIVATE_KEY) || !isGiven(AUTH_TAG)) {
   process.on("uncaughtException", (error) => {
     process.stderr.write(`buzz hub: uncaught exception: ${String(error)}\n`);
   });
-  serve(RELAY_URL, secretKeyOf(PRIVATE_KEY), authTagSchema.parse(JSON.parse(AUTH_TAG)));
+  await serve(RELAY_URL, secretKeyOf(PRIVATE_KEY), authTagSchema.parse(JSON.parse(AUTH_TAG)));
 }

@@ -5,14 +5,14 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
-import { open } from "./store.ts";
+import { file } from "./store.ts";
 
 let dir: string;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "origin-"));
   mkdirSync(join(dir, "telegram"));
-  const store = open(dir);
+  const store = file(dir);
   store.threads.keep("telegram", { "-100:7": { name: "Website" }, "-100:8": { name: "Shop" } });
   store.threads.keep("voice", { voice: { name: "voice" } });
   store.messages.deliver({
@@ -155,7 +155,7 @@ test("a thread's own session goes by its thread over job variables it inherited,
 });
 
 test("a job is told the owner's words as they were when it started, a job no conversation started only that it is one, and a vote taken off isn't the owner's words", async () => {
-  const store = open(dir);
+  const store = file(dir);
   store.messages.deliver({
     key: "telegram:-100:52b",
     to: "-100:7",
@@ -209,7 +209,7 @@ test("a job is told the owner's words as they were when it started, a job no con
 });
 
 test("an edit is named by the message it edits, so the line reads as the owner's newest words however often they edit", async () => {
-  const store = open(dir);
+  const store = file(dir);
   store.messages.take("telegram:-100:52", "s");
   store.messages.deliver({
     key: "telegram:-100:52@1",
@@ -243,7 +243,7 @@ test("an edit is named by the message it edits, so the line reads as the owner's
 });
 
 test("a subagent or job of a session beside a thread is told the row that session ran for", async () => {
-  const store = open(dir);
+  const store = file(dir);
 
   store.messages.deliver({
     key: "hub:schedule:digest",

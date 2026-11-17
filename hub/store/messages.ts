@@ -1,9 +1,7 @@
-import type { Database } from "bun:sqlite";
-
 import { z } from "zod";
 
 import { fromJson, now, TextOrNull } from "./db.ts";
-import type { Core, MessageId, Write } from "./db.ts";
+import type { Core, MessageId, Sql, Write } from "./db.ts";
 
 export const AuthorColumn = z.enum(["owner", "hex", "prompt", "call", "other"]);
 
@@ -71,7 +69,7 @@ const LastRow = z.object({ last: z.number().nullable() });
 const UntakenRow = z.object({ untaken: z.number() });
 
 export class Messages {
-  private readonly db: Database;
+  private readonly db: Sql;
   private readonly write: Write;
 
   constructor({ db, write }: Core) {
@@ -109,13 +107,13 @@ export class Messages {
     );
   }
 
-  past(rows: [NewRow, string][], by: string): string[] {
+  past(rows: [row: NewRow, at: string, by: string][]): string[] {
     return this.write(() => {
       const at = this.db.query(
         "update messages set at = ?2, taken_at = ?2, observed_at = ?2 where key = ?1",
       );
 
-      return rows.flatMap(([row, when]) => {
+      return rows.flatMap(([row, when, by]) => {
         if (!this.deliver(row, by)) {
           return [];
         }

@@ -455,7 +455,7 @@ async function startBot(
     channel: string;
     me: string;
     key: Uint8Array;
-  }) => void,
+  }) => Promise<void>,
 ) {
   const dir = mkdtempSync(join(tmpdir(), "buzz-"));
   const state = join(dir, "state");
@@ -544,7 +544,7 @@ exit 0
       ["t", "forum"],
     ]),
   );
-  prepare?.({ state, relay, channel, me, key });
+  await prepare?.({ state, relay, channel, me, key });
 
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !/^(BUZZ_|HEX_|TELEGRAM_|DISCORD_)/u.test(name)),
@@ -855,7 +855,7 @@ test("after a restart Hex picks up what was sent while it was down, in order, an
   const t = Math.floor(Date.now() / 1000) - 100;
   let root!: Event;
 
-  const bot = await startBot(({ state, relay, channel, me }) => {
+  const bot = await startBot(async ({ state, relay, channel, me }) => {
     const at = (offset: number, content: string, tags: string[][]) => {
       const event = signed(ownerKey, 9, content, [["h", channel], ...tags], t + offset);
       relay.inject(event);
@@ -864,7 +864,7 @@ test("after a restart Hex picks up what was sent while it was down, in order, an
     };
 
     root = at(0, "@Hex desk anchors are loose", [["p", me]]);
-    open(join(dirname(state), "hex", "state")).threads.keep("buzz", {
+    await open(join(dirname(state), "hex", "state")).threads.keep("buzz", {
       [root.id]: { name: "Anchors" },
     });
     writeFileSync(join(state, "cursor.json"), JSON.stringify({ at: t, ids: [root.id] }));
@@ -1015,7 +1015,7 @@ test("a mirror backfills the new thread with the chat, the owner's lines quoted 
   const bot = await startBot();
   const { root, session } = await threadStarted(bot);
   const store = open(join(bot.state, "..", "hex", "state"));
-  store.messages.deliver(
+  await store.messages.deliver(
     {
       key: "telegram:1",
       to: root.id,
@@ -1025,7 +1025,7 @@ test("a mirror backfills the new thread with the chat, the owner's lines quoted 
     },
     SESSION,
   );
-  store.messages.deliver(
+  await store.messages.deliver(
     { key: "telegram:2", to: root.id, from: "telegram", author: "hex", body: "Roomy." },
     SESSION,
   );
@@ -1100,7 +1100,7 @@ test("a tap on buttons sent before a restart still arrives as a button", async (
   let question!: Event;
   let yes!: Event;
 
-  const bot = await startBot(({ state, relay, channel, me, key }) => {
+  const bot = await startBot(async ({ state, relay, channel, me, key }) => {
     const root = signed(
       ownerKey,
       9,
@@ -1129,7 +1129,7 @@ test("a tap on buttons sent before a restart still arrives as a button", async (
       relay.inject(event);
     }
 
-    open(join(dirname(state), "hex", "state")).threads.keep("buzz", {
+    await open(join(dirname(state), "hex", "state")).threads.keep("buzz", {
       [root.id]: { name: "Ship it" },
     });
     writeFileSync(
@@ -1471,7 +1471,7 @@ test("create_channel makes a channel Hex owns, adds the owner, and new_thread ca
 test("the channel of every thread is kept in channels.json for the voice app: threads it starts, threads it joins, and threads it already had", async () => {
   let known!: Event;
 
-  const bot = await startBot(({ state, relay, channel }) => {
+  const bot = await startBot(async ({ state, relay, channel }) => {
     known = signed(
       ownerKey,
       9,
@@ -1480,7 +1480,7 @@ test("the channel of every thread is kept in channels.json for the voice app: th
       Math.floor(Date.now() / 1000) - 3600,
     );
     relay.inject(known);
-    open(join(dirname(state), "hex", "state")).threads.keep("buzz", {
+    await open(join(dirname(state), "hex", "state")).threads.keep("buzz", {
       [known.id]: { name: "Old" },
       [crypto.randomUUID()]: { name: "victor" },
     });

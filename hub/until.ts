@@ -1,8 +1,8 @@
 const truthy = <T>(value: T): value is NonNullable<T> => Boolean(value);
 
-export async function until<T>(check: () => T): Promise<NonNullable<T>> {
+export async function until<T>(check: () => T | Promise<T>): Promise<NonNullable<T>> {
   for (;;) {
-    const value = check();
+    const value = await check();
 
     if (truthy(value)) {
       return value;

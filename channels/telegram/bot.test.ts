@@ -289,12 +289,22 @@ const state = mkdtempSync(join(tmpdir(), "telegram-"));
 
 const SLOW_SETUP = 30_000;
 
-const saved = () =>
+const saved = async () =>
   Object.fromEntries(
-    open(state)
-      .threads.list({ open: true })
-      .map((thread) => [thread.thread, thread]),
+    (await open(state).threads.list({ open: true })).map((thread) => [thread.thread, thread]),
   );
+
+async function eventually<T>(check: () => Promise<T>): Promise<NonNullable<T>> {
+  for (;;) {
+    const value = await check();
+
+    if (value !== undefined && value !== null && value !== false) {
+      return value;
+    }
+
+    await Bun.sleep(20);
+  }
+}
 
 const outbox = mkdtempSync(join(tmpdir(), "telegram-outbox-"));
 
@@ -349,7 +359,7 @@ async function update(fields: Omit<Update, "update_id">) {
 
 beforeAll(async () => {
   writeFileSync(join(state, "access.json"), JSON.stringify({ allowFrom: [String(OWNER)] }));
-  open(state).threads.keep("telegram", {
+  await open(state).threads.keep("telegram", {
     [DESK]: { name: "desk" },
     [String(OWNER)]: { name: "Victor" },
     [`${FORUM}:6`]: { name: "notes" },
@@ -415,7 +425,7 @@ test("closing a thread list entry that isn't a topic forgets it, instead of fail
   expect((await call("close_thread", { thread: "stray-key" })).text).toBe(
     'forgot "stray": it isn\'t a topic, so there was nothing to close in Telegram',
   );
-  await until(() => !("stray-key" in saved()));
+  await eventually(async () => !("stray-key" in (await saved())));
 });
 
 test("once it polls Telegram, hex tells systemd it serves", () => {
@@ -832,7 +842,7 @@ test("a poll goes out with named votes, keeps whether it takes several, and each
     is_anonymous: false,
     allows_multiple_answers: true,
   });
-  expect(asked(id).multiple).toBe(true);
+  expect((await asked(id)).multiple).toBe(true);
   await update({
     poll_answer: {
       poll_id: `poll-${id}`,
@@ -1126,7 +1136,7 @@ test("a message no session has read shows it waits, until a session takes it", a
     () => notes.received,
   );
 
-  open(state).messages.take(handed.meta.key ?? "", "notes-session");
+  await open(state).messages.take(handed.meta.key ?? "", "notes-session");
   expect(
     await called(
       "setMessageReaction",
@@ -1191,8 +1201,8 @@ test("a session's own reaction stays once the message it took stops waiting, and
   );
 
   await topic.call("react", { message_id: String(reacted.message_id), emoji: "🔥" });
-  open(state).messages.take(first.meta.key ?? "", "topic-session");
-  open(state).messages.take(second.meta.key ?? "", "topic-session");
+  await open(state).messages.take(first.meta.key ?? "", "topic-session");
+  await open(state).messages.take(second.meta.key ?? "", "topic-session");
   await until(
     () =>
       reactionsOn(plain.message_id).at(-1) === "👀" && reactionsOn(plain.message_id).length === 3,
@@ -1337,16 +1347,14 @@ test("with topics on in the DM, it stays one thread, and hex answers in the topi
   }
 });
 
-const ledger = () => ({
+const ledger = async () => ({
   pins: Object.fromEntries(
-    open(state)
-      .pins.list({ app: "telegram" })
-      .map((pin) => [pin.thread, pin]),
+    (await open(state).pins.list({ app: "telegram" })).map((pin) => [pin.thread, pin]),
   ),
 });
 
-const asked = (id: number) => {
-  const question = open(state).questions.get("telegram", DESK, id);
+const asked = async (id: number) => {
+  const question = await open(state).questions.get("telegram", DESK, id);
 
   if (!question) {
     throw new Error(`no question at ${id}`);
@@ -1358,7 +1366,7 @@ const asked = (id: number) => {
 test("a question with buttons goes in the ledger, and a tap there answers it", async () => {
   const sent = await call("reply", { text: "Deploy now?", buttons: ["Deploy", "Wait"] });
   const id = idIn(sent);
-  expect(asked(id)).toMatchObject({
+  expect(await asked(id)).toMatchObject({
     thread: DESK,
     message: id,
     text: "Deploy now?",
@@ -1383,7 +1391,10 @@ test("a question with buttons goes in the ledger, and a tap there answers it", a
       message: message({ message_id: id, from: hex, text: "Deploy now?", reply_markup: markup }),
     },
   });
-  expect(await until(() => asked(id).answer)).toMatchObject({ label: "Wait", via: "telegram" });
+  expect(await eventually(async () => (await asked(id)).answer)).toMatchObject({
+    label: "Wait",
+    via: "telegram",
+  });
 });
 
 test("a question answered in the app reaches its thread like a tap, says so on its buttons, and can be taken back", async () => {
@@ -1396,7 +1407,7 @@ test("a question answered in the app reaches its thread like a tap, says so on i
   const tap = await inbound((line) => line.meta.button_message_id === String(id));
   expect(tap.content).toBe("Coral");
   expect(tap.meta).toMatchObject({ button: "true", user: "hex app", answered_in: "in the app" });
-  expect(asked(id).answer).toMatchObject({ label: "Coral", via: "app" });
+  expect((await asked(id)).answer).toMatchObject({ label: "Coral", via: "app" });
 
   session({ type: "reopen", thread: DESK, message: id, via: "app" });
   expect(
@@ -1417,7 +1428,7 @@ test("a question answered in the app reaches its thread like a tap, says so on i
   expect((await inbound((line) => line.meta.took_back === "Coral")).content).toBe(
     "(took back: Coral)",
   );
-  expect(asked(id).answer).toBeUndefined();
+  expect((await asked(id)).answer).toBeUndefined();
 });
 
 test("a reply quoting an answer given in the app quotes the question it answered, and one with no Telegram message goes out unquoted", async () => {
@@ -1432,7 +1443,7 @@ test("a reply quoting an answer given in the app quotes the question it answered
   expect(
     (await called("sendMessage", (p) => p.text === "Stripe it is. Which logo?")).reply_parameters,
   ).toEqual({ message_id: id });
-  expect(asked(followUp).text).toBe("Stripe it is. Which logo?");
+  expect((await asked(followUp)).text).toBe("Stripe it is. Which logo?");
 
   await call("reply", {
     text: "Logo next",
@@ -1505,7 +1516,7 @@ test("of two taps on one question only the first counts: the thread hears it onc
     });
 
   await Promise.all([tap("ship", "0"), tap("hold", "1")]);
-  const label = asked(id).answer?.label ?? "";
+  const label = (await asked(id)).answer?.label ?? "";
 
   const shown = () =>
     calls.findLast((c) => c.method === "editMessageReplyMarkup" && c.payload.message_id === id)
@@ -1519,12 +1530,11 @@ test("of two taps on one question only the first counts: the thread hears it onc
       .map((line) => line.content),
   ).toEqual([label]);
   expect(
-    open(state)
-      .db.query(
-        "select count(*) as n from messages where json_extract(meta, '$.button_message_id') = ?",
-      )
-      .get(String(id)),
-  ).toEqual({ n: 1 });
+    await open(state).read(
+      "select count(*) as n from messages where json_extract(meta, '$.button_message_id') = ?",
+      String(id),
+    ),
+  ).toEqual([{ n: 1 }]);
 });
 
 test("a settled question loses its buttons without reaching its thread, and an edit keeps a question open with its buttons until it says it settled", async () => {
@@ -1535,7 +1545,7 @@ test("a settled question loses its buttons without reaching its thread, and an e
   expect(await called("editMessageReplyMarkup", (p) => p.message_id === first)).toMatchObject({
     reply_markup: { inline_keyboard: [[{ text: "Settled: bought on Oct 12", disabled: {} }]] },
   });
-  expect(await until(() => asked(first).settled)).toMatchObject({
+  expect(await eventually(async () => (await asked(first)).settled)).toMatchObject({
     note: "Settled: bought on Oct 12",
   });
   expect(
@@ -1557,7 +1567,7 @@ test("a settled question loses its buttons without reaching its thread, and an e
       ],
     },
   });
-  expect(asked(second).settled).toBeUndefined();
+  expect((await asked(second)).settled).toBeUndefined();
   await call("edit_message", {
     message_id: String(second),
     text: "Renamed, as you said in the call.",
@@ -1572,7 +1582,7 @@ test("a settled question loses its buttons without reaching its thread, and an e
   expect(await called("editMessageReplyMarkup", (p) => p.message_id === second)).toMatchObject({
     reply_markup: { inline_keyboard: [[{ text: "✓ Settled", disabled: {} }]] },
   });
-  expect(asked(second).settled).toMatchObject({ note: "✓ Settled" });
+  expect((await asked(second)).settled).toMatchObject({ note: "✓ Settled" });
 
   const third = idIn(await call("reply", { text: "Keep the old name?", buttons: ["Yes", "No"] }));
 
@@ -1580,7 +1590,7 @@ test("a settled question loses its buttons without reaching its thread, and an e
   expect(await called("editMessageReplyMarkup", (p) => p.message_id === third)).toMatchObject({
     reply_markup: { inline_keyboard: [[{ text: "✓ Settled", disabled: {} }]] },
   });
-  expect(asked(third)).toMatchObject({
+  expect(await asked(third)).toMatchObject({
     text: "Keep the old name?",
     settled: { note: "✓ Settled" },
   });
@@ -1619,7 +1629,7 @@ test("another thread, or the DM, quotes and settles a question by its key, and a
     chat_id: String(OWNER),
     reply_parameters: { message_id: id, chat_id: String(FORUM) },
   });
-  expect(open(state).questions.get("telegram", String(OWNER), reminder)).toBeNull();
+  expect(await open(state).questions.get("telegram", String(OWNER), reminder)).toBeNull();
   await general.call("reply", { text: "Ship the site, in Desk", reply_to: String(id) });
   expect(
     (await called("sendMessage", (p) => p.text === "Ship the site, in Desk")).reply_parameters,
@@ -1627,7 +1637,7 @@ test("another thread, or the DM, quotes and settles a question by its key, and a
   expect((await general.call("edit_message", { message_id: String(id), settled: true })).text).toBe(
     `settled (id: ${id})`,
   );
-  expect(asked(id).settled).toMatchObject({ note: "✓ Settled" });
+  expect((await asked(id)).settled).toMatchObject({ note: "✓ Settled" });
   expect(
     (await dm.call("edit_message", { message_id: `telegram:${FORUM}:${id}`, settled: true })).text,
   ).toBe(`no question waits on message telegram:${FORUM}:${id}, so nothing was settled`);
@@ -1657,7 +1667,7 @@ test("a poll's screenshots go above it as one album, each captioned with its opt
   expect(album?.payload.media).toMatchObject([{ caption: "One" }, { caption: "Both" }]);
   expect(poll?.payload.reply_parameters).toEqual({ message_id: id - 2 });
 
-  const kept = asked(id).shots ?? [];
+  const kept = (await asked(id)).shots ?? [];
 
   expect(kept.map((shot) => readFileSync(shot, "utf-8"))).toEqual(["png", "png"]);
   expect(kept.some((shot) => shot.startsWith(outbox))).toBe(false);
@@ -1680,13 +1690,13 @@ test("a question keeps the messages its pictures went in, after its words or as 
       ?.slice(1)
       .map(Number) ?? [];
 
-  expect(asked(words).attached).toEqual([picture]);
+  expect((await asked(words)).attached).toEqual([picture]);
 
   const captioned = idIn(
     await call("reply", { text: "The new m?", buttons: ["This one", "Not it"], files: [logo] }),
   );
 
-  expect(asked(captioned).attached).toEqual([captioned]);
+  expect((await asked(captioned)).attached).toEqual([captioned]);
 });
 
 test("edit_message settles a poll even with text, which a poll can't change, and without settled says so", async () => {
@@ -1695,7 +1705,7 @@ test("edit_message settles a poll even with text, which a poll can't change, and
   expect(
     (await call("edit_message", { message_id: String(id), text: "Ship it? Shipped." })).error,
   ).toContain("a poll's own text can't be edited");
-  expect(asked(id).settled).toBeUndefined();
+  expect((await asked(id)).settled).toBeUndefined();
   expect(
     (
       await call("edit_message", {
@@ -1706,7 +1716,7 @@ test("edit_message settles a poll even with text, which a poll can't change, and
     ).text,
   ).toContain("settled the poll");
   expect(await called("stopPoll", (p) => p.message_id === id)).toBeTruthy();
-  expect(asked(id).settled).toMatchObject({ note: "✓ Settled" });
+  expect((await asked(id)).settled).toMatchObject({ note: "✓ Settled" });
 
   const voted = idIn(await call("poll", { question: "Ship it today?", options: ["Yes", "No"] }));
 
@@ -1718,7 +1728,7 @@ test("edit_message settles a poll even with text, which a poll can't change, and
       option_persistent_ids: [],
     },
   });
-  await until(() => asked(voted).answer);
+  await eventually(async () => (await asked(voted)).answer);
   expect(
     (await call("edit_message", { message_id: String(voted), text: "Settled", settled: true }))
       .text,
@@ -1729,7 +1739,7 @@ test("edit_message settles a poll even with text, which a poll can't change, and
 test("a poll answered in the app closes, and its vote reaches the thread", async () => {
   const id = idIn(await call("poll", { question: "Which take?", options: ["A", "B"] }));
 
-  expect(asked(id)).toMatchObject({ options: ["A", "B"], poll: `poll-${id}` });
+  expect(await asked(id)).toMatchObject({ options: ["A", "B"], poll: `poll-${id}` });
   session({ type: "answer", thread: DESK, message: id, label: "B", via: "call" });
   expect(await called("stopPoll", (p) => p.message_id === id)).toBeTruthy();
   expect(
@@ -1747,7 +1757,9 @@ test("a message edited before it is forwarded goes with its new text", async () 
 
   const forwarded = idIn(await call("forward", { message_id: String(id), thread: "notes" }));
 
-  expect(open(state).messages.get(`telegram:${FORUM}:${forwarded}`)?.body).toBe("Status: live");
+  expect((await open(state).messages.get(`telegram:${FORUM}:${forwarded}`))?.body).toBe(
+    "Status: live",
+  );
 });
 
 test("a status post is the session's note over lines hex keeps current from the thread's questions and tasks", async () => {
@@ -1760,7 +1772,7 @@ test("a status post is the session's note over lines hex keeps current from the 
 
   expect(sent.rich_message?.markdown).toStartWith("Site: example.com\n\n**Waiting on you");
   expect(await called("pinChatMessage", (p) => p.message_id === id)).toBeTruthy();
-  expect(ledger().pins[DESK]).toMatchObject({ message: id, note: "Site: example.com" });
+  expect((await ledger()).pins[DESK]).toMatchObject({ message: id, note: "Site: example.com" });
 
   const edits = () =>
     calls
@@ -1779,7 +1791,7 @@ test("a status post is the session's note over lines hex keeps current from the 
   expect(edits()).toHaveLength(count + 1);
   expect(edits().at(-1)).toStartWith("Site: example.org\n\n**Waiting on you**");
   expect(edits().at(-1)).toContain("[Rename the site?]");
-  expect(ledger().pins[DESK]).toMatchObject({ message: id, note: "Site: example.org" });
+  expect((await ledger()).pins[DESK]).toMatchObject({ message: id, note: "Site: example.org" });
   expect(
     (
       await call("edit_message", {
@@ -1792,17 +1804,17 @@ test("a status post is the session's note over lines hex keeps current from the 
 
   const next = idIn(await call("pin", { note: "Site: v2" }));
   expect(await called("unpinChatMessage", (p) => p.message_id === id)).toBeTruthy();
-  expect(ledger().pins[DESK]).toMatchObject({ message: next, note: "Site: v2" });
+  expect((await ledger()).pins[DESK]).toMatchObject({ message: next, note: "Site: v2" });
   expect((await call("pin", { unpin: true, message_id: `telegram:${FORUM}:${next}` })).text).toBe(
     `unpinned the status post (id: ${next})`,
   );
   expect(await called("unpinChatMessage", (p) => p.message_id === next)).toBeTruthy();
-  expect(ledger().pins[DESK]).toBeUndefined();
+  expect((await ledger()).pins[DESK]).toBeUndefined();
 });
 
-test("a thread's link is where Telegram opens it: a topic, General, or for a DM, the bot", () => {
-  expect(saved()[DESK]?.link).toBe("https://t.me/c/1234/5");
-  expect(saved()[String(OWNER)]).toMatchObject({ link: "https://t.me/hex_bot" });
+test("a thread's link is where Telegram opens it: a topic, General, or for a DM, the bot", async () => {
+  expect((await saved())[DESK]?.link).toBe("https://t.me/c/1234/5");
+  expect((await saved())[String(OWNER)]).toMatchObject({ link: "https://t.me/hex_bot" });
 });
 
 test("a backfill quotes the owner under their name and posts hex as itself, silently, split to fit and waiting out the rate limit", async () => {
@@ -1906,7 +1918,7 @@ test("/effort and /model set what the thread's next message starts with, and nev
   expect(
     await called("sendMessage", (p) => p.text === "Effort: High, from this thread's next message."),
   ).toMatchObject({ message_thread_id: 5 });
-  expect(saved()[DESK]?.effort).toBe("high");
+  expect((await saved())[DESK]?.effort).toBe("high");
   expect(
     received()
       .slice(before)
@@ -1919,9 +1931,9 @@ test("set_model sets what the thread's next message starts with, when the user t
   expect((await call("set_model", { model: "opus", effort: "xhigh" })).text).toBe(
     "Opus, Extra High effort, from this thread's next message",
   );
-  expect(saved()[DESK]).toMatchObject({ model: "opus", effort: "xhigh" });
+  expect((await saved())[DESK]).toMatchObject({ model: "opus", effort: "xhigh" });
   await call("set_model", { effort: "low" });
-  expect(saved()[DESK]).toMatchObject({ model: "opus", effort: "low" });
+  expect((await saved())[DESK]).toMatchObject({ model: "opus", effort: "low" });
   expect((await call("set_model", {})).error).toMatch(
     /^set_model takes a model \(opus, sonnet, haiku, fable\)/u,
   );

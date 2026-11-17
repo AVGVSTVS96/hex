@@ -1,9 +1,8 @@
-import type { Database } from "bun:sqlite";
-
 import { z } from "zod";
 
 import { MessageIdColumn, now } from "./db.ts";
-import type { Core, MessageId, Write } from "./db.ts";
+import type { Core, MessageId, Sql, Write } from "./db.ts";
+import type { Questions } from "./questions.ts";
 
 export type Pin = {
   app: string;
@@ -28,12 +27,14 @@ const PinRows = z.array(PinRow);
 const ChangedRows = z.array(z.object({ thread: z.string(), n: z.number() }));
 
 export class Pins {
-  private readonly db: Database;
+  private readonly db: Sql;
   private readonly write: Write;
+  private readonly questions: Questions;
 
-  constructor({ db, write }: Core) {
+  constructor({ db, write }: Core, questions: Questions) {
     this.db = db;
     this.write = write;
+    this.questions = questions;
   }
 
   get(app: string, thread: string): Pin | null {
@@ -75,6 +76,25 @@ export class Pins {
         )
         .run(app, thread, message, text, note ?? null, at),
     );
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A status post's new words are kept only while it is still the post that was rewritten, with the note it had: one pinned or noted since keeps its own.
+  repinned(pin: Pick<Pin, "app" | "thread" | "message" | "text" | "note">, was: string) {
+    this.write(() => {
+      const still = this.get(pin.app, pin.thread);
+
+      if (still?.message === pin.message && still.note === was) {
+        this.pinned(pin);
+      }
+    });
+  }
+
+  forgotten(app: string, thread: string, message?: MessageId) {
+    this.write(() => {
+      this.questions.unask(app, thread, message);
+      this.unpinned(app, thread, message);
+    });
   }
 
   unpinned(app: string, thread?: string, message?: MessageId) {

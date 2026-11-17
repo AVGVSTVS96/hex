@@ -252,7 +252,20 @@ case "${1:-}" in
   acp)
     exec bun "$hex/channels/t3/acp.ts" "$home/state/t3/acp.sock"
     ;;
-  deliver|signal|task|tasks|hold|holds|questions|pins|threads|thread|running|message|profile|log|recall|watch)
+  store)
+    if [ "${2:-}" = deploy ]; then
+      # wrangler reads CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID, which .env keeps.
+      . "$hex/bin/settings"
+      exec bunx wrangler@4 deploy --config "$hex/hub/store/wrangler.jsonc"
+    fi
+    if [ "${2:-}" = move ]; then
+      # A hub that writes while its records move would leave rows in a file nothing reads.
+      ! running || { echo "hex is running: stop it first, so nothing writes hex.db while its records move" >&2; exit 1; }
+      exec bun "$hex/hub/store/move.ts" "$home/state" "${3:-}"
+    fi
+    exec bun "$hex/hub/cli.ts" "$home/state" "$@"
+    ;;
+  deliver|signal|task|tasks|hold|holds|questions|pins|threads|thread|running|message|profile|log|recall|sql|watch)
     export MEMORY_DIR="${MEMORY_DIR:-$home/memory}"
     # While hex runs on another machine, its commands run there, as whoever ran them here.
     moved=0

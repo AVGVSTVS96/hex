@@ -5,11 +5,12 @@ import { join } from "node:path";
 
 import { running, served, serving } from "./running.ts";
 import type { Session } from "./running.ts";
-import { open } from "./store.ts";
+import { file } from "./store.ts";
 import { until } from "./until.ts";
 
 const claude = mkdtempSync(join(tmpdir(), "running-"));
-const store = open(join(claude, "state"));
+const records = file(join(claude, "state"));
+const { store } = records;
 
 afterEach(() => {
   rmSync(join(claude, "sessions"), { recursive: true, force: true });
@@ -78,8 +79,8 @@ test("a session runs while its process lives, works for the thread it serves or 
   record("gone", { pid: 2 ** 22 + 1, sessionId: "cccccccc-1", status: "busy" });
   record("old", { pid: process.pid, sessionId: "dddddddd-1", status: "idle" });
   record("new", { pid: process.pid, sessionId: "dddddddd-1", status: "busy" });
-  store.turns.turned("bbbbbbbb-1", true);
-  const sessions = running(store, claude);
+  records.turns.turned("bbbbbbbb-1", true);
+  const sessions = await running(store, claude);
   expect([...sessions.keys()].toSorted()).toEqual([
     "aaaaaaaa-1",
     "bbbbbbbb-1",
@@ -101,8 +102,8 @@ test("a session runs while its process lives, works for the thread it serves or 
   const held = new Map([["aaaaaaaa-1", "discord:7"]]);
   expect(serving(found(sessions, "aaaaaaaa-1"), held)).toBe("discord:7");
   expect(serving(found(sessions, "bbbbbbbb-1"), held)).toBe("telegram:-100:103");
-  store.turns.turned("bbbbbbbb-1", false);
-  const ended = found(running(store, claude), "bbbbbbbb-1");
+  records.turns.turned("bbbbbbbb-1", false);
+  const ended = found(await running(store, claude), "bbbbbbbb-1");
   expect(ended.status).toBe("busy");
   expect(Date.parse(ended.ended ?? "")).toBeGreaterThanOrEqual(Date.parse(ended.began ?? ""));
 });
@@ -142,7 +143,7 @@ test("a session whose process runs under another's works for what that one works
     startedAt: 2,
   });
   record("check", { pid: helper, sessionId: "cccccccc-2", status: "busy", startedAt: 3 });
-  const sessions = running(store, claude);
+  const sessions = await running(store, claude);
   expect(found(sessions, "aaaaaaaa-2").parent).toBeUndefined();
   expect(sessions.get("bbbbbbbb-2")).toMatchObject({ parent: "aaaaaaaa-2" });
   expect(sessions.get("cccccccc-2")).toMatchObject({ parent: "aaaaaaaa-2", helper: "check" });
@@ -170,7 +171,7 @@ test("a session hex runs beside a thread works for that thread, and says it runs
     readFileSync(`/proc/${run.pid}/environ`, "utf-8").includes("HEX_BESIDE=eeeeeeee-1"),
   );
   record("beside", { pid: run.pid, sessionId: "eeeeeeee-1", status: "busy", startedAt: 1 });
-  const sessions = running(store, claude);
+  const sessions = await running(store, claude);
   expect(sessions.get("eeeeeeee-1")).toMatchObject({
     thread: "telegram:-100:103",
     beside: "eeeeeeee-1",
@@ -178,7 +179,7 @@ test("a session hex runs beside a thread works for that thread, and says it runs
   expect(serving(found(sessions, "eeeeeeee-1"), new Map(), sessions)).toBe("telegram:-100:103");
 });
 
-test("a background session works for the thread its job's settings name, before any thread holds it", () => {
+test("a background session works for the thread its job's settings name, before any thread holds it", async () => {
   writeFileSync(
     join(claude, "thread-settings.json"),
     JSON.stringify({ env: { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-100:103" } }),
@@ -205,13 +206,13 @@ test("a background session works for the thread its job's settings name, before 
     kind: "bg",
     startedAt: 1,
   });
-  const sessions = running(store, claude);
+  const sessions = await running(store, claude);
   expect(found(sessions, "aaaaaaaa-4").thread).toBe("telegram:-100:103");
   expect(found(sessions, "bbbbbbbb-4").thread).toBeUndefined();
   rmSync(join(claude, "jobs"), { recursive: true });
 });
 
-test("a background session whose settings are a pipe or can't be opened works for no thread, without blocking", () => {
+test("a background session whose settings are a pipe or can't be opened works for no thread, without blocking", async () => {
   Bun.spawnSync(["mkfifo", join(claude, "settings-pipe")]);
 
   const unreadable: [string, string][] = [
@@ -235,7 +236,7 @@ test("a background session whose settings are a pipe or can't be opened works fo
     });
   }
 
-  const sessions = running(store, claude);
+  const sessions = await running(store, claude);
   expect(["cccccccc-5", "dddddddd-5", "eeeeeeee-5"].map((id) => sessions.get(id)?.thread)).toEqual([
     undefined,
     undefined,
@@ -246,12 +247,12 @@ test("a background session whose settings are a pipe or can't be opened works fo
   rmSync(join(claude, "settings-pipe"));
 });
 
-test("a record whose pid now belongs to a process that started at another time isn't running", () => {
+test("a record whose pid now belongs to a process that started at another time isn't running", async () => {
   const since = readFileSync(`/proc/${process.pid}/stat`, "utf-8").split(") ")[1]?.split(" ")[19];
   expect(since).toMatch(/^\d+$/u);
   record("same", { pid: process.pid, sessionId: "aaaaaaaa-3", status: "busy", procStart: since });
   record("reused", { pid: process.pid, sessionId: "bbbbbbbb-3", status: "busy", procStart: "1" });
-  expect([...running(store, claude).keys()]).toEqual(["aaaaaaaa-3"]);
+  expect([...(await running(store, claude)).keys()]).toEqual(["aaaaaaaa-3"]);
 });
 
 function stop(pid: number) {

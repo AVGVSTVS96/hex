@@ -1,4 +1,3 @@
-import type { Database } from "bun:sqlite";
 import { existsSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { hostname } from "node:os";
 import { basename, join } from "node:path";
@@ -7,6 +6,7 @@ import { z } from "zod";
 
 import { above } from "../fit.ts";
 import { fromJson, MessageIdColumn } from "./db.ts";
+import type { Sql } from "./db.ts";
 import { JobSpecJson, StopReasonColumn } from "./jobs.ts";
 import { AuthorColumn } from "./messages.ts";
 import type { Messages } from "./messages.ts";
@@ -17,7 +17,7 @@ import type { Relays } from "./relays.ts";
 
 type Migrating = {
   dir: string;
-  db: Database;
+  db: Sql;
   messages: Messages;
   questions: Questions;
   pins: Pins;

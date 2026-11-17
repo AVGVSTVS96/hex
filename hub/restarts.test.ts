@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { restarts } from "./restarts.ts";
-import { open } from "./store.ts";
-import type { Store } from "./store.ts";
+import { file } from "./store.ts";
+import type { File } from "./store.ts";
 import { until } from "./until.ts";
 
 let dir: string;
-let store: Store;
+let store: File;
 
 const restart = (unit: string, at: number, counter: number) =>
   JSON.stringify({
@@ -25,10 +25,10 @@ const loop = (unit: string, times: number, { from = 1, before = false } = {}) =>
   );
 
 const journal = (...lines: string[]) => {
-  const file = join(dir, "journal");
-  writeFileSync(file, `${lines.join("\n")}\n`);
+  const path = join(dir, "journal");
+  writeFileSync(path, `${lines.join("\n")}\n`);
 
-  return () => ["sh", "-c", `cat ${file}; exec sleep 60`];
+  return () => ["sh", "-c", `cat ${path}; exec sleep 60`];
 };
 
 const prompts = () =>
@@ -39,7 +39,7 @@ const prompts = () =>
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "restarts-"));
-  store = open(dir);
+  store = file(dir);
 });
 
 afterEach(() => {

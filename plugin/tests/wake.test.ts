@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { open } from "../../hub/store.ts";
+import { file } from "../../hub/store.ts";
 
 const BIN = join(import.meta.dir, "../../bin");
 
@@ -22,11 +22,11 @@ const withoutTheHexSessionSteeringTheseHooks = Object.fromEntries(
 );
 
 let home: string;
-let file: string;
+let wakeFile: string;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "wake-"));
-  file = join(home, "state/wake/CLAUDE.md");
+  wakeFile = join(home, "state/wake/CLAUDE.md");
   mkdirSync(join(home, ".hex/bin"), { recursive: true });
   mkdirSync(join(home, ".hex/vendor"));
   copyFileSync(join(BIN, "wake"), join(home, ".hex/bin/wake"));
@@ -60,7 +60,7 @@ function wake(env?: Record<string, string>) {
     }).exitCode,
   ).toBe(0);
 
-  return existsSync(file) ? readFileSync(file, "utf-8") : undefined;
+  return existsSync(wakeFile) ? readFileSync(wakeFile, "utf-8") : undefined;
 }
 
 const body = (out: string | undefined) =>
@@ -88,7 +88,7 @@ test("the file holds every part of memo's wake in order, as long as it runs", ()
 
 test("the profile comes first, ahead of memory", () => {
   memo(["#0 2026-10-06 First note.\nYou are awake.\n"]);
-  open(join(home, "state")).profiles.profiled("", "# Always\n- Ships on fridays\n");
+  file(join(home, "state")).profiles.profiled("", "# Always\n- Ships on fridays\n");
   expect(body(wake({ MEMORY_DIR: join(home, "memory"), HEX_STORE: join(home, "state") }))).toBe(
     "My profile, the current truth about me, kept by hex's memory agent from my own words:\n\n# Always\n- Ships on fridays\n\nYour memory, oldest first:\n\n#0 2026-10-06 First note.\nYou are awake.\n",
   );
@@ -123,7 +123,7 @@ test("memory is fenced, so Claude Code reads no `@path` in it as an import", () 
 
 test("a wake waits for the one holding hex.db's wake lease, and goes once it's let go or runs out", () => {
   memo(["#0 2026-10-06 First note.\nYou are awake.\n"]);
-  open(join(home, "state")).leases.take("wake", "another wake", 500);
+  file(join(home, "state")).leases.take("wake", "another wake", 500);
   const started = Date.now();
   expect(body(wake())).toBe(`${LABEL}#0 2026-10-06 First note.\nYou are awake.\n`);
   expect(Date.now() - started).toBeGreaterThanOrEqual(400);

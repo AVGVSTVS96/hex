@@ -1,16 +1,14 @@
-import type { Database } from "bun:sqlite";
-
 import { z } from "zod";
 
 import { now } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Sql, Write } from "./db.ts";
 
 const ProfileRows = z.array(z.object({ at: z.string(), body: z.string() }));
 
 const BodyRow = z.object({ body: z.string() }).nullable();
 
 export class Profiles {
-  private readonly db: Database;
+  private readonly db: Sql;
   private readonly write: Write;
 
   constructor({ db, write }: Core) {

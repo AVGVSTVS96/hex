@@ -3,14 +3,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { open } from "../../hub/store.ts";
+import { file } from "../../hub/store.ts";
 import { until } from "../../hub/until.ts";
 
 const HEX = join(import.meta.dir, "../..");
 const home = mkdtempSync(join(tmpdir(), "quiet-"));
 const sessions = join(home, "config/sessions");
 const state = join(home, "state");
-const store = open(state);
+const store = file(state);
 
 const env = {
   ...process.env,
@@ -47,14 +47,14 @@ test("bin/quiet waits while a session hex started is mid-turn, and not on other 
   mkdirSync(sessions, { recursive: true });
 
   const status = (
-    file: string,
+    sessionFile: string,
     name: string,
     kind: string,
     turn: string,
     at = Date.now() - 1000,
   ) => {
     writeFileSync(
-      join(sessions, file),
+      join(sessions, sessionFile),
       JSON.stringify({
         pid: process.pid,
         sessionId: name,
@@ -158,4 +158,23 @@ test("bin/quiet waits on a session running beside a thread, though it runs outsi
   store.turns.turned("beside-1", false);
   expect(await quiet.exited).toBe(0);
   beside.kill();
+});
+
+test("bin/quiet exits 1 when the store can't answer, rather than waiting on looks that never run", async () => {
+  rmSync(sessions, { recursive: true, force: true });
+  mkdirSync(sessions, { recursive: true });
+  writeFileSync(
+    join(sessions, "1.json"),
+    JSON.stringify({ pid: process.pid, sessionId: "busy", kind: "bg", status: "busy" }),
+  );
+  store.db.run("alter table turns rename to turns_away");
+
+  try {
+    const quiet = startQuiet();
+    const exited = await Promise.race([quiet.exited, Bun.sleep(5000).then(() => "still running")]);
+    quiet.kill();
+    expect(exited).toBe(1);
+  } finally {
+    store.db.run("alter table turns_away rename to turns");
+  }
 });

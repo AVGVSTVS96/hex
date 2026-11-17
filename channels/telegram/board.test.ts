@@ -21,16 +21,16 @@ const session = (id: string, status: string, more: Partial<Session> = {}): [stri
   { id, pid: 1, status, started: Date.parse("2026-11-10T10:00:00Z"), ...more },
 ];
 
-beforeEach(() => {
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "board-"));
   store = open(dir);
-  store.threads.keep("telegram", {
+  await store.threads.keep("telegram", {
     [`${FORUM}:5`]: { name: "desk", session: "s-desk" },
     [`${FORUM}:6`]: { name: "notes", session: "s-notes" },
     [`${FORUM}:7`]: { name: "ships", session: "s-ships" },
     "2000": { name: "DM" },
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     key: `telegram:${FORUM}:40`,
     to: `${FORUM}:5`,
     from: "telegram",
@@ -43,8 +43,8 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("a busy thread is working, with what its session says it's doing, linked to its newest message", () => {
-  const found = lines(
+test("a busy thread is working, with what its session says it's doing, linked to its newest message", async () => {
+  const found = await lines(
     store,
     new Map([
       session("s-desk", "busy", {
@@ -66,8 +66,8 @@ test("a busy thread is working, with what its session says it's doing, linked to
   ]);
 });
 
-test("a thread waits on the owner for hex's questions there, newest first, or for its blocked session", () => {
-  store.questions.ask({
+test("a thread waits on the owner for hex's questions there, newest first, or for its blocked session", async () => {
+  await store.questions.ask({
     app: "telegram",
     thread: `${FORUM}:6`,
     message: 51,
@@ -75,7 +75,7 @@ test("a thread waits on the owner for hex's questions there, newest first, or fo
     options: [],
     at: "2026-11-10T12:00:00.000Z",
   });
-  store.questions.ask({
+  await store.questions.ask({
     app: "telegram",
     thread: `${FORUM}:6`,
     message: 52,
@@ -83,7 +83,7 @@ test("a thread waits on the owner for hex's questions there, newest first, or fo
     options: [],
     at: "2026-11-10T12:30:00.000Z",
   });
-  store.questions.ask({
+  await store.questions.ask({
     app: "telegram",
     thread: `${FORUM}:7`,
     message: 53,
@@ -92,7 +92,7 @@ test("a thread waits on the owner for hex's questions there, newest first, or fo
     at: "2026-11-10T09:00:00.000Z",
   });
 
-  const found = lines(
+  const found = await lines(
     store,
     new Map([
       session("s-ships", "idle", {
@@ -121,16 +121,16 @@ test("a thread waits on the owner for hex's questions there, newest first, or fo
   ]);
 });
 
-test("a task done in the last day is done, linked to its proof", () => {
-  const task = store.tasks.create({
+test("a task done in the last day is done, linked to its proof", async () => {
+  const task = await store.tasks.create({
     title: "Fix the login page",
     message: `telegram:${FORUM}:40`,
     owner: `${FORUM}:5`,
   });
 
-  store.tasks.edit(task.id, { status: "done", proof: "Live: https://t.me/c/1234/5/99." });
+  await store.tasks.edit(task.id, { status: "done", proof: "Live: https://t.me/c/1234/5/99." });
 
-  const [done] = lines(store, new Map()).d;
+  const [done] = (await lines(store, new Map())).d;
 
   expect(done).toMatchObject({ title: "desk", line: "Fix the login page", link: "1234/5/99" });
 });
@@ -213,7 +213,7 @@ test("the keeper sends the board once, redraws it as hex changes, and stops when
   expect(sent).toHaveLength(1);
   expect(JSON.parse(readFileSync(file, "utf-8"))).toEqual({ message: 77 });
 
-  store.questions.ask({
+  await store.questions.ask({
     app: "telegram",
     thread: `${FORUM}:6`,
     message: 51,
@@ -223,7 +223,7 @@ test("the keeper sends the board once, redraws it as hex changes, and stops when
   await until(() => edits.at(-1)?.chat_data.includes("Ship it?"));
 
   gone = true;
-  store.questions.ask({
+  await store.questions.ask({
     app: "telegram",
     thread: `${FORUM}:7`,
     message: 52,

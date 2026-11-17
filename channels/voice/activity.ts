@@ -8,6 +8,8 @@ import type { SessionNotification, ToolCall } from "@agentclientprotocol/sdk";
 import { running, open } from "@hex/hub";
 import { z } from "zod";
 
+import { oneAtATime } from "./changes.ts";
+
 export type Update = SessionNotification["update"];
 
 export type Step = { line?: string; end?: "done" | "failed" };
@@ -1019,11 +1021,17 @@ export function nameOf({ app, thread, name }: Named, general?: Named) {
     : name;
 }
 
-export function findThread(state: string, wanted: string): Thread | undefined {
+export async function findThread(state: string, wanted: string): Promise<Thread | undefined> {
   const store = open(state);
-  const key = store.threads.key(wanted);
-  const general = generalOf(store.threads.list());
-  const all = store.threads.list({ open: true }).filter(({ app }) => app !== "voice");
+
+  const [key, every, opened] = await Promise.all([
+    store.threads.key(wanted),
+    store.threads.list(),
+    store.threads.list({ open: true }),
+  ]);
+
+  const general = generalOf(every);
+  const all = opened.filter(({ app }) => app !== "voice");
   const is = (name: string) => name.toLowerCase() === wanted.toLowerCase();
 
   const ways = [
@@ -1052,8 +1060,8 @@ export function findThread(state: string, wanted: string): Thread | undefined {
       };
 }
 
-export function noThread(state: string, wanted: string) {
-  const threads = open(state).threads.list();
+export async function noThread(state: string, wanted: string) {
+  const threads = await open(state).threads.list();
   const general = generalOf(threads);
   const lower = wanted.toLowerCase();
 
@@ -1077,13 +1085,15 @@ export function noThread(state: string, wanted: string) {
 
 const nothingToStop = (_last?: boolean) => Promise.resolve();
 
-export function followThread(
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Resolves once it follows the session the thread is on now, so words sent to the thread after it are read.
+export async function followThread(
   thread: Thread,
   hexDir: string,
   tag: string,
   resumed: boolean,
   onStep: (step: Step) => void,
-) {
+): Promise<() => void> {
   const agents = new Map<string, (last?: boolean) => Promise<void>>();
   let session: string | undefined;
   let stopSession = nothingToStop;
@@ -1097,24 +1107,28 @@ export function followThread(
   const project = join(projects(), (thread.cwd ?? hexDir).replaceAll(/[^a-zA-Z0-9]/gu, "-"));
   const transcript = (id: string) => join(project, `${id}.jsonl`);
   const store = open(thread.state);
-  const taken = resumed ? store.messages.taker(thread.id, "voice_task", tag) : undefined;
+  const taken = resumed ? await store.messages.taker(thread.id, "voice_task", tag) : undefined;
 
   const took =
     taken !== undefined && ID.test(taken.by) && existsSync(transcript(taken.by))
       ? taken
       : undefined;
 
-  const stopState = store.watch(() => {
-    locate();
-    endIfTheSessionDiedMidTurn();
+  const look = oneAtATime(`${thread.app} thread ${thread.id}'s session`, async () => {
+    await locate();
+    await endIfTheSessionDiedMidTurn();
   });
 
-  locate();
+  const stopState = store.watch(() => {
+    void look();
+  });
 
-  function locate() {
-    const current = store.threads
-      .list({ app: thread.app, open: true })
-      .find(({ thread: id }) => id === thread.id)?.session;
+  await look();
+
+  async function locate(): Promise<void> {
+    const current = (await store.threads.list({ app: thread.app, open: true })).find(
+      ({ thread: id }) => id === thread.id,
+    )?.session;
 
     const next = session === undefined && took ? took.by : current;
 
@@ -1125,7 +1139,11 @@ export function followThread(
     const hexDbStillNamesTheSessionBeforeTheOneThatTookIt =
       took !== undefined &&
       session === took.by &&
-      (store.messages.lastTaken(next) ?? took.at) < took.at;
+      ((await store.messages.lastTaken(next)) ?? took.at) < took.at;
+
+    if (ended) {
+      return;
+    }
 
     if (hexDbStillNamesTheSessionBeforeTheOneThatTookIt) {
       return;
@@ -1144,7 +1162,7 @@ export function followThread(
     }
 
     if (!ended && next !== current) {
-      locate();
+      await locate();
     }
   }
 
@@ -1215,24 +1233,23 @@ export function followThread(
     }
   }
 
-  function endIfTheSessionDiedMidTurn() {
+  async function endIfTheSessionDiedMidTurn() {
     if (ended || !picked || session === undefined) {
       return;
     }
 
-    const end = store.turns.get(session).ended;
+    const dead = session;
+    const end = (await store.turns.get(dead)).ended;
 
-    if (end === turnEndAtTheLastLook) {
+    if (end === turnEndAtTheLastLook || session !== dead) {
       return;
     }
 
     turnEndAtTheLastLook = end;
 
-    if (end === undefined || end === "" || running(store, claude()).has(session)) {
+    if (end === undefined || end === "" || (await running(store, claude())).has(dead)) {
       return;
     }
-
-    const dead = session;
 
     void (async () => {
       await stopSession(true);

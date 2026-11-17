@@ -100,13 +100,9 @@ let recordsThisSave: ReturnType<typeof appThreads> | null = null;
 function link(thread: string) {
   if (recordsThisSave === null) {
     queueMicrotask(() => {
-      try {
-        mirror(recordsThisSave);
-      } catch (error) {
-        process.stderr.write(`t3: couldn't match hex's threads to T3's: ${String(error)}\n`);
-      } finally {
-        recordsThisSave = null;
-      }
+      const records = recordsThisSave;
+      recordsThisSave = null;
+      void mirrorOrReport(records);
     });
 
     try {
@@ -122,11 +118,25 @@ function link(thread: string) {
   return record && !record.deleted ? linkTo(record.thread) : undefined;
 }
 
-function mirror(records: typeof recordsThisSave) {
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The hub saves its threads, and so asks for their links, while it starts, before there's a hub to match T3's records to.
+const hubStarted = Promise.withResolvers();
+
+async function mirrorOrReport(records: typeof recordsThisSave) {
+  try {
+    await hubStarted.promise;
+    await mirror(records);
+  } catch (error) {
+    process.stderr.write(`t3: couldn't match hex's threads to T3's: ${String(error)}\n`);
+  }
+}
+
+async function mirror(records: typeof recordsThisSave) {
   const links = new Map(
-    open(storeOf(STATE_DIR))
-      .threads.list({ app: "t3" })
-      .map((row) => [row.thread, row.link]),
+    (await open(storeOf(STATE_DIR)).threads.list({ app: "t3" })).map((row) => [
+      row.thread,
+      row.link,
+    ]),
   );
 
   const linked = (thread: string) => (links.get(thread) ?? "") !== "";
@@ -201,7 +211,7 @@ const handlers: Handlers<typeof tools> = {
   },
 };
 
-const hub = startHub({
+const hub = await startHub({
   stateDir: STATE_DIR,
   channel: process.env.T3_CHANNEL ?? "plugin:t3@hex",
   server,
@@ -242,6 +252,8 @@ const hub = startHub({
   hexDir: HEX_DIR,
   ...(process.env.HEX_LAUNCHER !== undefined && { launcher: process.env.HEX_LAUNCHER }),
 });
+
+hubStarted.resolve(undefined);
 
 type McpConfig =
   | { command: string; args: string[]; env: Record<string, string> }
@@ -312,7 +324,7 @@ function compaction(turn: Turn, thread: string, status: string, error?: string) 
 }
 
 function cutShortWithNoStopHook(thread: string) {
-  hub.turned(thread);
+  void hub.turned(thread);
   finish(thread, "cancelled");
 }
 
@@ -393,7 +405,7 @@ function keep(thread: string) {
   hub.configure(thread, waiting.settings);
 }
 
-function prompt(
+async function prompt(
   { sessionId: thread, prompt: blocks, _meta }: PromptRequest,
   client: AgentContext,
   signal: AbortSignal,
@@ -402,7 +414,7 @@ function prompt(
   const replay = replays.get(thread)?.shift();
 
   if (replay && asked(render(blocks)) === replay.asked) {
-    return replayed(thread, replay, client);
+    return await replayed(thread, replay, client);
   }
 
   replays.delete(thread);
@@ -418,20 +430,21 @@ function prompt(
     throw RequestError.invalidRequest(undefined, "this thread has nothing to compact yet");
   }
 
-  return new Promise((resolve, reject) => {
-    const turn = track(thread, client, signal, resolve, reject, Date.now(), compact);
+  const { promise, resolve, reject } = Promise.withResolvers<PromptResponse>();
+  const turn = track(thread, client, signal, resolve, reject, Date.now(), compact);
 
-    if (session !== undefined) {
-      turn.reader = reader(thread, session, turn);
-    }
+  if (session !== undefined) {
+    turn.reader = reader(thread, session, turn);
+  }
 
-    if (compact) {
-      compaction(turn, thread, "in_progress");
-      void hub.command(thread, "/compact");
-    } else {
-      hub.deliver(thread, name, message(thread, blocks, turn.since, _meta));
-    }
-  });
+  if (compact) {
+    compaction(turn, thread, "in_progress");
+    void hub.command(thread, "/compact");
+  } else {
+    await hub.deliver(thread, name, message(thread, blocks, turn.since, _meta));
+  }
+
+  return await promise;
 }
 
 // T3 follows the user's text with its own context block, which a command doesn't take: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/provider-acp/src/server/adapter.ts#L723-L727
@@ -514,27 +527,28 @@ async function rejoin(
   const session = running?.sessionId ?? hub.session(thread);
   const working = running?.status === "busy";
 
-  return await new Promise((resolve, reject) => {
-    const turn = track(thread, client, signal, resolve, reject, since);
+  const { promise, resolve, reject } = Promise.withResolvers<PromptResponse>();
+  const turn = track(thread, client, signal, resolve, reject, since);
 
-    if (session !== undefined) {
-      turn.reader = reader(thread, session, turn, since);
-    }
+  if (session !== undefined) {
+    turn.reader = reader(thread, session, turn, since);
+  }
 
-    const promptSeen = turn.reader?.asked() === true;
-    const compactEndedWhileHexWasDown = !working && !promptSeen;
+  const promptSeen = turn.reader?.asked() === true;
+  const compactEndedWhileHexWasDown = !working && !promptSeen;
 
-    if (!startsWithCompact(blocks)) {
-      hub.deliver(thread, name, message(thread, blocks, since, _meta));
-    } else if (compactEndedWhileHexWasDown) {
-      finish(thread, "end_turn");
+  if (!startsWithCompact(blocks)) {
+    await hub.deliver(thread, name, message(thread, blocks, since, _meta));
+  } else if (compactEndedWhileHexWasDown) {
+    finish(thread, "end_turn");
 
-      return;
-    }
+    return await promise;
+  }
 
-    turn.done = promptSeen && !working;
-    turn.reader?.settle();
-  });
+  turn.done = promptSeen && !working;
+  turn.reader?.settle();
+
+  return await promise;
 }
 
 async function replayed(
@@ -861,7 +875,7 @@ function serve(socket: Socket) {
     .onRequest("session/load", async ({ params, client }) => {
       remember(reopen(params.sessionId, params.cwd, socket), params.mcpServers);
 
-      for (const [i, { from, text }] of hub.history(params.sessionId).entries()) {
+      for (const [i, { from, text }] of (await hub.history(params.sessionId)).entries()) {
         await client.notify("session/update", {
           sessionId: params.sessionId,
           update: {

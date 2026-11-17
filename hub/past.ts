@@ -21,7 +21,7 @@ function nextAfter(previous: string, minuteAt: string) {
     : minuteAt;
 }
 
-export function importLogs(store: Store, dir: string, zone: string): number {
+export async function importLogs(store: Store, dir: string, zone: string): Promise<number> {
   const files = [join(dir, "threads"), dir].flatMap((each) =>
     existsSync(each)
       ? readdirSync(each)
@@ -32,17 +32,17 @@ export function importLogs(store: Store, dir: string, zone: string): number {
 
   const takenCountsBySession = new Map<string, Map<string, number>>();
 
+  const [threads, messages] = await Promise.all([store.threads.list(), store.messages.since()]);
+
   const threadOfSessionThatTookNothing = new Map(
-    store.threads
-      .list()
-      .flatMap(({ thread, session }) =>
-        session !== undefined && session !== "" ? [[session, thread] as const] : [],
-      ),
+    threads.flatMap(({ thread, session }) =>
+      session !== undefined && session !== "" ? [[session, thread] as const] : [],
+    ),
   );
 
   const keptByWords = new Map<string, Kept[]>();
 
-  for (const row of store.messages.since()) {
+  for (const row of messages) {
     if (row.taken) {
       const counts = takenCountsBySession.get(row.taken.by) ?? new Map<string, number>();
 
@@ -61,26 +61,25 @@ export function importLogs(store: Store, dir: string, zone: string): number {
   }
 
   const turnsRepeatedByResumedOrForkedSessions = new Set<string>();
-  let added = 0;
 
-  store.write(() => {
-    for (const file of files) {
-      try {
-        added += take(file);
-      } catch (error) {
-        process.stderr.write(`hex couldn't read ${file} into hex.db: ${String(error)}\n`);
-      }
+  const rows = files.flatMap((file) => {
+    try {
+      return take(file);
+    } catch (error) {
+      process.stderr.write(`hex couldn't read ${file} into hex.db: ${String(error)}\n`);
+
+      return [];
     }
   });
 
-  return added;
+  return (await store.messages.past(rows)).length;
 
-  function take(file: string): number {
+  function take(file: string): [NewRow, string, string][] {
     const log = readFileSync(file, "utf-8");
     const session = /^# (\d{4}-\d{2}-\d{2}) · session (\S+)/u.exec(log);
 
     if (!session) {
-      return 0;
+      return [];
     }
 
     const [, day = "", id = ""] = session;
@@ -93,7 +92,7 @@ export function importLogs(store: Store, dir: string, zone: string): number {
 
     const heads = [...log.matchAll(HEAD)];
     const isAppSession = heads.some((head) => head[2] !== "terminal");
-    const rows: [NewRow, string][] = [];
+    const turns: [NewRow, string, string][] = [];
     let previousAt = "";
     let today = Temporal.PlainDate.from(day);
     let clock = "";
@@ -157,7 +156,7 @@ export function importLogs(store: Store, dir: string, zone: string): number {
       }
 
       previousAt = nextAfter(previousAt, minuteAt);
-      rows.push([
+      turns.push([
         {
           key: `${via}:past:${id}:${i}`,
           to,
@@ -167,10 +166,11 @@ export function importLogs(store: Store, dir: string, zone: string): number {
           meta: { log: file.slice(dir.length + 1), ...(author === "prompt" && { user: who }) },
         },
         previousAt,
+        id,
       ]);
     });
 
-    return store.messages.past(rows, id).length;
+    return turns;
   }
 }
 
@@ -181,7 +181,7 @@ if (import.meta.main) {
     throw new Error("past.ts takes the hex home to read log/ from");
   }
 
-  const added = importLogs(
+  const added = await importLogs(
     open(join(home, "state")),
     join(home, "log"),
     zoneOf(home) ?? Temporal.Now.timeZoneId(),
