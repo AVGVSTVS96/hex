@@ -315,6 +315,7 @@ test("every folder a background session starts in is trusted (a -p run never ask
 });
 
 test("a job starts without the wake, in the hex folder and in another project, and a run that isn't a job keeps it", () => {
+  const wake = join(home, "state/wake/CLAUDE.md");
   const project = join(home, "project");
 
   mkdirSync(project);
@@ -329,7 +330,12 @@ test("a job starts without the wake, in the hex folder and in another project, a
   };
 
   for (const cwd of [home, project]) {
-    expect(launched(cwd, { HEX_OWNER: "telegram:-100:7" })).not.toContain(join(home, "state/wake"));
+    const args = launched(cwd, { HEX_OWNER: "telegram:-100:7" });
+
+    expect(Settings.parse(JSON.parse(flagValue(args, "--settings"))).claudeMdExcludes).toEqual([
+      wake,
+    ]);
+    expect(args).not.toContain(join(home, "state/wake"));
   }
 
   expect(launched(home)).not.toContain("--settings");
