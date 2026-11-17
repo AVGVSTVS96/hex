@@ -144,6 +144,7 @@ trap 'jq -cn "\\$ARGS.positional" --args -- "$@" >> "${dir}/calls"' EXIT
 [ "$1 $2" = "daemon status" ] && [ -f "${dir}/daemon.pid" ] && echo "pid: $(cat "${dir}/daemon.pid")"
 [ "$1 $2" = "daemon stop" ] && rm -f "${dir}/daemon"
 [ "$1" = "--version" ] && echo "2.1.0 (Claude Code)"
+[ "$1 $2" = "daemon run" ] && echo >> "${dir}/daemon-runs" && while [ -f "${dir}/held" ]; do sleep 0.05; done
 [ "$1 $2" = "daemon run" ] && rm -f "${dir}/down"
 [ "$1" = "--bg" ] && echo "backgrounded · job12345 · test"
 [ "$1" = "-p" ] && cat > "${dir}/rewound" && echo '{}' > "${dir}/projects/$(pwd | sed 's/[^a-zA-Z0-9]/-/g')/rewound-session.jsonl" && echo '{"session_id":"rewound-session","stop_reason":"end_turn"}'
@@ -643,6 +644,26 @@ test("a daemon that went down while General ran is started, so the hub finds Gen
   const run = calls().findIndex((each) => each[0] === "daemon" && each[1] === "run");
   expect(calls().slice(run + 1)).toContainEqual(["agents", "--json"]);
   expect(calls().filter((each) => each[0] !== "agents" && each[0] !== "daemon")).toEqual([]);
+});
+
+test("threads that start together while Claude's daemon is down start it once", async () => {
+  writeFileSync(join(dir, "down"), "");
+  writeFileSync(join(dir, "held"), "");
+
+  const daemonRuns = () =>
+    existsSync(join(dir, "daemon-runs"))
+      ? readFileSync(join(dir, "daemon-runs"), "utf-8").length
+      : 0;
+
+  start();
+  hub.deliver("chat:7", "Desk anchors", message);
+  hub.deliver("chat:8", "Lamp", message);
+  hub.deliver("chat:9", "Shelf", message);
+
+  await until(() => daemonRuns() > 0);
+  await time.advance(10_000);
+  expect(daemonRuns()).toBe(1);
+  rmSync(join(dir, "held"));
 });
 
 test("a daemon left on an older claude is stopped with its sessions kept, so the session starts on a current one", async () => {

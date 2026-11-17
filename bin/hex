@@ -178,8 +178,10 @@ case "${1:-}" in
     # The hex whose plugin and launcher sessions start from: a change to what they read only at start renews them at their next rest.
     export HEX_STARTUP="$hex"
     export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord" BUZZ_STATE_DIR="$home/state/buzz" T3_STATE_DIR="$home/state/t3"
-    # A stop ends the hub the way a restart does, once no call is live, and waits for it to exit.
-    trap '[ -z "${hub:-}" ] || { kill -TERM "$hub" 2>/dev/null; wait "$hub"; }; rm -f "$pidfile"; exit 0' INT TERM
+    # A stop (TERM) or a restart (HUP) ends the hub once no call is live, and waits for it to exit.
+    leave() { [ -z "${hub:-}" ] || { kill -"$1" "$hub" 2>/dev/null; wait "$hub"; }; rm -f "$pidfile"; exit 0; }
+    trap 'leave TERM' INT TERM
+    trap 'leave HUP' HUP
     # A restart finds the door by HEX_DOOR, its file and port as it started, and replaces it only when one of them has
     # changed, as after an update or a rollback, or when it's gone.
     doors() { pgrep -P $$ -f channels/iikb/door.ts >/dev/null; }
