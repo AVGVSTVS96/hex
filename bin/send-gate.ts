@@ -94,7 +94,6 @@ function hisYes(id: string, transcript: string) {
   if (
     said === null ||
     !HIS.has(said.author) ||
-    said.meta?.user === "hex pick" ||
     !YES.test(said.body.replace(/^\s*(<@[!&]?\d+>\s*)*/u, ""))
   ) {
     return false;

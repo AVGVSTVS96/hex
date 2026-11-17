@@ -1420,6 +1420,19 @@ test("a question answered in the app reaches its thread like a tap, says so on i
   expect(asked(id).answer).toBeUndefined();
 });
 
+test("a pick hex takes on its own reaches the thread as hex's words, not the owner's, and an answer in the app stays the owner's", async () => {
+  const picked = idIn(await call("reply", { text: "Which tea?", buttons: ["Mint", "Black"] }));
+  session({ type: "answer", thread: DESK, message: picked, label: "Mint", via: "pick" });
+  const pick = await inbound((line) => line.meta.button_message_id === String(picked));
+
+  const tapped = idIn(await call("reply", { text: "Which mug?", buttons: ["Red", "Blue"] }));
+  session({ type: "answer", thread: DESK, message: tapped, label: "Blue", via: "app" });
+  const tap = await inbound((line) => line.meta.button_message_id === String(tapped));
+
+  expect(open(state).messages.get(pick.meta.key ?? "")?.author).toBe("prompt");
+  expect(open(state).messages.get(tap.meta.key ?? "")?.author).toBe("owner");
+});
+
 test("a reply quoting an answer given in the app quotes the question it answered, and one with no Telegram message goes out unquoted", async () => {
   const id = idIn(await call("reply", { text: "Which bank?", buttons: ["Stripe", "Mercury"] }));
   session({ type: "answer", thread: DESK, message: id, label: "Stripe", via: "app" });

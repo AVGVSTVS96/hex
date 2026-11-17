@@ -2105,3 +2105,29 @@ test("each job's record from before hex.db kept them carries in once, with how i
   expect(after.seen.get("job:finished", "stopped")).toBe("");
   expect(existsSync(join(jobs, "plain.json"))).toBe(true);
 });
+
+test("a pick hex made for the owner, kept as the owner's before, becomes hex's words, and the owner's own answers stay theirs", () => {
+  const store = new Store(dir);
+
+  const keep = (key: string, user: string, body: string) =>
+    store.messages.deliver({
+      key,
+      to: "-100:5",
+      from: "telegram",
+      author: "owner",
+      body,
+      meta: { user },
+    });
+
+  keep("telegram:pick", "hex pick", "(vote: Email support (my pick))");
+  keep("telegram:app", "hex app", "Yes");
+  keep("telegram:typed", "owner", "yes");
+  store.db.run(`pragma user_version = ${String(appendOnlyMigrations.length - 1)}`);
+  store.db.close();
+
+  const after = new Store(dir);
+
+  expect(after.messages.get("telegram:pick")?.author).toBe("prompt");
+  expect(after.messages.get("telegram:app")?.author).toBe("owner");
+  expect(after.messages.get("telegram:typed")?.author).toBe("owner");
+});

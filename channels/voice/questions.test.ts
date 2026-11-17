@@ -14,7 +14,7 @@ import { z } from "zod";
 import { before, digest, failed, handBack, vet } from "./check.ts";
 import { caption, meta as mediaMeta } from "./media.ts";
 import type { Item } from "./media.ts";
-import { Questions, fromLedger } from "./questions.ts";
+import { ON_ITS_PICK, Questions, fromLedger } from "./questions.ts";
 import type { Curated, Source } from "./questions.ts";
 import { T3 } from "./t3.ts";
 
@@ -665,6 +665,43 @@ test("the check’s version of a question stands in for every place that asked i
   await questions.undo("check:read", "app");
   await until(() => questions.find("check:read"));
   expect(checks).toContain("you took back an answer");
+});
+
+test("a pick hex takes on its own reaches the thread as hex's words, not the owner's", async () => {
+  writeFileSync(
+    join(state, "voice", "check.json"),
+    JSON.stringify({
+      at: "2026-10-13T15:00:00.000Z",
+      why: "a pinned post changed",
+      read: {},
+      fixed: [],
+      flagged: [],
+      stuck: [],
+      asks: [
+        {
+          id: "check:read",
+          kind: "look",
+          task: `telegram:${DESK}`,
+          at: "2026-10-13T00:00:00.000Z",
+          question: "Read the launch review",
+          options: [{ label: "Open" }],
+        },
+      ],
+    }),
+  );
+  questions = new Questions(state, {
+    t3Database: "/nonexistent",
+    t3Home: "/nonexistent",
+    check: (why) => {
+      checks.push(why);
+    },
+  });
+
+  await questions.answer("check:read", "Open", ON_ITS_PICK);
+  expect(await until(() => lines.find((line) => line.type === "inbound"))).toMatchObject({
+    author: "prompt",
+    meta: { user: "hex pick" },
+  });
 });
 
 test("an answer that lands in the ledger takes the question off the list, and undo asks for its buttons back", async () => {

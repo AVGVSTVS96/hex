@@ -980,7 +980,7 @@ export class Questions extends Changes {
       type: "inbound",
       thread: thread.join(":"),
       content: caption(content, media),
-      author,
+      author: via === ON_ITS_PICK ? "prompt" : author,
       meta: { user: `hex ${via}`, ...mediaMeta(media) },
     });
   }

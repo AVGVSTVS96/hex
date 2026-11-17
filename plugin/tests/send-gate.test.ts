@@ -191,7 +191,7 @@ test.each([
   ["a schedule", { author: "prompt", user: "schedule", body: "yes" }],
   ["a page relaying a tap", { author: "prompt", user: "Bassim, on the fixes page", body: "yes" }],
   ["someone else in a shared channel", { author: "other", user: "guest", body: "yes" }],
-  ["a pick hex made itself", { author: "owner", user: "hex pick", body: "Yes" }],
+  ["a pick hex made itself", { author: "prompt", user: "hex pick", body: "Yes" }],
 ] satisfies [string, Said][])("a yes from %s isn't the owner's", (_, said) => {
   expect(inThread(said).send()).toBe(true);
   expect(inThread(said).forward({ to: ["person@example.com"] })).toBe(true);

@@ -1366,6 +1366,21 @@ test("a permission prompt asks in the thread with Allow and Deny, a tap answers 
   expect(labels(moot.options?.components)).toEqual(["No longer waiting"]);
 });
 
+test("a pick hex takes on its own reaches the thread as hex's words, not the owner's, and an answer in the app stays the owner's", async () => {
+  await call("reply", { text: "Which tea?", buttons: ["Mint", "Black"] });
+  const picked = lastPosted(here);
+  await send({ type: "answer", thread: here.id, message: picked.id, label: "Mint", via: "pick" });
+  const pick = await inbound(received, (line) => line.meta.button_message_id === picked.id);
+
+  await call("reply", { text: "Which mug?", buttons: ["Red", "Blue"] });
+  const tapped = lastPosted(here);
+  await send({ type: "answer", thread: here.id, message: tapped.id, label: "Blue", via: "app" });
+  const tap = await inbound(received, (line) => line.meta.button_message_id === tapped.id);
+
+  expect(open(state).messages.get(pick.meta.key ?? "")?.author).toBe("prompt");
+  expect(open(state).messages.get(tap.meta.key ?? "")?.author).toBe("owner");
+});
+
 test("a question with buttons goes in the ledger: a tap answers it there, and one answered in hex's app closes its buttons, reaches the thread, and can be taken back", async () => {
   await call("reply", {
     text: "Which anchors?\nThe left ones are cheaper.",

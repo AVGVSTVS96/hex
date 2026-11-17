@@ -1683,6 +1683,8 @@ const ANSWERED_IN = new Map([
   ["pick", "by hex, on its own pick"],
 ]);
 
+const whoAnswered = (via: string) => (via === "pick" ? "prompt" : "owner");
+
 function only(text: string) {
   return { inline_keyboard: [[{ text, disabled: {} }]] };
 }
@@ -1786,7 +1788,7 @@ function answerQuestion(thread: string, message: MessageId, label: string, via: 
     thread,
     topicNames.get(thread) ?? hub.name(thread) ?? thread,
     {
-      author: "owner",
+      author: whoAnswered(via),
       content: question.poll === undefined ? label : `(vote: ${label})`,
       meta: {
         chat_id,
@@ -1836,7 +1838,7 @@ function reopenQuestion(thread: string, message: MessageId, via: string) {
           thread,
           topicNames.get(thread) ?? hub.name(thread) ?? thread,
           {
-            author: "owner",
+            author: whoAnswered(via),
             content: `(took back: ${taken})`,
             meta: {
               chat_id,

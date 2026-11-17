@@ -316,6 +316,8 @@ const ANSWERED_IN = new Map([
   ["pick", "by hex, on its own pick"],
 ]);
 
+const whoAnswered = (via: string) => (via === "pick" ? "prompt" : "owner");
+
 const answeredIn = (via: string) => ANSWERED_IN.get(via) ?? via;
 
 const answeredText = ({ label, via }: { label: string; via: string }) =>
@@ -1148,7 +1150,7 @@ function serve(token: string) {
       thread,
       hub.name(thread) ?? thread,
       {
-        author: "owner",
+        author: whoAnswered(via),
         content: isPoll(question) ? `(vote: ${label})` : label,
         meta: {
           chat_id: thread,
@@ -1196,7 +1198,7 @@ function serve(token: string) {
           thread,
           hub.name(thread) ?? thread,
           {
-            author: "owner",
+            author: whoAnswered(via),
             content: `(took back: ${taken})`,
             meta: {
               chat_id: thread,
