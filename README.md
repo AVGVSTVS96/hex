@@ -145,7 +145,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   ├── wake                    loads your profile and its memory as each session starts and after a compaction
     │   ├── live-status             shows its branches, upcoming jobs, sessions and each active thread's last message as each session starts
     │   ├── compacted               puts the last turns back after a compaction, and names the session a handoff continues from
-    │   ├── send-gate               holds sends and deletes until you say yes (HEX_SEND_MACHINES addresses go free)
+    │   ├── send-gate               holds sends, by connector or command, and deletes until you say yes (HEX_SEND_MACHINES addresses go free by connector)
     │   ├── transcribe              voice notes → text
     │   ├── vault                   asks you for secrets by link, signs in with them
     │   ├── job                     long work as its own unit, waking its thread when it ends
