@@ -80,6 +80,7 @@ beforeEach(() => {
   mkdirSync(join(hex, "bin"), { recursive: true });
   mkdirSync(join(hex, "hub"));
   mkdirSync(join(home, "state"));
+  process.env.XDG_STATE_HOME = join(home, "xdg-state");
 
   for (const script of ["hex", "settings", "update"]) {
     copyFileSync(join(BIN, script), join(hex, "bin", script));
@@ -98,6 +99,7 @@ afterEach(async () => {
   await loop?.exited;
   loop = undefined;
   rmSync(home, { recursive: true, force: true });
+  delete process.env.XDG_STATE_HOME;
 });
 
 test("a restart lets the hub finish before the next one starts, on the settings and bin/hex as they are now", async () => {
