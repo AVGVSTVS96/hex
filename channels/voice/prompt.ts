@@ -48,6 +48,15 @@ export const UNMUTED =
 export const NOT_MUTED =
   "You aren't muted after all: the caller went on to talk about muting. Carry on as before.";
 
+export const STOPPING =
+  "hex is stopping on this machine, to restart or to move to another one, and is back once it has started again, usually within a few minutes.";
+
+export const noAnswer = (why: string) =>
+  `I can't look that up or do it right now: ${why} Nothing was checked or done.`;
+
+export const unreachable = (why: string) =>
+  `hex can't look anything up or do anything right now: ${why} Tell the caller that now, in a sentence or two.`;
+
 export function voicePrompt(identity: string, style: VoiceStyle, started: string, mutes = false) {
   return [
     identity,

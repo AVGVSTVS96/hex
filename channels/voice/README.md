@@ -118,6 +118,30 @@ The record gets a `stopped` moment. A stop goes on half a sentence when Jev is s
 late one lets the work happen; Claude reads the words before acting on them, so a wrong one
 costs a few seconds.
 
+## When hex can't answer
+
+OpenAI's delegation has no failed state and no timeout: a handoff nobody answers leaves the voice
+saying it's checking. So when the voice session's turn fails on the API, its session can't start,
+or the hub is told to stop (which freezes the sessions on this machine while the call still holds
+the hub), the engine gives the waiting handoff that as its result, the way
+[OpenAI's guide](https://developers.openai.com/api/docs/guides/live-delegation#keep-updates-accurate-and-useful)
+has a failed task reported, and the caller hears why.
+
+```
+handoff ──► Claude's turn fails (API error) ──► hub: failed ──┐
+handoff ──► hub told to stop (TERM) ──────────► engine.stops ─┤
+                                                              ▼
+                      session.commentary.append, the handoff's id:
+                      "I can't look that up or do it right now: <why> Nothing was checked or done."
+```
+
+- A stop with no handoff waiting goes as an instruction instead, and every handoff after it gets
+  the same answer at once. A turn that fails once its answer went out says nothing to the caller.
+- A call's session gives up on a failing API request after 3 retries (`CLAUDE_CODE_MAX_RETRIES`,
+  set in `bin/session`) where Claude Code's own 10 take minutes, so the caller hears it in seconds.
+  The hub still carries the turn on once turns go through again.
+- The record keeps a `warned` moment with the reason.
+
 ## Call history
 
 Every call is saved as one JSON file in `~/.claude/channels/voice/calls/`,
