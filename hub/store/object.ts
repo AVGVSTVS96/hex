@@ -110,7 +110,12 @@ export class Records extends DurableObject<Env> {
       }
 
       if (route.startsWith("move/")) {
-        return json({ value: records.moved(route.slice("move/".length), body) });
+        const [, id, step] =
+          /^([\w-]{1,64}):(\d{1,9})$/u.exec(request.headers.get("hex-move") ?? "") ?? [];
+
+        const mark = id === undefined ? undefined : { id, step: Number(step) };
+
+        return json({ value: records.moved(route.slice("move/".length), body, mark) });
       }
 
       return json({ error: `hex's store has no /${route}` }, 404);

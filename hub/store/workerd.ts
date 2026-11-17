@@ -236,8 +236,15 @@ test("a move carries every row, a lost last reply is finished by running it agai
     finished.push(line);
   };
 
-  const into = async (folder: string, name: string) => {
-    await move(folder, { url: proxy.url.origin, name, key: KEY }, said);
+  const into = async (folder: string, name: string, givingUp = false) => {
+    await move(
+      folder,
+      { url: proxy.url.origin, name, key: KEY },
+      said,
+      givingUp
+        ? { answerWithin: 60_000, firstRetry: 10, longestRetry: 10, giveUpAfter: 0 }
+        : undefined,
+    );
   };
 
   try {
@@ -267,7 +274,7 @@ test("a move carries every row, a lost last reply is finished by running it agai
     expect(String(await thrown(into(again, "hex")))).toContain("has served a hub");
 
     losing = 2;
-    expect(String(await thrown(into(again, "restored")))).toContain("answered 502");
+    expect(String(await thrown(into(again, "restored", true)))).toContain("answered 502");
 
     finished.length = 0;
     await into(again, "restored");
@@ -518,3 +525,65 @@ test("a process that finds the object not answering tells the next, which fails 
   expect(await thrown(remote(dir, QUICK)?.clock.now())).toBeInstanceOf(UnreachedError);
   expect(performance.now() - started).toBeLessThan(20);
 });
+
+test("a move rides out Cloudflare's own pages partway through, and the object takes each step once", async () => {
+  const dir = join(scratch, "edge-state");
+  const records = new File(dir);
+
+  for (let n = 0; n < 1200; n += 1) {
+    records.messages.deliver({ ...message, key: `telegram:-100:${n}`, body: `line ${n}` });
+  }
+
+  records.db.close();
+
+  const forwarded = new Map<string, number>();
+  let steps = 0;
+
+  const proxy = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const { pathname } = new URL(request.url);
+      const stepping = pathname.includes("/move/") && !pathname.endsWith("/move/state");
+      steps += stepping ? 1 : 0;
+
+      if (stepping && steps % 4 === 1) {
+        return new Response("<html>404 Not Found</html>", { status: 404 });
+      }
+
+      const mark = request.headers.get("hex-move") ?? "";
+
+      if (stepping) {
+        forwarded.set(mark, (forwarded.get(mark) ?? 0) + 1);
+      }
+
+      const answer = await fetch(`${url}${pathname}`, {
+        method: request.method,
+        headers: request.headers,
+        body: await request.text(),
+      });
+
+      const text = await answer.text();
+
+      return stepping && steps % 4 === 3
+        ? new Response("<html>404 Not Found</html>", { status: 404 })
+        : new Response(text, { status: answer.status });
+    },
+  });
+
+  try {
+    await move(dir, { url: proxy.url.origin, name: "edge", key: KEY }, quiet, {
+      answerWithin: 60_000,
+      firstRetry: 10,
+      longestRetry: 10,
+      giveUpAfter: 30_000,
+    });
+
+    expect(steps).toBeGreaterThan(8);
+    expect([...forwarded.values()].every((times) => times === 1)).toBe(true);
+    expect(await remote(dir, QUICK)?.messages.get("telegram:-100:1199")).toMatchObject({
+      body: "line 1199",
+    });
+  } finally {
+    await proxy.stop(true);
+  }
+}, 120_000);

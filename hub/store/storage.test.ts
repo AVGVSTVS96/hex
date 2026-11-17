@@ -260,6 +260,7 @@ test("an object made before it kept whether a hub had used it learns to, and cou
     arrived: true,
     served: false,
     version: appendOnlyMigrations.length,
+    moving: null,
   });
   object.call(raw("messages", "untaken"));
   expect(object.moved("state", "{}")).toMatchObject({ served: true });
@@ -274,7 +275,11 @@ test("a tenure the object gave out holds through its restarts", () => {
   expect(recordsIn(storage, dir).lostTo("1")).toBe("tenure 1 no longer holds hex: tenure 2 does");
 });
 
-type Between = (route: string, answer: () => Promise<Response>) => Promise<Response>;
+type Between = (
+  route: string,
+  answer: () => Promise<Response>,
+  request: Request,
+) => Promise<Response>;
 
 function served(storage = objectStorage(), env?: Omit<Env, "STORE">, between?: Between) {
   const objects = new Map<string, InstanceType<typeof Records>>();
@@ -305,7 +310,7 @@ function served(storage = objectStorage(), env?: Omit<Env, "STORE">, between?: B
           const route = new URL(request.url).pathname.split("/").slice(2).join("/");
           const answer = async () => await records.fetch(request);
 
-          return between === undefined ? await answer() : await between(route, answer);
+          return between === undefined ? await answer() : await between(route, answer, request);
         },
       }),
     },
@@ -464,6 +469,8 @@ test("a move refuses a hex.db this hex hasn't migrated, a folder whose records m
   }
 });
 
+const givesUp = { answerWithin: 10_000, firstRetry: 10, longestRetry: 10, giveUpAfter: 0 };
+
 test("a move whose last reply was lost is finished by running it again, and one that differs starts over, until a hub has used the object", async () => {
   let losing: "arrived" | "arrived, then state" | "state" | undefined;
 
@@ -497,7 +504,9 @@ test("a move whose last reply was lost is finished by running it again, and one 
     const again = join(dir, "again");
     filled(again).db.close();
     losing = "arrived, then state";
-    expect(await failure(move(again, { ...to, name: "again" }, hear))).toContain("answered 502");
+    expect(await failure(move(again, { ...to, name: "again" }, hear, givesUp))).toContain(
+      "answered 502",
+    );
     expect(existsSync(join(again, "store.json"))).toBe(false);
     expect(existsSync(join(again, "hex.db"))).toBe(true);
 
@@ -514,7 +523,7 @@ test("a move whose last reply was lost is finished by running it again, and one 
     const changed = join(dir, "changed");
     filled(changed).db.close();
     losing = "arrived, then state";
-    expect(await failure(move(changed, { ...to, name: "changed" }, hear))).toContain(
+    expect(await failure(move(changed, { ...to, name: "changed" }, hear, givesUp))).toContain(
       "answered 502",
     );
     const file = new File(changed);
@@ -1089,7 +1098,7 @@ test("a move sees a value whose type differs in the object, which JSON alone rea
     });
     file.db.close();
     losing = "arrived";
-    expect(await failure(move(dir, to, hear))).toContain("answered 502");
+    expect(await failure(move(dir, to, hear, givesUp))).toContain("answered 502");
 
     const there = await fetch(new URL("/typed/sql", object.url), {
       method: "POST",
@@ -1228,5 +1237,53 @@ test("hex sql reads a query that only names a word like replace or update, and r
   ]) {
     expect(() => object.read(sql(text))).toThrow("hex sql");
     expect(await failure(file.store.read(text))).toContain("hex sql");
+  }
+});
+
+const edge = () =>
+  new Response("<html><h1>404 Not Found</h1>cloudflare</html>", {
+    status: 404,
+    headers: { "content-type": "text/html" },
+  });
+
+test("a move rides out pages that aren't the object's own, and never sends again a step that may have landed", async () => {
+  const forwarded = new Map<string, number>();
+  let steps = 0;
+
+  const object = served(objectStorage(), undefined, async (route, answer, request) => {
+    if (!route.startsWith("move/") || route === "move/state") {
+      return await answer();
+    }
+
+    steps += 1;
+
+    if (steps % 5 === 1) {
+      return edge();
+    }
+
+    const mark = request.headers.get("hex-move") ?? "";
+    forwarded.set(mark, (forwarded.get(mark) ?? 0) + 1);
+    const answered = await answer();
+
+    return steps % 5 === 3 ? edge() : answered;
+  });
+
+  try {
+    const file = filled(dir);
+    const before = await answers(file.store);
+    file.db.close();
+    await move(dir, { url: object.url, name: "hex", key: KEY }, hear, {
+      answerWithin: 10_000,
+      firstRetry: 10,
+      longestRetry: 10,
+      giveUpAfter: 10_000,
+    });
+
+    expect(steps).toBeGreaterThan(10);
+    expect(forwarded.has("")).toBe(false);
+    expect([...forwarded.values()].every((times) => times === 1)).toBe(true);
+    expect(await answers(open(dir))).toEqual(before);
+  } finally {
+    await object.stop();
   }
 });

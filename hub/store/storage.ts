@@ -57,7 +57,14 @@ class UndoneError extends Error {
 
 type Called = { reply: Reply; wrote: boolean };
 
-type Moved = boolean | number | { arrived: boolean; served: boolean; version: number | null };
+type Step = { id: string; step: number };
+
+type Moved =
+  | boolean
+  | number
+  | { arrived: boolean; served: boolean; version: number | null; moving: Step | null };
+
+const Moving = z.object({ id: z.string(), step: z.number() }).optional();
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A Durable Object binds every number as a double, where Bun binds a whole one as an integer, so a whole number is cast back, and a record keeps one type in either home: the move compares them.
@@ -80,6 +87,30 @@ const exec = (sql: Storage["sql"], text: string, values: unknown[]) => {
 
   return values.length === 0 ? sql.exec(text) : sql.exec(cast, ...bind);
 };
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A step that arrives again, sent again after its answer was lost or held back by the network, has landed already.
+const landedBefore = (moving: Step | null, mark: Step | undefined) =>
+  mark !== undefined && moving?.id === mark.id && mark.step <= moving.step;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Each step of a move lands whole with the mark that says it did; foreign keys are set outside it, since SQLite ignores the pragma inside a transaction.
+function landingOf(storage: Storage, mark: Step | undefined) {
+  return <T>(work: () => T): T =>
+    storage.transactionSync(() => {
+      const done = work();
+
+      if (mark !== undefined) {
+        exec(
+          storage.sql,
+          "insert into _moving (one, id, step) values (1, ?, ?) on conflict (one) do update set id = excluded.id, step = excluded.step",
+          [mark.id, mark.step],
+        ).toArray();
+      }
+
+      return done;
+    });
+}
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The store's SQL over a Durable Object's: a statement's changes count the rows its triggers wrote, as Bun's do, and a write inside a write joins it.
@@ -159,6 +190,9 @@ export function recordsIn(storage: Storage, dir = "") {
     "create table if not exists _home (one integer primary key check (one = 1), version integer not null, tenure integer not null default 0, served integer not null default 0, lease integer not null default 0)",
   );
 
+  run(
+    "create table if not exists _moving (one integer primary key check (one = 1), id text not null, step integer not null)",
+  );
   run(
     "create table if not exists _claims (claimant text primary key, tenure integer not null unique)",
   );
@@ -304,11 +338,17 @@ export function recordsIn(storage: Storage, dir = "") {
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // A hex.db arrives in steps: its tables, then their rows as they are, then its indexes and triggers, so no trigger fires on a row that was already written, and last the migration it had reached. Rows arrive table by table with foreign keys off, and arrived checks them all. Until a hub has made a call, a move can start over (begin), or tell what it left (state), so one whose last reply was lost is finished by comparing again; after that nothing empties the object.
-    moved(step: string, body: string): Moved {
+    moved(step: string, body: string, mark?: Step): Moved {
       const { served = 0, version } = home() ?? {};
+      const moving = Moving.parse(run("select id, step from _moving")[0]) ?? null;
 
       if (step === "state") {
-        return { arrived: records !== undefined, served: served === 1, version: version ?? null };
+        return {
+          arrived: records !== undefined,
+          served: served === 1,
+          version: version ?? null,
+          moving,
+        };
       }
 
       if (served === 1) {
@@ -317,23 +357,30 @@ export function recordsIn(storage: Storage, dir = "") {
         );
       }
 
-      if (step === "begin") {
-        run("pragma foreign_keys = off");
-        drop();
-
+      if (landedBefore(moving, mark)) {
         return true;
       }
 
-      if (records !== undefined) {
+      const landing = landingOf(storage, mark);
+
+      if (step !== "begin" && records !== undefined) {
         throw new Error("hex's store has records already: a move starts over from move/begin");
       }
 
       run("pragma foreign_keys = off");
 
+      if (step === "begin") {
+        landing(drop);
+
+        return true;
+      }
+
       if (step === "schema") {
-        for (const statement of Statements.parse(JSON.parse(body)).statements) {
-          run(statement);
-        }
+        landing(() => {
+          for (const statement of Statements.parse(JSON.parse(body)).statements) {
+            run(statement);
+          }
+        });
 
         return true;
       }
@@ -342,7 +389,7 @@ export function recordsIn(storage: Storage, dir = "") {
         const { table, columns, rows } = Rows.parse(JSON.parse(body));
         const insert = `insert into "${table}" (${columns.map((column) => `"${column}"`).join(", ")}) values (${columns.map(() => "?").join(", ")})`;
 
-        storage.transactionSync(() => {
+        landing(() => {
           for (const row of rows) {
             run(insert, ...row);
           }
@@ -362,7 +409,7 @@ export function recordsIn(storage: Storage, dir = "") {
           );
         }
 
-        run("insert into _home (one, version) values (1, ?)", reached);
+        landing(() => run("insert into _home (one, version) values (1, ?)", reached));
         ready();
 
         return true;

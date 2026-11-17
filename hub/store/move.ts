@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { batches, carriedOf, layout, pages } from "./carry.ts";
 import type { Read } from "./carry.ts";
+import { UnreachedError } from "./errors.ts";
 import { appendOnlyMigrations } from "./migrations.ts";
 import { at, awayFile, StoreJson } from "./remote.ts";
 import type { Away } from "./remote.ts";
@@ -28,13 +29,21 @@ const MoveState = z.object({
   arrived: z.boolean(),
   served: z.boolean(),
   version: z.number().nullable(),
+  moving: z.object({ id: z.string(), step: z.number() }).nullable(),
 });
 
-const ANSWER_WITHIN = 120_000;
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Cloudflare's edge can answer for the object with a page of its own, as it did with a 404 in the first minute after a Worker's first deploy; a move waits that out, a minute or two in all, before it gives up.
+const TIMES = {
+  answerWithin: 120_000,
+  firstRetry: 1000,
+  longestRetry: 15_000,
+  giveUpAfter: 180_000,
+};
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Moves a folder's hex.db into the Durable Object `name` behind url, and proves every row arrived before the folder's store.json points hex there. hex is stopped first, and the move holds the file's write lock, so no process writes a row the object never gets. As the lock is let go the file refuses every write, so a process that opened it before the move, like a hook waiting on the lock, fails instead of keeping a record no hex reads; it then stays under another name. Until a hub has used the object, the same move run again finishes one whose last reply was lost, by comparing again, or starts it over.
-export async function move(dir: string, to: Away, say: (line: string) => void) {
+export async function move(dir: string, to: Away, say: (line: string) => void, times = TIMES) {
   const away = StoreJson.parse(to);
 
   if (existsSync(awayFile(dir))) {
@@ -45,26 +54,82 @@ export async function move(dir: string, to: Away, say: (line: string) => void) {
   const db = new Database(file, { strict: true });
   db.run("pragma busy_timeout = 30000");
 
-  const post = async (route: string, body?: Posted) => {
-    const response = await fetch(at(away, route), {
-      method: "POST",
-      headers: { authorization: `Bearer ${away.key}` },
-      body: JSON.stringify(body ?? {}),
-      signal: AbortSignal.timeout(ANSWER_WITHIN),
-    });
+  const id = crypto.randomUUID();
+  let steps = 0;
 
-    const text = await response.text();
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // One request, answered by the object, or rejected with UnreachedError when the answer isn't the object's own (none, a page of Cloudflare's, a 5xx or 429).
+  const once = async (route: string, body?: Posted, mark?: string) => {
+    let response: Response;
+    let text: string;
 
-    if (!text.startsWith("{")) {
-      throw new Error(`the object answered ${response.status}: ${text.slice(0, 200)}`);
+    try {
+      response = await fetch(at(away, route), {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${away.key}`,
+          ...(mark !== undefined && { "hex-move": mark }),
+        },
+        body: JSON.stringify(body ?? {}),
+        signal: AbortSignal.timeout(times.answerWithin),
+      });
+      text = await response.text();
+    } catch (error) {
+      throw new UnreachedError(`the object didn't answer: ${String(error)}`);
+    }
+
+    if (response.status >= 500 || response.status === 429 || !text.startsWith("{")) {
+      throw new UnreachedError(`the object answered ${response.status}: ${text.slice(0, 200)}`);
     }
 
     return decode(text);
   };
 
+  const waitedOut = async <T>(work: () => Promise<T>): Promise<T> => {
+    const started = Date.now();
+
+    for (let wait = times.firstRetry; ; wait = Math.min(wait * 2, times.longestRetry)) {
+      try {
+        return await work();
+      } catch (error) {
+        if (!(error instanceof UnreachedError) || Date.now() - started >= times.giveUpAfter) {
+          throw error;
+        }
+
+        say(`${error.message}; trying again in ${wait / 1000} s`);
+        await Bun.sleep(wait);
+      }
+    }
+  };
+
+  const post = async (route: string, body?: Posted) => await waitedOut(() => once(route, body));
+  const state = async () => MoveState.parse(await post("move/state"));
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A step that changes the object carries its mark, so one whose answer was lost is asked after rather than sent again, and the object takes it once even if the network held a copy back.
+  const step = async (route: string, body?: Posted) => {
+    steps += 1;
+    const mine = steps;
+
+    await waitedOut(async () => {
+      try {
+        await once(route, body, `${id}:${mine}`);
+      } catch (error) {
+        if (error instanceof UnreachedError) {
+          const { moving } = await state();
+
+          if (moving?.id === id && moving.step >= mine) {
+            return;
+          }
+        }
+
+        throw error;
+      }
+    });
+  };
+
   const there: Read = async (text) => z.array(z.unknown()).parse(await post("sql", { text }));
   const here = reader(db);
-  const state = async () => MoveState.parse(await post("move/state"));
 
   const differs = async () => {
     const mine = await layout(here);
@@ -146,14 +211,7 @@ export async function move(dir: string, to: Away, say: (line: string) => void) {
         : false;
 
     if (!done) {
-      await send(
-        async (route, body) => {
-          await post(route, body);
-        },
-        here,
-        version,
-        say,
-      );
+      await send(step, here, version, say);
       const difference = await differs();
 
       if (difference !== undefined) {
@@ -162,13 +220,7 @@ export async function move(dir: string, to: Away, say: (line: string) => void) {
         );
       }
 
-      try {
-        await post("move/arrived", { version });
-      } catch (error) {
-        if (!(await state()).arrived) {
-          throw error;
-        }
-      }
+      await step("move/arrived", { version });
     }
 
     writeFileSync(awayFile(dir), `${JSON.stringify(away, null, 2)}\n`, { mode: 0o600 });
