@@ -5,7 +5,7 @@ sends='def sends:
   or (.name == "Bash" and (.input.command // "" | test(
     "pigeon\\s+send|himalaya\\b[\\s\\S]*\\b(send|reply|forward)\\b|\\b(sendmail|msmtp)\\b"
     + "|osascript\\b(?=[\\s\\S]*\\bMessages\\b)[\\s\\S]*\\bsend\\b"
-    + "|/(messages|mail|drafts)/send\\b|/messages/[^/\\s]+/(reply|reply-all|forward)\\b|/Messages\\.json")));'
+    + "|https?://[^\\s\"'"'"']*/((messages|mail|drafts)/send|messages/[^/\\s\"'"'"']+/(reply|reply-all|forward)|Messages\\.json)\\b")));'
 
 printf '%s' "$input" | jq -e "$sends"' {name: .tool_name, input: .tool_input} | sends' >/dev/null || exit 0
 

@@ -116,6 +116,7 @@ test.each([
 test.each([
   ["reads an inbox", `curl -sS https://api.mail.example/v0/inboxes/me@mail.example/messages`],
   ["reads iMessages", `ssh mac 'pigeon read +15550100'`],
+  ["searches for how mail was sent", `hex log | rg -n "api.mail.example|inboxes/.*/messages/send"`],
   ["runs anything else", `git push origin main`],
 ])("a command that %s passes", (_, command) => {
   expect(bash(command)).toBe(false);
