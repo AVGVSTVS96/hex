@@ -20,6 +20,9 @@ TimeoutStopSec=30min
 # A restart starts the next hub here, so the hub keeps taking messages until it exits, as on its own restart (HUP).
 # A stop (TERM) hands them to the next hub, which may run on another machine.
 RestartKillSignal=SIGHUP
+# The signal goes to bin/hex alone, which passes it to the hub, so the iikb door and what the hub runs keep going
+# until the hub exits.
+KillMode=mixed
 MemoryMax=2G
 # The hub answers every channel, so it runs ahead of everything else on the machine when the CPU or disk is short
 # (session.slice.d/hex.conf).
