@@ -5,7 +5,7 @@ import { dispatch, engine, startHub, hexDir } from "@hex/hub";
 import type { Handlers } from "@hex/hub";
 
 import { server, tools } from "./channel.ts";
-import { serve, take, tool } from "./server.ts";
+import { cantAnswer, serve, stopsHere, take, tool } from "./server.ts";
 
 const filled = (value: string | undefined) => value !== undefined && value !== "";
 
@@ -45,9 +45,9 @@ const hub = await startHub({
   // oxlint-disable-next-line eslint/no-empty-function -- the voice hub shows no session status anywhere
   state: () => {},
   failed: (_, reason, turn) => {
-    process.stderr.write(
-      `voice hub: ${turn === true ? "the voice session's turn failed" : "the voice session couldn't start"}: ${reason}\n`,
-    );
+    const what = turn === true ? "its request to Claude failed" : "its session couldn't start";
+    process.stderr.write(`voice hub: ${what}: ${reason}\n`);
+    cantAnswer(`${what} (${reason.split("\n", 1)[0]}).`);
   },
 });
 
@@ -78,3 +78,5 @@ serve(
 );
 
 engine.take = take;
+
+engine.stops = stopsHere;
