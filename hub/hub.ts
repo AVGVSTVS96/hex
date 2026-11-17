@@ -172,6 +172,9 @@ export type Held = { hear: (audio: string) => void; hangUp: () => void };
 
 export type CallEngine = {
   take?: (from: "discord", greeting: string, line: VoiceLine) => Held;
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A stop freezes the sessions on this machine while a live call still holds the hub, so the caller is told nothing can answer here.
+  stops?: () => void;
 };
 
 export const engine: CallEngine = {};

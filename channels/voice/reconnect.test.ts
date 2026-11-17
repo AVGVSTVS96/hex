@@ -55,6 +55,21 @@ type FromOpenAI = {
 
 const withImage = (told: Line) => told.meta?.image_path !== undefined;
 
+const engineScript = (
+  state: string,
+) => `import { cantAnswer, serve, stopsHere, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
+const server = serve({ deliver: (content, meta) => console.log(JSON.stringify({ hub: 'deliver', content, meta })), keep: async () => {}, renew: () => console.log(JSON.stringify({ hub: 'renew' })), adrift: (away) => console.log(JSON.stringify({ hub: away ? 'adrift' : 'back' })), session: () => 'brain', interrupt: async () => console.log(JSON.stringify({ hub: 'interrupt' })) }, ${JSON.stringify(state)})
+console.log(JSON.stringify({ port: server.port }))
+for await (const line of console) {
+  const { name, args } = JSON.parse(line)
+  if (name === 'hex cannot answer' || name === 'hex stops') {
+    name === 'hex stops' ? stopsHere() : cantAnswer(args.why)
+    console.log(JSON.stringify({ result: 'told' }))
+    continue
+  }
+  tool(name, args).then(result => console.log(JSON.stringify({ result })), error => console.log(JSON.stringify({ error: error.message })))
+}`;
+
 async function appCall({
   callStillGoingAtStart = false,
   graceSeconds = 120,
@@ -80,6 +95,7 @@ async function appCall({
 
   const closes: string[] = [];
   const instructed: string[] = [];
+  const spoken: { content: string; handoff: string | null | undefined }[] = [];
   const thought: string[] = [];
   const handoffs: (string | null | undefined)[] = [];
   const judged: string[] = [];
@@ -181,6 +197,10 @@ async function appCall({
           handoffs.push(event.delegation_id);
         }
 
+        if (event.type === "session.commentary.append") {
+          spoken.push({ content: event.content ?? "", handoff: event.delegation_id });
+        }
+
         if (event.type === "session.thinking.append") {
           thought.push(event.content ?? "");
           socket.send(
@@ -279,13 +299,7 @@ async function appCall({
     );
   }
 
-  const engine = `import { serve, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
-const server = serve({ deliver: (content, meta) => console.log(JSON.stringify({ hub: 'deliver', content, meta })), keep: async () => {}, renew: () => console.log(JSON.stringify({ hub: 'renew' })), adrift: (away) => console.log(JSON.stringify({ hub: away ? 'adrift' : 'back' })), session: () => 'brain', interrupt: async () => console.log(JSON.stringify({ hub: 'interrupt' })) }, ${JSON.stringify(state)})
-console.log(JSON.stringify({ port: server.port }))
-for await (const line of console) {
-  const { name, args } = JSON.parse(line)
-  tool(name, args).then(result => console.log(JSON.stringify({ result })), error => console.log(JSON.stringify({ error: error.message })))
-}`;
+  const engine = engineScript(state);
 
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
@@ -332,6 +346,7 @@ for await (const line of console) {
     base,
     closes,
     instructed,
+    spoken,
     thought,
     handoffs,
     judged,
@@ -1324,4 +1339,56 @@ test("a call OpenAI closes as a lost connection after the caller hung up ends as
   engine.closesAs("connection_lost");
   await engine.hangUp();
   expect(await ends(engine)).toMatchObject({ end: "you" });
+});
+
+test("a handoff hex can't answer gets that as its result, so the caller hears why instead of more checking", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.send({
+    type: "session.delegation.created",
+    delegation: { id: "d1", target: "client" },
+    offset_ms: 1500,
+  });
+  await until(() => engine.told.some((line) => line.meta?.delegation_id === "d1"));
+  await engine.tool("hex cannot answer", { why: "its request to Claude failed (API Error: 503)." });
+  expect(engine.spoken).toEqual([
+    {
+      handoff: "d1",
+      content:
+        "I can't look that up or do it right now: its request to Claude failed (API Error: 503). Nothing was checked or done.",
+    },
+  ]);
+  expect(JSON.stringify((await engine.call()).moments)).toContain(
+    "hex couldn't answer: its request to Claude failed",
+  );
+  engine.confirmAnswers();
+  expect((await engine.tool("say", { delegation_id: "d1", text: "It passed." })).result).toBe(
+    "said",
+  );
+});
+
+test("hex stopping on the machine reaches the caller at once, and so does every handoff after it", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  await engine.tool("hex stops");
+  expect(engine.instructed.at(-1)).toStartWith(
+    "hex can't look anything up or do anything right now: hex is stopping on this machine",
+  );
+  engine.send({
+    type: "session.delegation.created",
+    delegation: { id: "d1", target: "client" },
+    offset_ms: 1500,
+  });
+  await until(() => engine.spoken.length > 0);
+  expect(engine.spoken[0]?.handoff).toBe("d1");
+  expect(engine.spoken[0]?.content).toContain("hex is stopping on this machine");
+});
+
+test("with no call live, hex failing to answer tells nobody", async () => {
+  await using engine = await appCall();
+  expect(
+    (await engine.tool("hex cannot answer", { why: "its session couldn't start." })).result,
+  ).toBe("told");
+  expect(engine.spoken).toEqual([]);
+  expect(engine.instructed).toEqual([]);
 });

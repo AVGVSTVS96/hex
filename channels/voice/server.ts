@@ -31,7 +31,15 @@ import { muting } from "./mute.ts";
 import type { Muting } from "./mute.ts";
 import { jobs, overall } from "./overall.ts";
 import page from "./page.html" with { type: "text" };
-import { MUTED, NOT_MUTED, UNMUTED, voicePrompt } from "./prompt.ts";
+import {
+  MUTED,
+  NOT_MUTED,
+  STOPPING,
+  UNMUTED,
+  noAnswer,
+  unreachable,
+  voicePrompt,
+} from "./prompt.ts";
 import { clip, Questions } from "./questions.ts";
 import type { Question } from "./questions.ts";
 import { relay } from "./relay.ts";
@@ -236,6 +244,7 @@ type Live = {
   pending: Map<string, Pending>;
   rings: Ring[];
   handoffs?: Set<string>;
+  awaited?: string;
   answer?: { text: string; at: number };
   failedSend?: string;
   ringing?: ReturnType<typeof setInterval> | undefined;
@@ -316,6 +325,7 @@ let hubStepsInCallOrder = Promise.resolve();
 let live: Live | undefined;
 
 let attaching: Attaching | undefined;
+let hexIsStopping = false;
 let ended: string | undefined;
 let seq = 0;
 const dials = new Map<string, Dial>();
@@ -420,6 +430,10 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
 
       if (filled(handoff)) {
         live.stop?.answered(handoff);
+      }
+
+      if (live.awaited === handoff) {
+        delete live.awaited;
       }
 
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -553,6 +567,29 @@ async function tell(
   remember(call, kind, text, more);
 
   return held;
+}
+
+/* OpenAI's delegation has no failed state and no timeout, so a handoff hex can't answer gets that as its result, as their guide has a failed task reported (https://developers.openai.com/api/docs/guides/live-delegation#keep-updates-accurate-and-useful): otherwise the voice keeps saying it's checking. With no handoff waiting it's a disclosure, which goes as an instruction. */
+export function cantAnswer(why: string) {
+  const call = live;
+
+  if (!call) {
+    return;
+  }
+
+  const handoff = call.awaited;
+  delete call.awaited;
+  remember(call, "warned", `hex couldn't answer: ${why}`);
+  void (
+    filled(handoff)
+      ? send(call, "session.commentary.append", noAnswer(why), handoff)
+      : send(call, "session.instructions.append", unreachable(why))
+  ).catch(fineIfUnconfirmed);
+}
+
+export function stopsHere() {
+  hexIsStopping = true;
+  cantAnswer(STOPPING);
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1166,6 +1203,7 @@ function ring(call: Live, { delegation, offset }: Ring) {
   const turns = call.call.handOff();
   const words = turns.length ? transcript(turns) : "(no new words since the last handoff)";
   call.stop?.handed(delegation, words);
+  call.awaited = delegation;
   deliver(words, {
     call: call.id,
     delegation_id: delegation,
@@ -1173,6 +1211,10 @@ function ring(call: Live, { delegation, offset }: Ring) {
     ...(filled(call.record.callee) && { callee: call.record.callee }),
   });
   save(call);
+
+  if (hexIsStopping) {
+    cantAnswer(STOPPING);
+  }
 }
 
 function hear(call: Live, who: Speaker, event: z.output<typeof Transcript>) {

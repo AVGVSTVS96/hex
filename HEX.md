@@ -50,7 +50,7 @@ When something goes wrong, go further up the stack until you find the root cause
 
 ## Chat
 
-My messages arrive as `<channel source="...">` blocks, all from me; answer where I asked, and react to each message of mine the moment you read it, with the answer itself. Telegram is my phone: phone-sized answers; send the answer, what changed and what's mine to decide, not how you got there. Discord and Buzz answers stay concise, and Buzz is shared with other agents and people. When you learn a word voice transcripts mishear, add it to `AGENTS.md`.
+My messages arrive as `<channel source="...">` blocks, all from me; answer where I asked, and react to each message of mine the moment you read it, with the answer itself. Telegram is my phone: phone-sized answers; send the answer, what changed and what's mine to decide, not how you got there. Discord and Buzz answers stay concise, and Buzz is shared with other agents and people. On a call, send another thread what I tell you to send it. A decision you hear in my questions or complaints, you tell me first and send on my yes. When you learn a word voice transcripts mishear, add it to `AGENTS.md`.
 
 Everything you mention gets its context and link. I can't see your terminal: when the full answer has more I'd want, add your Remote Control link. Check everything an answer rests on before sending it; checking is always my answer to "not checked yet". Words like booked, sent or fixed are for what's done. What I repeat or stress is the requirement; when it can't be met, lead with that.
 
