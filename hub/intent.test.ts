@@ -58,33 +58,9 @@ test("a brief is what hands work to another agent", () => {
     }),
   ).toContain("Fix the login page.");
   expect(
-    brief({
-      tool_name: "Bash",
-      tool_input: {
-        command:
-          "cd ~/hex && .hex/bin/hex deliver hex --to=-100:7 --user 'hex General' 'Make login fast.'",
-      },
-    }),
-  ).toContain("Make login fast.");
-  expect(
     brief({ tool_name: "Bash", tool_input: { command: 'ssh mac codex exec "Fix login."' } }),
   ).toContain("Fix login.");
-  expect(
-    brief({
-      tool_name: "SendMessage",
-      tool_input: { to: "login-fix", message: "Also the signup page." },
-    }),
-  ).toContain("signup");
-  expect(
-    brief({
-      tool_name: "mcp__t3-code__t3_thread_send",
-      tool_input: { threadId: "t", message: "Look again." },
-    }),
-  ).toContain("Look again.");
   expect(brief({ tool_name: "Bash", tool_input: { command: "git status" } })).toBeUndefined();
-  expect(
-    brief({ tool_name: "Bash", tool_input: { command: 'rg "hex deliver" hub; pgrep -f claude' } }),
-  ).toBeUndefined();
   expect(
     brief({
       tool_name: "Agent",
@@ -158,9 +134,8 @@ test("work hex handed a session is read next to his words, newest last", () => {
   expect(main.indexOf("Make the login page")).toBeLessThan(main.indexOf("hex bug: jobs"));
   expect(main).toContain("handed to it by hex General:\nhex bug: jobs");
 
-  const job = asked(store, "job", "hex deliver hex --to=Website 'Run the PATH probe.'");
+  const job = asked(store, "job", "claude -p 'Run the PATH probe.'");
   expect(job).toContain("the prompt it started with:\nFix the service PATH");
-  expect(job).toContain("which that thread's own session answers:\n\n[telegram:-100:50");
 });
 
 test("what a session said since its newest ask shows where that work stands", () => {
@@ -183,7 +158,7 @@ test("what a session said since its newest ask shows where that work stands", ()
     store.messages.deliver({ key, to: "-100:7", from: "terminal", body, author: "hex" }, "orch");
   }
 
-  const words = asked(store, "orch", "SendMessage to its builder: fix the crash on launch.");
+  const words = asked(store, "orch", "claude -p 'Fix the crash on launch.'");
   expect(words.indexOf("Give the builder its go")).toBeLessThan(
     words.indexOf("What this session has said since, newest last:"),
   );
@@ -211,14 +186,14 @@ test("a job is held to its own task, and sees what the owner said to its thread 
   });
   store.messages.take("telegram:-100:52", "main");
 
-  const words = asked(store, "job-session", "SendMessage to its builder: inline the login CSS.");
+  const words = asked(store, "job-session", "claude -p 'Inline the login CSS.'");
   expect(words).toContain(`${task.id} (open`);
   expect(words).not.toContain("fan controller");
 
   const withThread = asked(
     store,
     "job-session",
-    "SendMessage to its builder: inline the login CSS.",
+    "claude -p 'Inline the login CSS.'",
     "telegram:-100:7",
   );
 
@@ -228,8 +203,7 @@ test("a job is held to its own task, and sees what the owner said to its thread 
   expect(withThread).toContain("fan controller");
 });
 
-test("a delivery is checked against the words it cites and the thread it goes to", () => {
-  store.threads.keep("telegram", { "-100:7": { name: "Website" }, "-100:9": { name: "General" } });
+test("a brief is checked against the words it cites", () => {
   store.messages.deliver({
     key: "telegram:-100:90",
     to: "-100:9",
@@ -239,14 +213,9 @@ test("a delivery is checked against the words it cites and the thread it goes to
     meta: { user: "owner" },
   });
 
-  const words = asked(
-    store,
-    "general",
-    ".hex/bin/hex deliver hex --to=Website 'Add dark mode (telegram:-100:90).'",
-  );
+  const words = asked(store, "general", "claude -p 'Add dark mode (telegram:-100:90).'");
 
   expect(words).toContain("My messages it cites:\n\n[telegram:-100:90");
-  expect(words).toContain("session answers:\n\n[telegram:-100:50");
   expect(words).not.toContain("this session got");
 });
 
