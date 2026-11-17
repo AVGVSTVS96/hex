@@ -81,7 +81,6 @@ const AnswerSchema: z.ZodType<Answer> = z.object({
   finishing: z.boolean().exactOptional(),
   undoing: z.boolean().exactOptional(),
   dismissed: z.boolean().exactOptional(),
-  why: z.string().exactOptional(),
   get before() {
     return AnswerSchema.exactOptional();
   },
@@ -156,7 +155,7 @@ const CheckFile = z.object({
 
 export type CheckResult = z.infer<typeof CheckFile>;
 
-export type DecidedByHex = Question & { decided: string; why: string; took?: string };
+export type DecidedByHex = Question & { decided: string; why: string };
 
 export type View = {
   version: number;
@@ -198,16 +197,12 @@ type HubStep =
 const KEEP_MARKS_MS = 14 * 24 * 60 * 60_000;
 const CALLS = join(homedir(), ".claude", "channels", "voice", "calls");
 
-export const ON_ITS_PICK = "pick";
-
 const WHERE = new Map([
   ["app", "in the app"],
   ["call", "on a call"],
-  [ON_ITS_PICK, "by hex, on its own pick"],
 ]);
 
 const NOT_NEEDED = "Not needed";
-const MONEY = "money";
 const BACK = "Back to hex";
 const DECIDED_MS = 7 * 24 * 60 * 60_000;
 
@@ -227,8 +222,6 @@ export class Questions extends Changes {
   private checkStamp: string | undefined;
   private readonly marks: Marks;
   private readonly taking = new Set<string>();
-  private readonly tried = new Set<string>();
-  private readonly takesPicks: boolean;
   private pending?: ReturnType<typeof setTimeout>;
   private readonly stops: (() => void)[] = [];
   private readonly t3: T3;
@@ -248,20 +241,12 @@ export class Questions extends Changes {
       check = (why) => {
         new Check(state).start(why);
       },
-      takesPicks = false,
-    }: {
-      t3Database?: string;
-      t3Home?: string;
-      calls?: string;
-      check?: (why: string) => void;
-      takesPicks?: boolean;
-    } = {},
+    }: { t3Database?: string; t3Home?: string; calls?: string; check?: (why: string) => void } = {},
   ) {
     super();
     this.state = state;
     this.check = check;
     this.calls = calls;
-    this.takesPicks = takesPicks;
     this.links = new Links(
       state,
       () => {
@@ -607,10 +592,6 @@ export class Questions extends Changes {
       const handedBack = new Set(
         refs.filter((ref) => this.asked(ref)?.settled?.note.startsWith(BACK) === true),
       );
-
-      if (taken?.via === ON_ITS_PICK) {
-        this.marks.kept[id] = now();
-      }
 
       const failed: unknown[] = [];
       const stuck: Ref[] = [];
@@ -1081,8 +1062,8 @@ export class Questions extends Changes {
 
     const recently = new Date(Date.now() - DECIDED_MS).toISOString();
 
-    const decided = [
-      ...[...this.ledgers].flatMap(([app, ledger]) =>
+    const decided = [...this.ledgers]
+      .flatMap(([app, ledger]) =>
         ledger.flatMap((question) => {
           const { settled } = question;
 
@@ -1104,9 +1085,8 @@ export class Questions extends Changes {
             },
           ];
         }),
-      ),
-      ...this.tookOnItsPick(recently),
-    ].toSorted((a, b) => b.decided.localeCompare(a.decided));
+      )
+      .toSorted((a, b) => b.decided.localeCompare(a.decided));
 
     const raw = [...this.ledgers].flatMap(([app, ledger]) =>
       ledger
@@ -1151,10 +1131,6 @@ export class Questions extends Changes {
     if (JSON.stringify(view) !== JSON.stringify(this.view)) {
       this.show(view);
     }
-
-    if (this.takesPicks) {
-      void this.takePicks(this.view.asks);
-    }
   }
 
   private show(view: Omit<View, "version">) {
@@ -1168,78 +1144,6 @@ export class Questions extends Changes {
 
     if (moved) {
       this.counts.changed();
-    }
-  }
-
-  private tookOnItsPick(recently: string): DecidedByHex[] {
-    return Object.entries(this.marks.answers).flatMap(([id, answer]) => {
-      const ref = answer.refs?.[0];
-      const asked = ref && this.asked(ref);
-
-      if (
-        answer.via !== ON_ITS_PICK ||
-        answer.undoing === true ||
-        answer.at < recently ||
-        ref === undefined ||
-        asked === undefined
-      ) {
-        return [];
-      }
-
-      return [
-        {
-          ...this.dress({ ...fromLedger(ref.app, asked), id }),
-          decided: answer.at,
-          why: answer.why ?? "",
-          took: answer.label,
-        },
-      ];
-    });
-  }
-
-  private async takePicks(asks: Question[]) {
-    const yours = (ask: Question) =>
-      [ask.id, ...(ask.was ?? [])].some((id) => filled(this.marks.kept[id]));
-
-    const vetted = new Set((this.result?.asks ?? []).map((ask) => ask.id));
-
-    for (const ask of asks) {
-      const picks = ask.options.filter((option) => option.pick === true);
-
-      if (
-        picks.length === 0 ||
-        (picks.length > 1 && ask.multiple !== true) ||
-        !vetted.has(ask.id) ||
-        ask.tag === MONEY ||
-        ask.sends === true ||
-        ask.partly !== undefined ||
-        ask.undoing === true ||
-        yours(ask) ||
-        this.tried.has(ask.id)
-      ) {
-        continue;
-      }
-
-      this.tried.add(ask.id);
-
-      try {
-        await this.answer(
-          ask.id,
-          picks.map((option) => option.label),
-          ON_ITS_PICK,
-        );
-      } catch (error) {
-        console.error(`hex couldn't take its pick for ${ask.id}:`, error);
-        continue;
-      }
-
-      const taken = this.marks.answers[this.listed(ask.id)];
-      const reason = ask.why ?? picks.find((option) => filled(option.detail))?.detail;
-
-      if (taken && filled(reason)) {
-        taken.why = reason;
-        this.saveMarks();
-      }
     }
   }
 
