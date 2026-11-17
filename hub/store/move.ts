@@ -24,7 +24,7 @@ type Posted =
   | { version: number };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Moves a folder's hex.db into the Durable Object at url, once, and proves every row arrived before the folder's store.json points hex there. hex is stopped first, and the move holds the file's write lock, so no process writes a row the object never gets. The file then stays under another name, whole, so nothing writes records into a file no hex reads.
+// Moves a folder's hex.db into the Durable Object at url, once, and proves every row arrived before the folder's store.json points hex there. hex is stopped first, and the move holds the file's write lock, so no process writes a row the object never gets. As the lock is let go the file refuses every write, so a process that opened it before the move, like a hook waiting on the lock, fails instead of keeping a record no hex reads; it then stays under another name.
 export async function move(dir: string, url: string, key: string, say: (line: string) => void) {
   if (existsSync(awayFile(dir))) {
     throw new Error(`${awayFile(dir)} is there already: this folder's records have moved`);
@@ -112,7 +112,16 @@ export async function move(dir: string, url: string, key: string, say: (line: st
 
     await post("/move/arrived", { version });
     writeFileSync(awayFile(dir), `${JSON.stringify({ url, key }, null, 2)}\n`, { mode: 0o600 });
-    db.run("rollback");
+
+    for (const { name } of tables) {
+      for (const event of ["insert", "update", "delete"]) {
+        db.run(
+          `create trigger "moved_${name}_${event}" before ${event} on "${name}" begin select raise(abort, 'hex''s records moved to a Durable Object, and this file is kept as it was'); end`,
+        );
+      }
+    }
+
+    db.run("commit");
     db.run("pragma wal_checkpoint(truncate)");
     db.close();
     renameSync(file, join(dir, MOVED));

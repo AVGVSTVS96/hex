@@ -38,8 +38,8 @@ test("how often a watch runs reads as the owner would say it", () => {
   expect(everyOf({ at: "2026-12-06 09:00" }, "America/Los_Angeles")).toBe("once, Dec 6 at 9 AM");
 });
 
-test("a goal reached a month ago leaves the list but still opens by its id", () => {
-  open(state).messages.deliver({
+test("a goal reached a month ago leaves the list but still opens by its id", async () => {
+  await open(state).messages.deliver({
     key: "telegram:-1001234567890:9100",
     to: "-1001234567890:102",
     from: "telegram",
@@ -47,14 +47,14 @@ test("a goal reached a month ago leaves the list but still opens by its id", () 
     body: "ship the release",
   });
 
-  const task = open(state).tasks.create({
+  const task = await open(state).tasks.create({
     title: "Ship the release",
     message: "telegram:-1001234567890:9100",
     owner: "-1001234567890:102",
     doneWhen: "the release is out",
   });
 
-  open(state).tasks.edit(task.id, { status: "done", proof: "shipped as 1.0" });
+  await open(state).tasks.edit(task.id, { status: "done", proof: "shipped as 1.0" });
 
   const db = new Database(join(state, "hex.db"));
   db.query("update tasks set closed = ? where n = ?").run(
@@ -70,15 +70,15 @@ test("a goal reached a month ago leaves the list but still opens by its id", () 
   });
 
   const goals = new Goals(state, hex, board, questions);
-  goals.refresh();
+  await goals.refresh();
 
   expect(goals.view.goals.map((goal) => goal.id)).not.toContain(task.id);
-  expect(goals.goal(task.id)).toMatchObject({
+  expect(await goals.goal(task.id)).toMatchObject({
     id: task.id,
     title: "Ship the release",
     state: "done",
   });
-  expect(goals.goal("t-999999")).toBeUndefined();
+  expect(await goals.goal("t-999999")).toBeUndefined();
 
   goals.close();
   questions.close();

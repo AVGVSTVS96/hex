@@ -24,6 +24,9 @@ export class Records extends DurableObject<Env> {
         return new Response(null, { status: 101, webSocket: pair[0] } as ResponseInit);
       }
 
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      // The body is read first, so the tenure is checked and the call answered in one stretch nothing else runs in.
+      const body = await request.text();
       const tenure = request.headers.get("hex-tenure");
       const lost = this.records.lostTo(tenure === null ? undefined : Number(tenure));
 
@@ -31,14 +34,16 @@ export class Records extends DurableObject<Env> {
         return json({ error: lost }, 409);
       }
 
-      const body = await request.text();
-
       if (pathname === "/call") {
         const { reply, wrote } = this.records.call(body);
 
         if (wrote) {
           for (const socket of this.ctx.getWebSockets()) {
-            socket.send(".");
+            try {
+              socket.send(".");
+            } catch {
+              socket.close();
+            }
           }
         }
 

@@ -31,7 +31,7 @@ import { sessionPauses } from "./pauses.ts";
 import { fileOnly, held as filesIn, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
 import { present } from "./present.ts";
 import { restarts } from "./restarts.ts";
-import { running as sessionsRunning } from "./running.ts";
+import { live } from "./running.ts";
 import type { Session } from "./running.ts";
 import { threadRuns } from "./runs.ts";
 import { schedule } from "./schedule.ts";
@@ -902,7 +902,7 @@ export async function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Resolves with the thread's session once it has stopped and the thread is forgotten.
+  // Resolves with the thread's session once it has stopped and the thread is forgotten, in hex.db too.
   function retire(thread: string): Promise<string> {
     if (thread === main) {
       throw new Error("the main thread stays open");
@@ -943,7 +943,10 @@ export async function startHub({
     runs.forget(thread);
     turns.forget(thread);
     files.forget(thread);
-    leaving(session);
+    void (async () => {
+      await threads.save();
+      leaving(session);
+    })();
   }
 
   function adopt(thread: string, name: string, session: string, prompt?: string, cwd?: string) {
@@ -968,7 +971,7 @@ export async function startHub({
   const delivering = ordered();
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A message is kept before anything else happens to it, so once this resolves the app can be told it arrived: a crash from then on leaves it with hex, for whichever session serves the thread next. A key kept already is the app sending it again; when hex.db can't take it, there's nothing to tell. Whether the thread is told.
+  // A message is kept before anything else happens to it, so once this resolves the app can be told it arrived: a crash from then on leaves it with hex, for whichever session serves the thread next. A key kept already is the app sending it again. along: the change to hex's records the message tells of, like the answer a tap gives, kept in the same write (questions.told); when it changes nothing, or the store can't take it, there's nothing to tell. Whether the thread is told.
   async function deliver(
     thread: string,
     name: string,
@@ -999,7 +1002,13 @@ export async function startHub({
         return false;
       }
 
-      pass(thread, name, added ? { content, author, meta: { key, ...meta } } : { content, meta });
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      // A call that failed may still have landed, so the message keeps its key, which keeps a look that finds it from passing it on again, and the queue keeps it for the next session in case it didn't.
+      if (added === undefined) {
+        waiting.notKept(key);
+      }
+
+      pass(thread, name, { content, author, meta: { key, ...meta } });
 
       return true;
     });
@@ -1032,7 +1041,7 @@ export async function startHub({
     }
   }
 
-  function forward(thread: string, name: string, message: Message) {
+  function forward(thread: string, name: string, message: Message, released = false) {
     const ending = stops.ending(thread);
 
     if (ending) {
@@ -1055,7 +1064,7 @@ export async function startHub({
       ) {
         void refresh(thread, message);
       } else {
-        handInOrHold(thread, name, standing.phase.line, message);
+        handInOrHold(thread, name, standing.phase.line, message, released);
       }
 
       return;
@@ -1067,10 +1076,32 @@ export async function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Claude Code labels a channel message that comes mid-turn as not from its user, so the owner's words wait for the session's next tool call, where hub/held.ts gives them as hook feedback, which Claude Code treats as the user's; the turn's end sends any still waiting (letHeldGo). A turn counts from the message that starts it, not from its hook's report. The hold is asked of the store as the turn is read, so a turn's end after it lets it go; one the store doesn't hold goes to the session after all, or on again when that session's line is gone by then.
-  function handInOrHold(thread: string, name: string, line: Line, message: Message) {
+  // Claude Code labels a channel message that comes mid-turn as not from its user, so the owner's words wait for the session's next tool call, where hub/held.ts gives them as hook feedback, which Claude Code treats as the user's; the turn's end sends any still waiting (letHeldGo), and a message that comes while it does goes after them. A turn counts from the message that starts it, not from its hook's report. The hold is asked of the store as the turn is read, so a turn's end after it lets it go; one the store doesn't hold goes to the session after all, or on again when that session's line is gone by then. A session that just connected takes nothing new until it's given what waited (waiting.catchUp).
+  function handInOrHold(
+    thread: string,
+    name: string,
+    line: Line,
+    message: Message,
+    released = false,
+  ) {
     const { key } = message.meta;
     const session = threads.current(thread);
+    const letting = releasing.get(thread);
+
+    if (waiting.catchingUp(thread, line)) {
+      waiting.hold(thread, message);
+
+      return;
+    }
+
+    if (letting && !released) {
+      void (async () => {
+        await letting;
+        forward(thread, name, message);
+      })();
+
+      return;
+    }
 
     if (!turns.active(thread) || message.author !== "owner" || !present(key) || !present(session)) {
       turns.handIn(thread, line, message);
@@ -1093,16 +1124,29 @@ export async function startHub({
     })();
   }
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Each thread's latest letting go of what was held for its turn, until what it let go has gone on.
+  const releasing = new Map<string, Promise<unknown>>();
+
   async function letHeldGo(thread: string) {
-    const rows = await kept((store) => store.messages.letHeldGo(thread), []);
-    const name = threads.get(thread)?.name;
+    const { promise, resolve } = Promise.withResolvers();
+    releasing.set(thread, promise);
 
-    if (name === undefined) {
-      return;
-    }
+    try {
+      const rows = await kept((store) => store.messages.letHeldGo(thread), []);
+      const name = threads.get(thread)?.name;
 
-    for (const row of rows) {
-      forward(thread, name, toMessageWithKeyFirstForTheHook(row));
+      if (name !== undefined) {
+        for (const row of rows) {
+          forward(thread, name, toMessageWithKeyFirstForTheHook(row), true);
+        }
+      }
+    } finally {
+      if (releasing.get(thread) === promise) {
+        releasing.delete(thread);
+      }
+
+      resolve(undefined);
     }
   }
 
@@ -1172,6 +1216,7 @@ export async function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Each session running beside a thread, by the row it was started for, if this hub started it.
   const besides = new Map<string, string | undefined>();
+  let besideStarted: Promise<void> = Promise.resolve();
 
   const besideAddresses = () => threads.ids().map(besideOf);
   const besideRows = () => kept((store) => store.messages.beside(besideAddresses()), []);
@@ -1179,6 +1224,7 @@ export async function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A row beside a thread starts a session of its own, as hex in the thread's chat, which takes the row itself; one for a session that ran beside it resumes that session once its run is over, where this machine has its conversation. A client that shows only the turns its own messages start can't be spoken into from beside, so there the row goes to the thread.
   async function beside(row: Row & { beside: string; resume?: string }) {
+    await besideStarted;
     const thread = besideWhat(row.beside);
     const resumed = row.resume;
     const known = thread === undefined ? undefined : threads.get(thread);
@@ -1198,11 +1244,7 @@ export async function startHub({
     const session = resumed !== undefined && claude.saved(resumed) ? resumed : randomUUID();
     besides.set(session, row.key);
 
-    const resumedRuns =
-      resumed !== undefined &&
-      (await kept(async (store) => (await sessionsRunning(store)).has(resumed), true));
-
-    if (resumedRuns || closed) {
+    if (resumed !== undefined && live().has(resumed)) {
       besides.delete(session);
 
       return;
@@ -1239,12 +1281,15 @@ export async function startHub({
       },
     );
 
-    besides.delete(session);
     await besideEnded(thread, session, row.key, `exit ${code}`);
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A run beside a thread that saw its turn through is a turn that went through. One that didn't, as on an API error, waits for one to go through anywhere, as a thread's turn does, and its chat hears once while runs there wait; one that waited already is left, and its chat hears that.
+  // Each thread's runs beside it end one at a time, so each reads what the one before it left.
+  const besideEnding = ordered();
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A run beside a thread that saw its turn through is a turn that went through. One that didn't, as on an API error, waits for one to go through anywhere, as a thread's turn does, and its chat hears once while runs there wait; one that waited already is left, and its chat hears that. The run is the hub's until the store has its end, so no look starts it again before then.
   async function besideEnded(
     thread: string,
     session: string,
@@ -1257,14 +1302,27 @@ export async function startHub({
       return;
     }
 
-    const waited = (await besideRows()).some(
-      (row) => row.beside === besideOf(thread) && row.meta?.stalled !== undefined,
-    );
+    const { waited, given, left } = await besideEnding(thread, async () => {
+      const before = await besideRows();
 
-    const { given, left } = await kept((store) => store.turns.besideEnded(session, key), {
-      given: [],
-      left: [],
+      const ended = await kept((store) => store.turns.besideEnded(session, key), {
+        given: [],
+        left: [],
+      });
+
+      besides.delete(session);
+
+      return {
+        waited: before.some(
+          (row) => row.beside === besideOf(thread) && row.meta?.stalled !== undefined,
+        ),
+        ...ended,
+      };
     });
+
+    if (closed) {
+      return;
+    }
 
     const why = said === "" ? exit : said;
 
@@ -1311,16 +1369,9 @@ export async function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // As the hub starts, a run beside a thread cut off with the machine gives back what it took, to run again; one that outlived the last hub is waited on to its end; and the logs of runs that ended go.
-  async function besideStart() {
-    const alive = await kept((store) => sessionsRunning(store), new Map<string, Session>());
-
-    await kept(async (store) => {
-      for (const dead of await store.turns.unfinishedBeside([...alive.keys()])) {
-        await store.turns.besideEnded(dead, undefined, undefined, false);
-      }
-    }, undefined);
-
+  // As the hub starts, a run beside a thread cut off with the machine gives back what it took, to run again; one that outlived the last hub is waited on to its end; and the logs of runs that ended go. No run starts until then (besideStarted), so none is taken for one cut off.
+  function besideStart() {
+    const alive = live();
     files.sweepBesideLogs((session) => alive.has(session));
 
     for (const run of alive.values()) {
@@ -1335,12 +1386,17 @@ export async function startHub({
         void waitBeside(thread, run);
       }
     }
+
+    return kept(async (store) => {
+      for (const dead of await store.turns.unfinishedBeside([...alive.keys()])) {
+        await store.turns.besideEnded(dead, undefined, undefined, false);
+      }
+    }, undefined);
   }
 
   async function waitBeside(thread: string, run: Session) {
     besides.set(run.id, undefined);
     await claude.exited(run.pid);
-    besides.delete(run.id);
     await besideEnded(thread, run.id);
   }
 
@@ -1435,18 +1491,8 @@ export async function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session's channel connected over HTTP: its session is the one the hub started, or the one Claude reports running for the thread. One that only reconnects still owes a renew it asked for. One that reconnects while it's being stopped gets nothing, since what it took would end with it. What it's given is read before it's live, and a line that closed or that a newer one replaced while it was read is left alone.
-  const connecting = new Map<string, Line>();
-
+  // A session's channel connected over HTTP: its session is the one the hub started, or the one Claude reports running for the thread. One that only reconnects still owes a renew it asked for. One that reconnects while it's being stopped gets nothing, since what it took would end with it. It's live at once, and is given what waits for it once that's read (waiting.catchUp), unless its line is gone by then.
   async function welcome(thread: string, line: Line) {
-    connecting.set(thread, line);
-    const given = await waiting.ready(thread);
-
-    if (connecting.get(thread) !== line) {
-      return;
-    }
-
-    connecting.delete(thread);
     const was = sessions.connected(thread, line);
 
     if (!was) {
@@ -1464,9 +1510,15 @@ export async function startHub({
     }
 
     sessions.track(thread, was, line);
-    waiting.connected(thread, line, given);
+    const read = await waiting.catchUp(thread, line);
+    const { phase } = sessions.of(thread);
+
+    if (phase.is !== "live" || phase.line !== line) {
+      return;
+    }
+
+    const given = waiting.connected(thread, line, read);
     turns.connected(thread, given.length > 0);
-    waiting.drain(thread);
     run.awaited = run.held.length > 0;
     rest(thread);
     letGo(thread);
@@ -1484,10 +1536,6 @@ export async function startHub({
   }
 
   async function drop(thread: string, line: Line) {
-    if (connecting.get(thread) === line) {
-      connecting.delete(thread);
-    }
-
     if (!sessions.dropped(thread, line)) {
       return;
     }
@@ -1806,7 +1854,7 @@ export async function startHub({
   }
 
   const unwatch = await kept((store) => store.watch(wake), ignore);
-  void besideStart();
+  besideStarted = besideStart();
   const unschedule = present(generalThread) ? schedule(storeDir, hexDir, generalThread) : ignore;
   const unhold = present(generalThread) ? holding(storeDir) : ignore;
 

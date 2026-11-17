@@ -31,6 +31,9 @@ type Waiting = {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The kept messages the client was told wait for a session, by key, until one takes them.
   told: Map<string, Message>;
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // The line of a session that just connected, while the hub reads what it's given: until then it takes nothing new (catchingUp).
+  catching?: Line | undefined;
 };
 
 export type MessagesWaiting = ReturnType<typeof messagesWaiting>;
@@ -47,6 +50,13 @@ export function messagesWaiting({
   waits: Waits | undefined;
 }) {
   const waiting = runs.part((): Waiting => ({ queue: [], handed: new Set(), told: new Map() }));
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Keys of messages the store didn't say it kept, which the queue keeps for the thread's next session as it does one without a key.
+  const unkept = new Set<string>();
+
+  const keptOnlyHere = (message: Message) =>
+    !present(message.meta.key) || unkept.has(message.meta.key);
 
   function of(thread: string): {
     readonly queue: readonly Message[];
@@ -128,11 +138,18 @@ export function messagesWaiting({
   // What a thread's next session gets: every message no session has taken, and any the store couldn't keep.
   async function forNext(thread: string): Promise<Message[]> {
     const rows = await kept((store) => store.messages.untaken(thread), []);
+    const read = new Set(rows.map((row) => row.key));
 
     return [
       ...rows.map(toMessageWithKeyFirstForTheHook),
-      ...waiting.of(thread).queue.filter((message) => !present(message.meta.key)),
+      ...waiting
+        .of(thread)
+        .queue.filter((message) => keptOnlyHere(message) && !read.has(message.meta.key ?? "")),
     ];
+  }
+
+  function notKept(key: string) {
+    unkept.add(key);
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -161,22 +178,42 @@ export function messagesWaiting({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // What a session connecting now is given, read again while messages came to the thread's queue during the read, so the last read has every one of them.
-  async function ready(thread: string) {
+  // What a session that connected on line is given is read from the store while its line takes nothing new: a message that comes meanwhile waits in the queue (catchingUp), and connected gives it after what was read.
+  async function catchUp(thread: string, line: Line) {
+    const box = waiting.of(thread);
+    box.catching = line;
+    const before = box.queue.length;
     await kept((store) => store.messages.letHeldGo(thread), []);
+    const rows = await kept((store) => store.messages.untaken(thread), []);
 
-    for (;;) {
-      const queued = waiting.of(thread).queue.length;
-      const given = await forNext(thread);
-
-      if (waiting.of(thread).queue.length === queued) {
-        return given;
-      }
-    }
+    return { rows, before };
   }
 
-  function connected(thread: string, line: Line, given: readonly Message[]) {
+  function catchingUp(thread: string, line: Line) {
+    return waiting.get(thread)?.catching === line;
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // What was read, then what came while it was: of what waited before, only what the store doesn't keep, since what it keeps and didn't give is taken.
+  function connected(
+    thread: string,
+    line: Line,
+    { rows, before }: Awaited<ReturnType<typeof catchUp>>,
+  ): Message[] {
     const box = waiting.of(thread);
+    const read = new Set(rows.map((row) => row.key));
+
+    const given = [
+      ...rows.map(toMessageWithKeyFirstForTheHook),
+      ...box.queue
+        .splice(0)
+        .filter(
+          (message, at) =>
+            !read.has(message.meta.key ?? "") && (at >= before || keptOnlyHere(message)),
+        ),
+    ];
+
+    box.catching = undefined;
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // They wait until the session takes them, though an earlier hub may be the one that said so.
@@ -186,6 +223,8 @@ export function messagesWaiting({
     }
 
     box.handed = new Set(given.flatMap((message) => message.meta.key ?? []));
+
+    return given;
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -217,7 +256,9 @@ export function messagesWaiting({
     pass,
     passed,
     drain,
-    ready,
+    notKept,
+    catchUp,
+    catchingUp,
     connected,
     settler,
   };

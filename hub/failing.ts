@@ -184,16 +184,18 @@ export function failedStarts({
   // A thread whose session failed to start keeps its prompt and the messages it was handed waiting, and the main thread is always running, so each starts again once starts go through. Once for each failed start a message set off: one that fails even then has a problem of its own, and waits for its next message. Each is yielded as it's marked retried, so its start begins before the next thread is looked at.
   async function* retries(stopped: (thread: string) => boolean) {
     for (const [thread, start] of starting.all()) {
+      const { failing } = start;
+
       if (
-        !start.failing ||
-        start.failing.retried === true ||
+        !failing ||
+        failing.retried === true ||
         !stopped(thread) ||
         !(thread === main || start.opening || (await waiting.forNext(thread)).length > 0)
       ) {
         continue;
       }
 
-      start.failing.retried = true;
+      failing.retried = true;
       yield thread;
     }
   }

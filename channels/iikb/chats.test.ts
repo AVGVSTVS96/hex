@@ -30,7 +30,7 @@ function telegram(file?: Client["file"]): Client {
     deliver: (...args) => {
       delivered.push(args);
 
-      return true;
+      return Promise.resolve(true);
     },
     threads: () => [...NAMES.keys()],
     fresh: (thread) => thread === DM,
@@ -46,7 +46,7 @@ function telegram(file?: Client["file"]): Client {
   };
 }
 
-const say = (
+const say = async (
   thread: string,
   n: number | string,
   author: "owner" | "hex",
@@ -55,7 +55,7 @@ const say = (
 ) => {
   const key = `telegram:${thread}:${String(n)}`;
 
-  store.messages.deliver({
+  await store.messages.deliver({
     key,
     to: thread,
     from: "telegram",
@@ -63,7 +63,7 @@ const say = (
     body,
     ...(meta && { meta }),
   });
-  store.messages.take(key, "s1");
+  await store.messages.take(key, "s1");
 };
 
 const ask = (path: string, init?: RequestInit) =>
@@ -97,12 +97,12 @@ afterEach(() => {
   rmSync(hexDir, { recursive: true, force: true });
 });
 
-test("the DM and General come first, then threads by their latest message, each with its last line", () => {
-  say(QUIET, 1, "owner", "old news");
-  say(DESK, 1, "owner", "ship it");
-  say(DESK, 2, "hex", "Shipped.\nBuild 9 is on your phone.");
+test("the DM and General come first, then threads by their latest message, each with its last line", async () => {
+  await say(QUIET, 1, "owner", "old news");
+  await say(DESK, 1, "owner", "ship it");
+  await say(DESK, 2, "hex", "Shipped.\nBuild 9 is on your phone.");
 
-  expect(list(store)).toEqual([
+  expect(await list(store)).toEqual([
     { id: "telegram:1", name: "DM", pinned: true },
     { id: "telegram:-100", name: "General", pinned: true },
     { id: "telegram:-100:5", name: "Desk", line: "Shipped." },
@@ -110,10 +110,10 @@ test("the DM and General come first, then threads by their latest message, each 
   ]);
 });
 
-test("only Telegram's threads are chats, since Chats is the owner's Telegram", () => {
+test("only Telegram's threads are chats, since Chats is the owner's Telegram", async () => {
   clients.set("discord", telegram());
 
-  expect(list(store).map(({ id }) => id)).toEqual([
+  expect((await list(store)).map(({ id }) => id)).toEqual([
     "telegram:1",
     "telegram:-100",
     "telegram:-100:5",
@@ -122,14 +122,14 @@ test("only Telegram's threads are chats, since Chats is the owner's Telegram", (
 });
 
 test("a chat reads as Telegram shows it: edits in place, a poll's options, and no reactions, taps or votes", async () => {
-  say(DESK, 1, "hex", "Status: building");
-  say(DESK, "e1", "hex", "Status: shipped", { edited: "true", message_id: "1" });
-  say(DESK, 2, "hex", "Which one?", { poll: "A, the quick one / B" });
-  say(DESK, 3, "owner", "(vote: B)", { vote: "B", poll_message_id: "2" });
-  say(DESK, 4, "owner", "(reaction: 👍)", { reaction: "👍", reaction_to_message_id: "1" });
-  say(DESK, 5, "owner", "Run now", { button: "true", button_message_id: "2" });
-  say(DESK, 6, "owner", "typo", { message_id: "6" });
-  say(DESK, "6@9", "owner", "fixed", { message_id: "6", edited: "true" });
+  await say(DESK, 1, "hex", "Status: building");
+  await say(DESK, "e1", "hex", "Status: shipped", { edited: "true", message_id: "1" });
+  await say(DESK, 2, "hex", "Which one?", { poll: "A, the quick one / B" });
+  await say(DESK, 3, "owner", "(vote: B)", { vote: "B", poll_message_id: "2" });
+  await say(DESK, 4, "owner", "(reaction: 👍)", { reaction: "👍", reaction_to_message_id: "1" });
+  await say(DESK, 5, "owner", "Run now", { button: "true", button_message_id: "2" });
+  await say(DESK, 6, "owner", "typo", { message_id: "6" });
+  await say(DESK, "6@9", "owner", "fixed", { message_id: "6", edited: "true" });
 
   expect((await read(store, "telegram:-100:5")).messages).toEqual([
     { from: "hex", text: "Status: shipped" },
@@ -148,8 +148,8 @@ test("photos and files come as files the keyboard fetches with its token, the ow
     "telegram",
     telegram((id) => Promise.resolve(id === "doc1" ? report : "")),
   );
-  say(DESK, 1, "owner", "(photo)", { image_path: photo, image_dimensions: "1280x960" });
-  say(DESK, 2, "hex", "(file: report.pdf)", {
+  await say(DESK, 1, "owner", "(photo)", { image_path: photo, image_dimensions: "1280x960" });
+  await say(DESK, 2, "hex", "(file: report.pdf)", {
     file: "report.pdf",
     attachment_kind: "document",
     attachment_file_id: "doc1",
@@ -199,9 +199,9 @@ test("photos and files come as files the keyboard fetches with its token, the ow
 });
 
 test("a chat is what was said in it, then the owner's words its session hasn't taken yet", async () => {
-  say(DESK, 1, "owner", "ship it");
-  say(DESK, 2, "hex", "Shipped.");
-  store.messages.deliver({
+  await say(DESK, 1, "owner", "ship it");
+  await say(DESK, 2, "hex", "Shipped.");
+  await store.messages.deliver({
     key: "telegram:x",
     to: DESK,
     from: "telegram",
@@ -218,11 +218,11 @@ test("a chat is what was said in it, then the owner's words its session hasn't t
 
 test("a chat is its newest 40 messages, however much Telegram doesn't show comes after them", async () => {
   for (let n = 1; n <= 50; n += 1) {
-    say(DESK, n, "owner", `message ${String(n)}`);
+    await say(DESK, n, "owner", `message ${String(n)}`);
   }
 
   for (let n = 51; n <= 250; n += 1) {
-    say(DESK, n, "owner", "👍", { reaction: "👍" });
+    await say(DESK, n, "owner", "👍", { reaction: "👍" });
   }
 
   const { messages } = await read(store, "telegram:-100:5");
@@ -230,15 +230,15 @@ test("a chat is its newest 40 messages, however much Telegram doesn't show comes
   expect(messages.map(({ text }) => text)).toEqual(
     Array.from({ length: 40 }, (_, at) => `message ${String(at + 11)}`),
   );
-  expect(list(store).find(({ id }) => id === "telegram:-100:5")?.line).toBe("message 50");
+  expect((await list(store)).find(({ id }) => id === "telegram:-100:5")?.line).toBe("message 50");
 });
 
 test("a read after a version waits for the next message, and returns the moment it's written", async () => {
-  say(DESK, 1, "owner", "ship it");
+  await say(DESK, 1, "owner", "ship it");
   const { version } = await read(store, "telegram:-100:5");
   const next = read(store, "telegram:-100:5", version);
 
-  say(DESK, 2, "hex", "Shipped.");
+  await say(DESK, 2, "hex", "Shipped.");
 
   expect((await next).messages.at(-1)).toEqual({ from: "hex", text: "Shipped." });
 });
@@ -319,8 +319,8 @@ test("a photo sent from the keyboard reads back in its chat under its caption, w
   const meta = { user: "iikb", image_path: photo, image_dimensions: "1600x1200" };
 
   writeFileSync(photo, "jpeg bytes");
-  say(DESK, 1, "owner", "the new icon", meta);
-  store.messages.deliver({
+  await say(DESK, 1, "owner", "the new icon", meta);
+  await store.messages.deliver({
     key: "telegram:-100:5:2",
     to: DESK,
     from: "telegram",

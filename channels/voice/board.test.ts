@@ -46,9 +46,9 @@ function found<T>(value: T | undefined): T {
 
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
-function threads(app: string, all: Record<string, Kept>) {
+async function threads(app: string, all: Record<string, Kept>) {
   mkdirSync(join(state, app), { recursive: true });
-  open(state).threads.keep(app, all);
+  await open(state).threads.keep(app, all);
 }
 
 function job(session: string, record: Fields, timeline: Fields[] = []) {
@@ -127,9 +127,9 @@ const telegram = {
   "-1001234567890:104": { name: "Free time", session: "eeeeeeee-leisure" },
 };
 
-threads("telegram", telegram);
+await threads("telegram", telegram);
 
-threads("buzz", { b1: { name: "Old news", session: "ffffffff-old" } });
+await threads("buzz", { b1: { name: "Old news", session: "ffffffff-old" } });
 
 job("aaaaaaaa-general", { state: "done", detail: "heartbeat ran", updatedAt: ago(5) });
 
@@ -323,6 +323,8 @@ writeFileSync(
 );
 
 const board = new Board(state, hex, claude, t3);
+
+await board.changes(board.version, 60_000);
 
 afterAll(() => {
   board.close();
@@ -635,7 +637,7 @@ test("a change to a session wakes the list, and the counts move only when a coun
 });
 
 test("a new thread shows up when its app keeps it in hex.db, once its session has records, and links where its app keeps it opening there", async () => {
-  threads("discord", { d1: { name: "Latest Claude", session: "99999999-latest" } });
+  await threads("discord", { d1: { name: "Latest Claude", session: "99999999-latest" } });
   job("99999999-latest", {
     state: "failed",
     detail: "You've hit your weekly limit",
@@ -647,7 +649,7 @@ test("a new thread shows up when its app keeps it in hex.db, once its session ha
     line: "You've hit your weekly limit",
   });
   expect(found(board.get("discord:d1")).link).toBeUndefined();
-  threads("discord", {
+  await threads("discord", {
     d1: {
       name: "Latest Claude",
       session: "99999999-latest",
@@ -658,7 +660,7 @@ test("a new thread shows up when its app keeps it in hex.db, once its session ha
 });
 
 test("a T3 Code thread is placed by T3's own title for it, where T3 has one", async () => {
-  threads("t3", {
+  await threads("t3", {
     mapped: {
       name: "Phone app",
       session: "d3000001-mapped",
@@ -681,7 +683,7 @@ test("a T3 Code thread is placed by T3's own title for it, where T3 has one", as
 });
 
 test("a hex T3 thread's delegations are its agents, one on hex only under it with its own transcript's steps, and the thread works while any of them does", async () => {
-  threads("t3", {
+  await threads("t3", {
     lead: { name: "hex", session: "e5000001-lead" },
     kid: { name: "hex", session: "e5000002-kid" },
   });
@@ -894,7 +896,7 @@ test("a thread that stops working keeps its last stretch, with nothing left runn
 const linter = () => board.get("telegram:-1001234567890:105");
 
 test("a thread whose turn ended stays working while its workflow runs, each workflow agent with its own steps", async () => {
-  threads("telegram", {
+  await threads("telegram", {
     ...telegram,
     "-1001234567890:105": { name: "linter", session: "51351351-linter" },
   });
@@ -966,7 +968,7 @@ test("a session whose process died, leaving its record behind, is gone once the 
     }
   });
   expect(board.strays().map((one) => one.name)).toContain("crashed-1");
-  board.refresh();
+  await board.refresh();
   expect(board.strays().map((one) => one.name)).not.toContain("crashed-1");
   rmSync(join(claude, "sessions", "57575757.json"));
 });
@@ -991,7 +993,7 @@ test("a session whose process runs under a thread's session is one of its agents
   );
 
   const [build, t3run] = kids.filter((pid) => pid !== helper).map((pid) => found(pid));
-  threads("telegram", {
+  await threads("telegram", {
     ...telegram,
     "-1001234567890:4110": { name: "review", session: "41104110-review" },
   });
@@ -1067,7 +1069,7 @@ test("a thread stays working while a session it started runs, that session one o
   afterAll(() => {
     build.kill();
   });
-  threads("telegram", {
+  await threads("telegram", {
     ...telegram,
     "-1001234567890:106": { name: "shop", session: "32753275-shop" },
   });
@@ -1113,7 +1115,7 @@ test("a session hex runs beside a thread neither makes the thread work nor runs 
   await until(() =>
     readFileSync(`/proc/${run.pid}/environ`, "utf-8").includes("HEX_BESIDE=45454545-beside"),
   );
-  threads("telegram", {
+  await threads("telegram", {
     ...telegram,
     "-1001234567890:107": { name: "general", session: "46464646-general" },
   });
@@ -1206,7 +1208,7 @@ test("a job's session works under the thread that owns it while that thread has 
   afterAll(() => {
     owned.kill();
   });
-  threads("telegram", { ...telegram, "-1001234567890:107": { name: "trip" } });
+  await threads("telegram", { ...telegram, "-1001234567890:107": { name: "trip" } });
   const booking = () => board.get("telegram:-1001234567890:107");
   job("93939393-booking", { state: "working", detail: "booking the trip", updatedAt: ago(0) });
   running("93939393-booking", "busy", owned.pid, {
@@ -1304,7 +1306,7 @@ test("a thread's lane outlives its session starting over, kept in the voice fold
 const woken = () => board.get("t3:woken");
 
 test("a T3 thread woken by its delegations finishing still shows what it handed off since it was last asked", async () => {
-  threads("t3", { woken: { name: "hex", session: "e5000003-woken" } });
+  await threads("t3", { woken: { name: "hex", session: "e5000003-woken" } });
   job("e5000003-woken", { state: "working", detail: "summing up", updatedAt: ago(0.5) }, [
     { at: ago(1), state: "working", detail: "", text: "" },
   ]);
@@ -1367,8 +1369,8 @@ function t3Run(
 }
 
 test("a T3 thread another hex thread sent work to shows under the sender while that run is its newest, then on its own again", async () => {
-  threads("discord", { fix: { name: "urgent fix", session: "f1f1f1f1-fix" } });
-  threads("t3", { prims: { name: "hex", session: "f2f2f2f2-prims" } });
+  await threads("discord", { fix: { name: "urgent fix", session: "f1f1f1f1-fix" } });
+  await threads("t3", { prims: { name: "hex", session: "f2f2f2f2-prims" } });
   job("f1f1f1f1-fix", { state: "done", detail: "sent it on", updatedAt: ago(3) });
   job("f2f2f2f2-prims", { state: "working", detail: "building", updatedAt: ago(1) });
   running("f1f1f1f1-fix", "idle");
@@ -1384,9 +1386,9 @@ test("a T3 thread another hex thread sent work to shows under the sender while t
     reply: "Looks **sound**.",
   });
 
-  open(state).relays.relayed("discord:fix", "thread-prims", first, ago(55));
-  open(state).relays.relayed("discord:fix", "thread-prims", relayed, ago(2));
-  open(state).relays.relayed("discord:fix", "thread-codex", second, ago(4));
+  await open(state).relays.relayed("discord:fix", "thread-prims", first, ago(55));
+  await open(state).relays.relayed("discord:fix", "thread-prims", relayed, ago(2));
+  await open(state).relays.relayed("discord:fix", "thread-codex", second, ago(4));
   const fix = () => board.get("discord:fix");
   await until(() => fix()?.agents.length === 2);
   expect(found(fix()).state).toBe("working");
@@ -1410,7 +1412,7 @@ test("a T3 thread another hex thread sent work to shows under the sender while t
 });
 
 test("two T3 threads that send each other work each show on their own, the other under it", async () => {
-  threads("t3", {
+  await threads("t3", {
     ping: { name: "ping", session: "a1a1a1a1-ping" },
     pong: { name: "pong", session: "b2b2b2b2-pong" },
   });
@@ -1418,8 +1420,8 @@ test("two T3 threads that send each other work each show on their own, the other
   mapped("pong", "thread-pong", { title: "pong" });
   const toPong = t3Run("thread-pong", 1, { since: ago(3) });
   const toPing = t3Run("thread-ping", 1, { since: ago(1) });
-  open(state).relays.relayed("t3:ping", "thread-pong", toPong, ago(3));
-  open(state).relays.relayed("t3:pong", "thread-ping", toPing, ago(1));
+  await open(state).relays.relayed("t3:ping", "thread-pong", toPong, ago(3));
+  await open(state).relays.relayed("t3:pong", "thread-ping", toPing, ago(1));
   await until(
     () =>
       (board.get("t3:ping")?.agents.length ?? 0) > 0 &&
@@ -1434,9 +1436,9 @@ test("two T3 threads that send each other work each show on their own, the other
 });
 
 test("a thread off the board, quiet for a week or closed, is a page of what was last kept for it, read without touching the board", async () => {
-  expect(board.find("telegram:-1001234567890")).toBe(board.get("telegram:-1001234567890"));
+  expect(await board.find("telegram:-1001234567890")).toBe(board.get("telegram:-1001234567890"));
   const lanes = readFileSync(join(state, "voice", "tracks.json"), "utf-8");
-  expect(board.find("buzz:b1")).toEqual({
+  expect(await board.find("buzz:b1")).toEqual({
     id: "buzz:b1",
     app: "buzz",
     thread: "b1",
@@ -1446,7 +1448,7 @@ test("a thread off the board, quiet for a week or closed, is a page of what was 
     at: updatedAt("ffffffff"),
     line: "long ago",
   });
-  threads("discord", {
+  await threads("discord", {
     gone: {
       name: "Asset pack",
       session: "abababab-gone",
@@ -1459,9 +1461,9 @@ test("a thread off the board, quiet for a week or closed, is a page of what was 
     needs: "Pick a kit",
     updatedAt: ago(10 * 24 * 60),
   });
-  threads("discord", {});
-  await until(() => !open(state).threads.list({ app: "discord", open: true }).length);
-  expect(board.find("discord:gone")).toEqual({
+  await threads("discord", {});
+  expect(await open(state).threads.list({ app: "discord", open: true })).toEqual([]);
+  expect(await board.find("discord:gone")).toEqual({
     id: "discord:gone",
     app: "discord",
     thread: "gone",
@@ -1471,21 +1473,21 @@ test("a thread off the board, quiet for a week or closed, is a page of what was 
     at: updatedAt("abababab"),
     link: "https://discord.com/channels/1/gone",
   });
-  expect(board.find("discord:never")).toBeUndefined();
+  expect(await board.find("discord:never")).toBeUndefined();
   expect(board.runs.map((run) => run.id)).not.toContainAnyValues(["buzz:b1", "discord:gone"]);
   expect(readFileSync(join(state, "voice", "tracks.json"), "utf-8")).toBe(lanes);
 });
 
 test("a closed thread whose session another open thread holds now shows nothing of that session", async () => {
   job("acacacac-moved", { state: "blocked", detail: "needs a pick", updatedAt: ago(1) });
-  threads("discord", { topic: { name: "Snailmail", session: "acacacac-moved" } });
-  threads("discord", {});
-  threads("buzz", {
+  await threads("discord", { topic: { name: "Snailmail", session: "acacacac-moved" } });
+  await threads("discord", {});
+  await threads("buzz", {
     b1: { name: "Old news", session: "ffffffff-old" },
     there: { name: "Snailmail", session: "acacacac-moved" },
   });
   await until(() => !!board.get("buzz:there"));
-  expect(board.find("discord:topic")).toEqual({
+  expect(await board.find("discord:topic")).toEqual({
     id: "discord:topic",
     app: "discord",
     thread: "topic",
@@ -1493,12 +1495,15 @@ test("a closed thread whose session another open thread holds now shows nothing 
     where: "Discord",
     place: "Snailmail",
   });
-  threads("buzz", { b1: { name: "Old news", session: "ffffffff-old" } });
+  await threads("buzz", { b1: { name: "Old news", session: "ffffffff-old" } });
 });
 
 test("another Telegram group keeps its own name and place, and only hex's General goes by General", async () => {
   job("99999999-family", { state: "done", detail: "photos sent", updatedAt: ago(2) });
-  threads("telegram", { ...telegram, "-2002": { name: "Family", session: "99999999-family" } });
+  await threads("telegram", {
+    ...telegram,
+    "-2002": { name: "Family", session: "99999999-family" },
+  });
   await until(() => !!board.get("telegram:-2002"));
   expect(board.get("telegram:-2002")).toMatchObject({
     name: "Family",
@@ -1510,21 +1515,21 @@ test("another Telegram group keeps its own name and place, and only hex's Genera
     where: "General",
     place: "General",
   });
-  threads("telegram", telegram);
+  await threads("telegram", telegram);
 });
 
 test("a thread filed under a project goes by the project's name and keeps its own as its place, and General and a DM stay themselves", async () => {
   const store = open(state);
-  threads("telegram", {
+  await threads("telegram", {
     ...telegram,
     "-1001234567890:4700": { name: "Chats", session: "47004700-chats" },
     "7001": { name: "DM", session: "70017001-dm" },
   });
   job("47004700-chats", { state: "done", detail: "bubbles land", updatedAt: ago(2) });
   job("70017001-dm", { state: "done", detail: "sent the link", updatedAt: ago(2) });
-  store.threads.file("-1001234567890:4700", "keyboard");
-  store.threads.file("7001", "keyboard");
-  store.threads.file("-1001234567890", "keyboard");
+  await store.threads.file("-1001234567890:4700", "keyboard");
+  await store.threads.file("7001", "keyboard");
+  await store.threads.file("-1001234567890", "keyboard");
   await until(() => board.get("telegram:-1001234567890:4700")?.name === "keyboard");
   expect(board.get("telegram:-1001234567890:4700")).toMatchObject({
     name: "keyboard",
@@ -1532,12 +1537,12 @@ test("a thread filed under a project goes by the project's name and keeps its ow
   });
   expect(board.get("telegram:7001")).toMatchObject({ name: "DM", place: "DM" });
   expect(board.get("telegram:-1001234567890")).toMatchObject({ name: "General", place: "General" });
-  store.threads.file("-1001234567890", undefined);
-  threads("telegram", telegram);
+  await store.threads.file("-1001234567890", undefined);
+  await threads("telegram", telegram);
 });
 
 test("a T3 Code thread's session below one a hex thread handed work to works under that thread while it's busy, and one nothing handed off isn't on the board", async () => {
-  threads("telegram", {
+  await threads("telegram", {
     ...telegram,
     "-1001234567890:4210": { name: "audit", session: "42104210-audit" },
   });
@@ -1546,7 +1551,7 @@ test("a T3 Code thread's session below one a hex thread handed work to works und
   mapped("43104310-lead", "thread-audit", { driver: "claudeAgent", title: "audit lead" });
   mapped("44004400-fix", "thread-fix", { driver: "claudeAgent", title: "audit: fixes" });
   mapped("45004500-watch", "thread-watch", { driver: "claudeAgent", title: "Server Watcher" });
-  open(state).relays.relayed(
+  await open(state).relays.relayed(
     "telegram:-1001234567890:4210",
     "thread-audit",
     t3Run("thread-audit", 1, { since: ago(3) }),
@@ -1613,7 +1618,7 @@ test("a T3 Code thread's session below one a hex thread handed work to works und
 });
 
 test("a T3 Code thread a hex thread delegated before and now sends more work to counts toward it while that run goes on", async () => {
-  threads("t3", { boss: { name: "hex", session: "46004600-boss" } });
+  await threads("t3", { boss: { name: "hex", session: "46004600-boss" } });
   job("46004600-boss", { state: "done", detail: "sent it more", updatedAt: ago(1) });
   running("46004600-boss", "idle");
   mapped("boss", "thread-boss", { title: "boss" });
@@ -1625,7 +1630,7 @@ test("a T3 Code thread a hex thread delegated before and now sends more work to 
     since: ago(30),
     end: ago(20),
   });
-  open(state).relays.relayed(
+  await open(state).relays.relayed(
     "t3:boss",
     "thread-again",
     t3Run("thread-again", 1, { since: ago(1) }),
@@ -1647,7 +1652,7 @@ test("a T3 Code thread a hex thread delegated before and now sends more work to 
 });
 
 test("a T3 Code thread goes to the hex thread that sent it work last, by when hex sent it, not when its run began", async () => {
-  threads("discord", {
+  await threads("discord", {
     early: { name: "early", session: "c1c1c1c1-early" },
     late: { name: "late", session: "c2c2c2c2-late" },
   });
@@ -1656,13 +1661,13 @@ test("a T3 Code thread goes to the hex thread that sent it work last, by when he
   mapped("c3c3c3c3-steer", "thread-steer", { driver: "claudeAgent", title: "steered" });
   mapped("c4c4c4c4-kid", "thread-steerkid", { driver: "claudeAgent", title: "steered: kid" });
   const active = t3Run("thread-steer", 1, { since: ago(10) });
-  open(state).relays.relayed(
+  await open(state).relays.relayed(
     "discord:early",
     "thread-steer",
     t3Run("thread-steer", 2, { status: "queued", since: ago(5) }),
     ago(5),
   );
-  open(state).relays.relayed("discord:late", "thread-steer", active, ago(2));
+  await open(state).relays.relayed("discord:late", "thread-steer", active, ago(2));
   handed("task-steerkid", "thread-steer", "thread-steerkid", {
     driver: "claudeAgent",
     title: "steered: kid",
@@ -1726,12 +1731,12 @@ test("what a session T3 Code runs launches goes by T3's handoffs, not the thread
 });
 
 test("a hex thread that sends its busy T3 Code thread more work, which T3 queues, keeps what that thread launched", async () => {
-  threads("discord", { again: { name: "again", session: "c7c7c7c7-again" } });
+  await threads("discord", { again: { name: "again", session: "c7c7c7c7-again" } });
   running("c7c7c7c7-again", "idle");
   mapped("c8c8c8c8-busy", "thread-busy", { driver: "claudeAgent", title: "busy" });
   mapped("c9c9c9c9-busykid", "thread-busykid", { driver: "claudeAgent", title: "busy: kid" });
   t3Run("thread-busy", 1, { since: ago(10) });
-  open(state).relays.relayed(
+  await open(state).relays.relayed(
     "discord:again",
     "thread-busy",
     t3Run("thread-busy", 2, { status: "queued", since: ago(1) }),
@@ -1789,7 +1794,7 @@ test("a thread's fresh background session works under it from its first turn, be
       env: { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-1001234567890:77" },
     }),
   );
-  threads("telegram", { ...telegram, "-1001234567890:77": { name: "brand new" } });
+  await threads("telegram", { ...telegram, "-1001234567890:77": { name: "brand new" } });
   const first = Date.now() - 30_000;
   job("d2d2d2d2-first", {
     state: "working",
@@ -1807,7 +1812,7 @@ test("a thread's fresh background session works under it from its first turn, be
   await until(() => fresh()?.state === "working");
   expect(found(fresh()).at).toBe(new Date(first).toISOString());
   rmSync(join(claude, "sessions", "d2d2d2d2.json"));
-  threads("telegram", {
+  await threads("telegram", {
     ...telegram,
     "-1001234567890:78": { name: "quiet acp", session: "d3d3d3d3-quiet" },
   });
@@ -1826,22 +1831,22 @@ test("a thread's fresh background session works under it from its first turn, be
   await until(() => board.version !== version);
   expect(board.get("telegram:-1001234567890:78")).toBeUndefined();
   rmSync(join(claude, "sessions", "d3d3d3d3.json"));
-  threads("telegram", telegram);
+  await threads("telegram", telegram);
 });
 
 test("a hex T3 thread's T3 tasks go under the thread it shows under, not a sender whose run is no longer its newest", async () => {
-  threads("t3", {
+  await threads("t3", {
     chief: { name: "hex", session: "d4d4d4d4-chief" },
     split: { name: "hex", session: "d5d5d5d5-split" },
   });
-  threads("discord", { later: { name: "later", session: "d6d6d6d6-later" } });
+  await threads("discord", { later: { name: "later", session: "d6d6d6d6-later" } });
   running("d4d4d4d4-chief", "idle");
   running("d6d6d6d6-later", "idle");
   mapped("chief", "thread-chief", { title: "chief" });
   mapped("split", "thread-split", { title: "split" });
   mapped("d7d7d7d7-splitkid", "thread-splitkid", { driver: "claudeAgent", title: "split: kid" });
   handed("task-split", "thread-chief", "thread-split", { title: "split", since: ago(30) });
-  open(state).relays.relayed(
+  await open(state).relays.relayed(
     "discord:later",
     "thread-split",
     t3Run("thread-split", 1, { status: "completed", since: ago(5), end: ago(3) }),
@@ -1866,7 +1871,7 @@ test("a hex T3 thread's T3 tasks go under the thread it shows under, not a sende
     "d7d7d7d7-splitkid",
   );
   rmSync(join(claude, "sessions", "d7d7d7d7.json"));
-  threads("discord", {});
+  await threads("discord", {});
 });
 
 test("a thread that works again shows only this stretch's steps and plan, not the last one's its transcript reads back over", async () => {
@@ -1886,7 +1891,7 @@ test("a thread that works again shows only this stretch's steps and plan, not th
   }
 
   const session = "abababab-again";
-  open(hexState).threads.keep("telegram", { "-100777:5": { name: "Again", session } });
+  await open(hexState).threads.keep("telegram", { "-100777:5": { name: "Again", session } });
   const transcript = join(dir, `${session}.jsonl`);
 
   const line = (minutes: number, type: string, content: Fields) => {
@@ -1956,7 +1961,7 @@ const group = () => board.get("project:Stall check");
 
 test("agents started for a task show under the topic that owns it, or for General's task under a run of its project's own, kept once they finish", async () => {
   const store = open(state);
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-1001234567890:9001",
     to: "-1001234567890",
     from: "telegram",
@@ -1964,14 +1969,14 @@ test("agents started for a task show under the topic that owns it, or for Genera
     body: "check for stalls, and fix the voice bug",
   });
 
-  const stall = store.tasks.create({
+  const stall = await store.tasks.create({
     title: "Stall check",
     message: "telegram:-1001234567890:9001",
     owner: "-1001234567890",
     project: "Stall check",
   });
 
-  const voice = store.tasks.create({
+  const voice = await store.tasks.create({
     title: "Voice bug",
     message: "telegram:-1001234567890:9001",
     owner: "-1001234567890:102",
@@ -2007,9 +2012,10 @@ test("agents started for a task show under the topic that owns it, or for Genera
     name: "hex/sweep",
     startedAt: started + 4000,
   });
-  store.tasks.addAgents(stall.id, ["achk1aaaaaaaaaaaa", "achk2aaa", "86868686-sweep"]);
-  store.tasks.addAgents(voice.id, ["avfixaaaaaaaaaaaa"]);
-  expect(() => store.tasks.addAgents(voice.id, ["short"])).toThrow();
+  await store.tasks.addAgents(stall.id, ["achk1aaaaaaaaaaaa", "achk2aaa", "86868686-sweep"]);
+  await store.tasks.addAgents(voice.id, ["avfixaaaaaaaaaaaa"]);
+  const [short] = await Promise.allSettled([store.tasks.addAgents(voice.id, ["short"])]);
+  expect(short?.status).toBe("rejected");
   await until(
     () =>
       group()?.agents.length === 3 &&
@@ -2046,7 +2052,7 @@ test("agents started for a task show under the topic that owns it, or for Genera
 
 test("each task closed in the last day is finished under the run it was done for, named as that run is, whatever state the run is in", async () => {
   const store = open(state);
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-1001234567890:9002",
     to: "-1001234567890:102",
     from: "telegram",
@@ -2054,27 +2060,30 @@ test("each task closed in the last day is finished under the run it was done for
     body: "fix the done tab, and the call drop, and launch it",
   });
 
-  const tab = store.tasks.create({
+  const tab = await store.tasks.create({
     title: "Done tab",
     message: "telegram:-1001234567890:9002",
     owner: "-1001234567890:102",
   });
 
-  const drop = store.tasks.create({
+  const drop = await store.tasks.create({
     title: "Call drop",
     message: "telegram:-1001234567890:9002",
     owner: "-1001234567890:102",
   });
 
-  const launch = store.tasks.create({
+  const launch = await store.tasks.create({
     title: "Launch",
     message: "telegram:-1001234567890:9002",
     owner: "-1001234567890",
     project: "Launch plan",
   });
 
-  store.tasks.edit(tab.id, { status: "done", proof: "https://github.com/x/y/pull/1 (**live**)" });
-  store.tasks.edit(launch.id, { status: "done", proof: "posted" });
+  await store.tasks.edit(tab.id, {
+    status: "done",
+    proof: "https://github.com/x/y/pull/1 (**live**)",
+  });
+  await store.tasks.edit(launch.id, { status: "done", proof: "posted" });
   await until(() => board.finished.length === 2);
   expect(board.finished).toEqual([
     {
@@ -2097,22 +2106,22 @@ test("each task closed in the last day is finished under the run it was done for
     },
   ]);
   expect(board.get("telegram:-1001234567890:102")?.state).not.toBe("done");
-  store.tasks.edit(drop.id, { status: "dropped" });
-  store.tasks.edit(tab.id, { status: "open" });
+  await store.tasks.edit(drop.id, { status: "dropped" });
+  await store.tasks.edit(tab.id, { status: "open" });
   await until(() => board.finished.length === 1);
   expect(found(board.finished[0]).id).toBe(launch.id);
 });
 
 test("a task General owns with no project is finished in the topic its proof was posted in", async () => {
   const store = open(state);
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-1001234567890:9010",
     to: "-1001234567890",
     from: "telegram",
     author: "owner",
     body: "turn off the mic",
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-1001234567890:9011",
     to: "-1001234567890:102",
     from: "telegram",
@@ -2120,20 +2129,20 @@ test("a task General owns with no project is finished in the topic its proof was
     body: "the mic is off",
   });
 
-  const mic = store.tasks.create({
+  const mic = await store.tasks.create({
     title: "Mic off",
     message: "telegram:-1001234567890:9010",
     owner: "-1001234567890",
   });
 
-  const chat = store.tasks.create({
+  const chat = await store.tasks.create({
     title: "Chat",
     message: "telegram:-1001234567890:9010",
     owner: "-1001234567890",
   });
 
-  store.tasks.edit(mic.id, { status: "done", proof: "telegram:-1001234567890:9011 build 9" });
-  store.tasks.edit(chat.id, { status: "done", proof: "telegram:-1001234567890:9010" });
+  await store.tasks.edit(mic.id, { status: "done", proof: "telegram:-1001234567890:9011 build 9" });
+  await store.tasks.edit(chat.id, { status: "done", proof: "telegram:-1001234567890:9010" });
   await until(
     () => board.finished.filter((task) => [mic.id, chat.id].includes(task.id)).length === 2,
   );
@@ -2146,7 +2155,7 @@ test("a task General owns with no project is finished in the topic its proof was
 
 test("a task General owns with no project is finished in the topic that closed it or started its agents, before where its proof was posted", async () => {
   const store = open(state);
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-1001234567890:9020",
     to: "-1001234567890",
     from: "telegram",
@@ -2154,25 +2163,25 @@ test("a task General owns with no project is finished in the topic that closed i
     body: "pool and keyboard",
   });
 
-  const pool = store.tasks.create({
+  const pool = await store.tasks.create({
     title: "Pool",
     message: "telegram:-1001234567890:9020",
     owner: "-1001234567890",
   });
 
-  const keys = store.tasks.create({
+  const keys = await store.tasks.create({
     title: "Keys",
     message: "telegram:-1001234567890:9020",
     owner: "-1001234567890",
   });
 
-  store.tasks.addAgents(pool.id, ["poolagent1"], "-1001234567890:102");
-  store.tasks.edit(pool.id, {
+  await store.tasks.addAgents(pool.id, ["poolagent1"], "-1001234567890:102");
+  await store.tasks.edit(pool.id, {
     status: "done",
     proof: "https://github.com/x/y/pull/2",
     doneIn: "-1001234567890",
   });
-  store.tasks.edit(keys.id, {
+  await store.tasks.edit(keys.id, {
     status: "done",
     proof: "https://github.com/x/y/pull/3",
     doneIn: "-1001234567890:102",
@@ -2187,7 +2196,7 @@ test("a task General owns with no project is finished in the topic that closed i
 
 test("agents a topic starts for a task General owns with no project stay under that topic", async () => {
   const store = open(state);
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-1001234567890:9005",
     to: "-1001234567890",
     from: "telegram",
@@ -2195,7 +2204,7 @@ test("agents a topic starts for a task General owns with no project stay under t
     body: "tidy the phone app",
   });
 
-  const tidy = store.tasks.create({
+  const tidy = await store.tasks.create({
     title: "Tidy the phone app",
     message: "telegram:-1001234567890:9005",
     owner: "-1001234567890",
@@ -2208,7 +2217,7 @@ test("agents a topic starts for a task General owns with no project stay under t
     fan: [{ id: "atidyaaaaaaaaaaaa", kind: "agent", label: "Tidy up", startedAt: Date.now() }],
   });
   running("cccccccc-phoneapp", "busy");
-  store.tasks.addAgents(tidy.id, ["atidyaaaaaaaaaaaa"]);
+  await store.tasks.addAgents(tidy.id, ["atidyaaaaaaaaaaaa"]);
   await until(() => phoneapp().agents.some((agent) => agent.id === "atidyaaaaaaaaaaaa"));
   expect(found(general()).agents.map((agent) => agent.id)).not.toContain("atidyaaaaaaaaaaaa");
 });

@@ -8,11 +8,10 @@ import { ahead } from "./ahead.ts";
 import { nightly } from "./backup.ts";
 import { besideOf } from "./beside.ts";
 import { clients, free, listen, up } from "./hub.ts";
-import { landed } from "./kept.ts";
 import { hexDir, open, syncInBackground } from "./store.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Before the clients load: Telegram's bot module awaits its polling loop, which never ends. A restart (HUP) and a stop (TERM, INT) end the hub alike: live calls hang up, the clients sign off, a call that came in while they did hangs up too, and once the store has answered what the hubs asked of it, it exits for bin/hex to start the next one, so two never run at once. A stop also ends a hub still waiting for the port, and the clients stop taking in messages first, since the next hub may already be running elsewhere.
+// Before the clients load: Telegram's bot module awaits its polling loop, which never ends. A restart (HUP) and a stop (TERM, INT) end the hub alike: live calls hang up, the clients sign off, a call that came in while they did hangs up too, and once each hub's store has what was written to it, it exits for bin/hex to start the next one, so two never run at once. A stop also ends a hub still waiting for the port, and the clients stop taking in messages first, since the next hub may already be running elsewhere.
 let stopping: Promise<void> | undefined;
 
 const hangUpSignOffAndExit = (signal: NodeJS.Signals) =>
@@ -28,7 +27,13 @@ const hangUpSignOffAndExit = (signal: NodeJS.Signals) =>
       ),
     )
     .then(free)
-    .then(landed)
+    .then(() =>
+      Promise.allSettled(
+        [...clients.values()].map(async (client) => {
+          await client.hub.synced();
+        }),
+      ),
+    )
     .then(() => process.exit(0)));
 
 for (const signal of ["SIGHUP", "SIGTERM", "SIGINT"] as const) {

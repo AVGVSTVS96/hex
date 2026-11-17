@@ -35,7 +35,7 @@ export async function origin(
 
   const [thread, names] = await Promise.all([store.threads.key(owner), store.threads.names()]);
 
-  if (!(thread in names)) {
+  if (!Object.hasOwn(names, thread)) {
     return await besideRun(store, thread, names, hex);
   }
 

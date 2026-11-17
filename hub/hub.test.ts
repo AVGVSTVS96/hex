@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import * as claude from "./claude.ts";
-import { settled } from "./claude.ts";
+import { settled as commandsSettled } from "./claude.ts";
 import type { Job as JobRecord } from "./claude.ts";
 import { clock, manual } from "./clock.ts";
 import {
@@ -39,6 +39,7 @@ import {
   writable,
 } from "./hub.ts";
 import type { Call, ChannelServer, Hub, HubLine, Message, Permission } from "./hub.ts";
+import { landed } from "./kept.ts";
 import { pictureId } from "./pictures.ts";
 import { stamp } from "./start.ts";
 import { file } from "./store.ts";
@@ -47,6 +48,14 @@ import { ATTACH, hangUpAll, http as channelLine, port } from "./testing.ts";
 import { until } from "./until.ts";
 
 const CHANNEL = "plugin:telegram@hex";
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Once what the hub set going has ended: its commands to Claude, and its calls to the store, which a home across the network answers late (late.ts).
+async function settled() {
+  do {
+    await commandsSettled();
+  } while (await landed());
+}
 
 type Registered = {
   name: string;
@@ -4169,7 +4178,7 @@ test("releasing a thread with no live session resolves at once", async () => {
   await start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } } });
   expect(await hub.release("chat:7")).toBe(SESSION);
   expect(registry()["chat:7"]).toBeUndefined();
-  expect(calls().filter(([command]) => command !== "agents")).toEqual([]);
+  expect(calls().filter(([command]) => command === "stop" || command === "--bg")).toEqual([]);
 });
 
 test("the main thread cannot be closed or released, nor a thread without a session", async () => {
@@ -5133,6 +5142,7 @@ test("a session started before hex kept messages has the hub take them for it", 
 
   expect(await hook.exited).toBe(0);
   expect((await until(() => file(dir).messages.get("telegram:1:42")?.taken)).by).toBe(SESSION);
+  await until(() => states.length);
   expect(states).toEqual([["chat:7", true]]);
 });
 
@@ -5579,4 +5589,51 @@ test("a channel that shows another's threads waits for that client to join, and 
   } finally {
     clients.delete("elsewhere");
   }
+});
+
+test("a session is live as its channel connects, so a thread closed while the hub reads what the session is given stops that session and stays closed", async () => {
+  await start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } } });
+  writeFileSync(
+    join(dir, "jobs", "job12345", "state.json"),
+    JSON.stringify({ state: "working", sessionId: SESSION }),
+  );
+  const line = http("chat:7");
+  await line.initialize();
+  await line.open();
+  await line.rpc("tools/list");
+  await until(() => line.listed() === 2);
+  const closed = hub.retire("chat:7");
+  await settled();
+  expect(calls().filter(([command]) => command === "stop")).toHaveLength(1);
+  line.close();
+  expect(await closed).toBe(SESSION);
+  await settled();
+  expect(hub.threads()).toEqual([]);
+});
+
+test("the owner's words held for a turn go to the session before a message that came as the turn ended", async () => {
+  await start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: 42 }],
+  });
+  const { received, send } = await session("chat:7");
+  await send({ type: "state", thread: "chat:7", busy: true });
+  await hub.deliver("chat:7", "Desk anchors", {
+    author: "owner",
+    content: "held",
+    meta: {},
+    key: "1:50",
+  });
+  const ending = send({ type: "state", thread: "chat:7", busy: false });
+
+  const after = hub.deliver("chat:7", "Desk anchors", {
+    author: "owner",
+    content: "after",
+    meta: {},
+    key: "1:51",
+  });
+
+  await Promise.all([ending, after]);
+  await settled();
+  expect(heard(received).map((turn) => turn.content)).toEqual(["held"]);
 });

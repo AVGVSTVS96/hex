@@ -60,7 +60,23 @@ function outranks(kept: Session, status: string, updated: number) {
 const nonEmpty = (value: string | undefined) =>
   value !== undefined && value !== "" ? value : undefined;
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Every running session with hex's record of its turn, as the tools that show sessions read them.
 export async function running(store: Store, claude = CLAUDE): Promise<Map<string, Session>> {
+  const sessions = live(claude);
+
+  await Promise.all(
+    [...sessions.values()].map(async (session) =>
+      Object.assign(session, await store.turns.get(session.id)),
+    ),
+  );
+
+  return sessions;
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Every running session as Claude's own records say, which asks nothing of hex's store.
+export function live(claude = CLAUDE): Map<string, Session> {
   const sessions = new Map<string, Session>();
   const pids = new Map<number, string>();
   const dir = join(claude, "sessions");
@@ -120,12 +136,6 @@ export async function running(store: Store, claude = CLAUDE): Promise<Map<string
       ...(beside !== undefined && { beside }),
     });
   }
-
-  await Promise.all(
-    [...sessions.values()].map(async (session) =>
-      Object.assign(session, await store.turns.get(session.id)),
-    ),
-  );
 
   for (const session of sessions.values()) {
     const parent =

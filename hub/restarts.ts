@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { besideOf } from "./beside.ts";
+import { tracked } from "./kept.ts";
 import { open } from "./store.ts";
 import type { NewRow } from "./store.ts";
 
@@ -90,7 +91,7 @@ export function restarts(
 
   async function tell(row: NewRow) {
     try {
-      await store.messages.deliver(row);
+      await tracked(store.messages.deliver(row));
     } catch (error) {
       process.stderr.write(`hub: couldn't tell General: ${row.body}: ${String(error)}\n`);
     }

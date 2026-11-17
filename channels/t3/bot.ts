@@ -118,8 +118,13 @@ function link(thread: string) {
   return record && !record.deleted ? linkTo(record.thread) : undefined;
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The hub saves its threads, and so asks for their links, while it starts, before there's a hub to match T3's records to.
+const hubStarted = Promise.withResolvers();
+
 async function mirrorOrReport(records: typeof recordsThisSave) {
   try {
+    await hubStarted.promise;
     await mirror(records);
   } catch (error) {
     process.stderr.write(`t3: couldn't match hex's threads to T3's: ${String(error)}\n`);
@@ -247,6 +252,8 @@ const hub = await startHub({
   hexDir: HEX_DIR,
   ...(process.env.HEX_LAUNCHER !== undefined && { launcher: process.env.HEX_LAUNCHER }),
 });
+
+hubStarted.resolve(undefined);
 
 type McpConfig =
   | { command: string; args: string[]; env: Record<string, string> }

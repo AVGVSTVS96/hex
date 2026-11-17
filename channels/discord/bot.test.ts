@@ -565,12 +565,22 @@ void mock.module("discord.js", () => ({ ...discord, Client }));
 
 const state = mkdtempSync(join(tmpdir(), "discord-"));
 
-const saved = () =>
+const saved = async () =>
   Object.fromEntries(
-    open(state)
-      .threads.list({ open: true })
-      .map((thread) => [thread.thread, thread]),
+    (await open(state).threads.list({ open: true })).map((thread) => [thread.thread, thread]),
   );
+
+async function eventually<T>(check: () => Promise<T>): Promise<NonNullable<T>> {
+  for (;;) {
+    const value = await check();
+
+    if (value !== undefined && value !== null && value !== false) {
+      return value;
+    }
+
+    await Bun.sleep(20);
+  }
+}
 
 afterAll(() => {
   rmSync(state, { recursive: true, force: true });
@@ -612,7 +622,7 @@ const realFetch = globalThis.fetch;
 beforeAll(async () => {
   writeFileSync(join(state, "access.json"), JSON.stringify({ allowFrom: [OWNER] }));
   writeFileSync(join(state, "cursor.json"), JSON.stringify({ id: snowflake(60) }));
-  open(state).threads.keep("discord", { "7777": { name: "deleted in Discord" } });
+  await open(state).threads.keep("discord", { "7777": { name: "deleted in Discord" } });
   Object.assign(process.env, {
     PATH: noClaude(),
     DISCORD_STATE_DIR: state,
@@ -675,18 +685,14 @@ async function session(thread: string) {
   return { received: lines, call: line.call, send: hook, ask: line.ask };
 }
 
-const book = () => ({
+const book = async () => ({
   pins: Object.fromEntries(
-    open(state)
-      .pins.list({ app: "discord" })
-      .map((pin) => [pin.thread, pin]),
+    (await open(state).pins.list({ app: "discord" })).map((pin) => [pin.thread, pin]),
   ),
 });
 
-const question = (asked: string) =>
-  open(state)
-    .questions.list({ app: "discord" })
-    .find((each) => each.message === asked);
+const question = async (asked: string) =>
+  (await open(state).questions.list({ app: "discord" })).find((each) => each.message === asked);
 
 const arrived = (id: string, edited?: string) =>
   inbound(received, (line) => line.meta.message_id === id && line.meta.edited === edited);
@@ -962,12 +968,14 @@ test("a question keeps the message its pictures went in, and the pictures stay o
   await call("reply", { text: "The new m?", buttons: ["This one", "Not it"], files: [logo] });
   const posted = lastPosted(here);
 
-  expect(open(state).questions.get("discord", here.id, posted.id)?.attached).toEqual([posted.id]);
+  expect((await open(state).questions.get("discord", here.id, posted.id))?.attached).toEqual([
+    posted.id,
+  ]);
 
-  const kept = open(state).messages.get(`discord:${posted.id}`)?.meta?.image_path ?? "";
+  const kept = (await open(state).messages.get(`discord:${posted.id}`))?.meta?.image_path ?? "";
   expect(kept.startsWith(state)).toBe(true);
   expect(readFileSync(kept, "utf-8")).toBe("png");
-  open(state).questions.unask("discord", here.id, posted.id);
+  await open(state).questions.unask("discord", here.id, posted.id);
 });
 
 test("react takes off only the bot's own reaction, and edit_message replaces the files instead of adding to them", async () => {
@@ -1057,7 +1065,7 @@ test("a thread the owner opens on his message starts from that message, kept in 
     ["audit the hex workers", asked.id, undefined],
     ["and keep them on track", then.id, undefined],
   ]);
-  expect(open(state).messages.get(`discord:${asked.id}`)).toMatchObject({
+  expect(await open(state).messages.get(`discord:${asked.id}`)).toMatchObject({
     to: thread.id,
     body: "audit the hex workers",
     meta: { ts: at(18).toISOString() },
@@ -1098,7 +1106,7 @@ test("a thread someone else opens on the owner's message stays theirs: his edit 
   const then = { ...say(here, 28, "back to work"), ...live(here) };
   emit("messageCreate", then);
   await inbound(received, (line) => line.meta.message_id === then.id);
-  expect(open(state).messages.untaken(thread.id)).toEqual([]);
+  expect(await open(state).messages.untaken(thread.id)).toEqual([]);
 });
 
 test("search_messages searches the whole server and says where each match is", async () => {
@@ -1290,7 +1298,7 @@ test("closing a thread Discord no longer has forgets it, instead of failing on t
   expect((await call("close_thread", { thread: "7777" })).text).toBe(
     'forgot "deleted in Discord": its Discord thread no longer exists',
   );
-  await until(() => !("7777" in saved()));
+  await eventually(async () => !("7777" in (await saved())));
 });
 
 test("once connected the bot leaves the id of its server in guild.json, so the voice app can link a thread, and registers its slash commands", async () => {
@@ -1372,7 +1380,7 @@ test("a question with buttons goes in the ledger: a tap answers it there, and on
     buttons: ["Left", "Right"],
   });
   const asked = lastPosted(here);
-  expect(question(asked.id)).toMatchObject({
+  expect(await question(asked.id)).toMatchObject({
     thread: here.id,
     text: "Which anchors?\nThe left ones are cheaper.",
     options: ["Left", "Right"],
@@ -1387,7 +1395,7 @@ test("a question with buttons goes in the ledger: a tap answers it there, and on
   expect(labels(done.findLast((d) => d.edit === asked.id)?.options?.components)).toEqual([
     "✓ Answered in the app: Right",
   ]);
-  expect(question(asked.id)?.answer).toMatchObject({ label: "Right", via: "app" });
+  expect((await question(asked.id))?.answer).toMatchObject({ label: "Right", via: "app" });
 
   await send({ type: "reopen", thread: here.id, message: asked.id, via: "app" });
   expect((await inbound(received, (line) => line.meta.took_back === "Right")).content).toBe(
@@ -1407,14 +1415,14 @@ test("a question with buttons goes in the ledger: a tap answers it there, and on
     message: asked,
     update: () => Promise.resolve(),
   });
-  await until(() => question(asked.id)?.answer?.via === "discord");
+  await eventually(async () => (await question(asked.id))?.answer?.via === "discord");
 
   await call("reply", { text: "Ship today?", buttons: ["Yes", "No"] });
   const later = lastPosted(here);
   await call("edit_message", { message_id: later.id, text: "Ship today, before five?" });
-  expect(question(later.id)?.settled).toBeUndefined();
+  expect((await question(later.id))?.settled).toBeUndefined();
   await send({ type: "settle", thread: here.id, message: later.id, note: "Settled: shipped" });
-  await until(() => question(later.id)?.settled);
+  await eventually(async () => (await question(later.id))?.settled);
   expect(labels(done.findLast((d) => d.edit === later.id)?.options?.components)).toEqual([
     "Settled: shipped",
   ]);
@@ -1426,7 +1434,7 @@ test("a question with buttons goes in the ledger: a tap answers it there, and on
     text: "Renamed, as you said in the call.",
     settled: true,
   });
-  expect(question(renamed.id)?.settled).toMatchObject({ note: "✓ Settled" });
+  expect((await question(renamed.id))?.settled).toMatchObject({ note: "✓ Settled" });
   expect(labels(done.findLast((d) => d.edit === renamed.id)?.options?.components)).toEqual([
     "✓ Settled",
   ]);
@@ -1434,7 +1442,7 @@ test("a question with buttons goes in the ledger: a tap answers it there, and on
   await call("reply", { text: "Keep the old name?", buttons: ["Yes", "No"] });
   const kept = lastPosted(here);
   await call("edit_message", { message_id: kept.id, settled: true });
-  expect(question(kept.id)).toMatchObject({
+  expect(await question(kept.id)).toMatchObject({
     text: "Keep the old name?",
     settled: { note: "✓ Settled" },
   });
@@ -1484,7 +1492,10 @@ test("buttons with multiple come as a menu, and a pick of several comes back as 
     min_values: 1,
     max_values: 3,
   });
-  expect(question(asked.id)).toMatchObject({ options: ["a.ts", "b.ts", "c.ts"], multiple: true });
+  expect(await question(asked.id)).toMatchObject({
+    options: ["a.ts", "b.ts", "c.ts"],
+    multiple: true,
+  });
 
   let update: Sent | undefined;
   emit("interactionCreate", {
@@ -1665,7 +1676,7 @@ test("slash commands set a thread's model and effort, and answer only the owner 
     "This thread is working; compact it once it's done.",
   ]);
   expect(replies.every((reply) => reply.flags === MessageFlags.Ephemeral)).toBe(true);
-  expect(saved()[desk.id]).toMatchObject({ model: "opus", effort: "max" });
+  expect((await saved())[desk.id]).toMatchObject({ model: "opus", effort: "max" });
 });
 
 test("a backfill posts each line through one webhook of the channel, as the owner or the bot, split to fit", async () => {
@@ -1827,7 +1838,10 @@ test("a status post is the session's note over lines hex keeps current from the 
   const post = lastPosted(here);
   expect(post.content).toBe("Site: example.com");
   expect(done).toContainEqual({ pin: post.id });
-  expect(book().pins[here.id]).toMatchObject({ message: post.id, note: "Site: example.com" });
+  expect((await book()).pins[here.id]).toMatchObject({
+    message: post.id,
+    note: "Site: example.com",
+  });
 
   const edits = () => done.flatMap((d) => (d.edit === post.id ? [d.options?.content ?? ""] : []));
 
@@ -1840,12 +1854,15 @@ test("a status post is the session's note over lines hex keeps current from the 
   ).toStartWith("edited the status post's note");
   expect(edits()).toHaveLength(count + 1);
   expect(edits().at(-1)).toStartWith("Site: example.org\n\n**Waiting on you**");
-  expect(book().pins[here.id]).toMatchObject({ message: post.id, note: "Site: example.org" });
+  expect((await book()).pins[here.id]).toMatchObject({
+    message: post.id,
+    note: "Site: example.org",
+  });
 
   await call("pin", { note: "Site: v2" });
   const next = lastPosted(here);
   expect(done).toContainEqual({ unpin: post.id });
-  expect(book().pins[here.id]).toMatchObject({ message: next.id, note: "Site: v2" });
+  expect((await book()).pins[here.id]).toMatchObject({ message: next.id, note: "Site: v2" });
   await call("pin", { unpin: true });
-  expect(book().pins[here.id]).toBeUndefined();
+  expect((await book()).pins[here.id]).toBeUndefined();
 });

@@ -1,6 +1,8 @@
 {
   "name": "hex-store",
   "main": "object.ts",
+  "workers_dev": true,
+  "preview_urls": false,
   "compatibility_date": "2026-08-01",
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": { "bindings": [{ "name": "STORE", "class_name": "Records" }] },

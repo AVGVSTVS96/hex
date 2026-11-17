@@ -185,7 +185,9 @@ export async function openThreads({
       return;
     }
 
-    for (const field of FIELDS.filter((given) => given in patch)) {
+    const changed = FIELDS.filter((given) => given in patch && patch[given] !== known[given]);
+
+    for (const field of changed) {
       const value = patch[field];
 
       if (value === undefined) {
@@ -195,7 +197,9 @@ export async function openThreads({
       }
     }
 
-    void save();
+    if (changed.length > 0) {
+      void save();
+    }
   }
 
   function close(thread: string) {

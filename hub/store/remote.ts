@@ -13,7 +13,7 @@ import type { Client } from "./wire.ts";
 // store.json in a state folder names the Durable Object that holds this hex's records in place of the folder's hex.db: its Worker's address and the key it answers to.
 const Away = z.object({ url: z.url(), key: z.string().min(1) });
 
-const ANSWER_WITHIN = 30_000;
+const ANSWER_WITHIN = 10_000;
 const FIRST_RETRY = 1000;
 const LONGEST_RETRY = 30_000;
 
@@ -146,7 +146,9 @@ export function remote(dir: string): (Client & Home) | undefined {
         open?.close();
       };
     },
-    synced: () => Promise.resolve(),
+    synced: async () => {
+      await last;
+    },
     read,
     copy: (to: string) => bring(read, to),
   };
