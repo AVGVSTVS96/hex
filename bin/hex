@@ -29,6 +29,8 @@ running() {
 # code that the object named on its stdin runs, as the object itself says, and fails when it doesn't answer. The key
 # goes to curl on stdin, out of ps.
 store="$home/state/store.json"
+# Pinned, so one commit builds to one version wherever it deploys.
+wrangler="bunx wrangler@4.164.0"
 answers() {
   jq -r '"url = \"\(.url | rtrimstr("/"))/\(.name)/version\"", "header = \"authorization: Bearer \(.key)\""' |
     curl -sf -m 10 -K - | jq -er '.version | strings'
@@ -200,19 +202,23 @@ case "${1:-}" in
       pkill -P $$ -f channels/iikb/door.ts || :
       while doors; do sleep 0.1; done
       export HEX_DOOR="$now"
-      if [ -n "$now" ]; then (. "$hex/bin/settings"; exec bun "$hex/channels/iikb/door.ts" "$home/state") & fi
+      if [ -n "$now" ]; then (. "$hex/bin/settings"; exec bun "$hex/channels/iikb/door.ts" "$home/state") 7>&- & fi
     }
     start() {
       door
       bun install --no-summary --cwd "$hex" >/dev/null || :
       # Read at every start, so a restart takes the settings as they are now.
-      (. "$hex/bin/settings"; exec bun "$hex/hub/serve.ts") &
+      (. "$hex/bin/settings"; exec bun "$hex/hub/serve.ts") 7>&- &
       hub=$!
     }
+    # A move holds state/records.lock alone, and hex here holds it beside nothing but itself for as long as it runs,
+    # however it was started, so no hub starts on records that are moving. What hex starts doesn't hold it (7>&-).
+    exec 7>"$home/state/records.lock"
+    flock -n -s 7 || { echo "hex waits for its records to finish moving before its hub starts" >&2; flock -s 7 & wait $!; }
     # Started ahead of its turn, while hex still runs on another machine that's handing it over, the hub gets ready and
     # waits (hub/ahead.ts), and so does the rest of hex here, until the file HEX_AHEAD names is gone.
     start
-    [ -z "${HEX_AHEAD:-}" ] || bun "$hex/hub/ahead.ts" "$HEX_AHEAD"
+    [ -z "${HEX_AHEAD:-}" ] || bun "$hex/hub/ahead.ts" "$HEX_AHEAD" 7>&-
     echo $$ > "$pidfile"
     # Apps following hex with `hex watch` read it again as it starts, as after a restore of hex.db.
     printf . >> "$home/state/hex.bell"
@@ -221,7 +227,7 @@ case "${1:-}" in
       [ -n "$hub" ] || start
       # Jobs a move or their machine going down stopped carry on, alongside each start of the hub, so a pass that failed
       # is tried again; one whose unit runs is left alone.
-      (. "$hex/bin/settings"; bun "$hex/bin/job" --resume || echo "hex: jobs that were stopped didn't resume; the hub's next start tries again" >&2) &
+      (. "$hex/bin/settings"; bun "$hex/bin/job" --resume || echo "hex: jobs that were stopped didn't resume; the hub's next start tries again" >&2) 7>&- &
       exited=0
       wait "$hub" || exited=$?
       hub=
@@ -275,40 +281,58 @@ case "${1:-}" in
       # Deploys the store of a hex folder (this one, or the one an update checked) with this folder's settings, where
       # .env keeps CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID for wrangler, and HEX_STORE_KEY.
       . "$hex/bin/settings"
-      config="$(cd "${3:-$hex}" && pwd)/hub/store/wrangler.jsonc"
+      from=$(cd "${3:-$hex}" && pwd)
+      config="$from/hub/store/wrangler.jsonc"
       built=$(mktemp -d)
       trap 'rm -rf "$built"' EXIT
-      # The version is what the Worker is built from, so a change anywhere in its bundle deploys it, and nothing else does.
-      bunx wrangler@4 deploy --dry-run --outdir "$built" --config "$config" >/dev/null
-      version=$(cat "$built"/*.js "$config" | git hash-object --stdin)
-      if [ -e "$store" ]; then
-        [ "$(answers < "$store" || :)" != "$version" ] || { echo "the store hex points at runs $version already"; exit 0; }
-        key=$(jq -r .key "$store")
-      else
-        key=${HEX_STORE_KEY:-}
-        [ -n "$key" ] || { key=$(head -c 33 /dev/urandom | base64); printf '\nHEX_STORE_KEY=%s\n' "$key" >> "$home/.env"; }
-      fi
-      # The key goes up with the code, as one version, through stdin: never in a shell's history or ps.
-      out=$(printf '{"KEY":"%s"}' "$key" | bunx wrangler@4 deploy --config "$config" --var "VERSION:$version" --secrets-file /dev/stdin 2>&1) || { printf '%s\n' "$out" >&2; exit 1; }
-      url=$(printf '%s\n' "$out" | grep -o 'https://[^ ]*\.workers\.dev' | head -n 1) || :
+      # The store's version is what its Worker is built from, so a change anywhere in its bundle deploys it and nothing
+      # else does, then the commit it was built at, so no deploy puts older code over newer.
+      $wrangler deploy --dry-run --outdir "$built" --config "$config" >/dev/null
+      version="$(cat "$built"/*.js "$config" | git hash-object --stdin)@$(git -C "$from" rev-parse HEAD)"
       # Proven where hex points, or before a move at the Worker's own address.
       target() { if [ -e "$store" ]; then cat "$store"; else printf '{"url":"%s","name":"hex","key":"%s"}' "$url" "$key"; fi; }
-      tries=0
-      until [ "$(target | answers || :)" = "$version" ]; do
-        [ $((tries += 1)) -lt 30 ] || {
-          to=$(target | jq -r .url)
-          bunx wrangler@4 rollback --config "$config" -y -m "hex: $to didn't answer as $version" >/dev/null 2>&1 && back="the store before it is back" || back="there was no store before it to put back"
-          echo "the store at ${to:-the Worker's address} didn't answer as $version, the one deployed, within a minute: $back" >&2
-          exit 1
-        }
-        sleep 2
-      done
-      echo "the store at $(target | jq -r .url) answers as $version"
+      # Waits up to a minute for the store to answer as the version given.
+      as() { tries=0; until [ "$(target | answers || :)" = "$1" ]; do [ $((tries += 1)) -lt 30 ] || return 1; sleep 2; done; }
+      secret=
+      if [ -e "$store" ]; then
+        was=$(answers < "$store") || { echo "the store at $(jq -r .url "$store") doesn't answer, so nothing deploys over it: whether this one is newer can't be told" >&2; exit 1; }
+        [ "${was%@*}" != "${version%@*}" ] || { echo "the store hex points at runs this code already ($was)"; exit 0; }
+        case $was in *@*) git -C "$from" merge-base --is-ancestor "${was#*@}" HEAD 2>/dev/null || { echo "the store hex points at runs code from ${was#*@}, which this hex doesn't hold, so it may be newer and stays" >&2; exit 1; } ;; esac
+        key=$(jq -r .key "$store")
+      else
+        # The key goes up only to a Worker that answers to none yet, so no machine that has no key locks out the ones
+        # that use it.
+        keys=$($wrangler secret list --config "$config" --format json 2>&1) || case $keys in *10007*) keys= ;; *) printf '%s\n' "$keys" >&2; exit 1 ;; esac
+        if printf %s "$keys" | tr -d ' \n' | grep -q '"name":"KEY"'; then
+          key=${HEX_STORE_KEY:-}
+          [ -n "$key" ] || { echo "the Worker answers to a key already: put HEX_STORE_KEY from the .env of the machine that made it in this one's, or copy its state/store.json" >&2; exit 1; }
+        else
+          secret=1
+          key=${HEX_STORE_KEY:-}
+          [ -n "$key" ] || { key=$(head -c 33 /dev/urandom | base64); printf '\nHEX_STORE_KEY=%s\n' "$key" >> "$home/.env"; }
+        fi
+      fi
+      # A new key goes up with the code, as one version, through stdin: never in a shell's history or ps.
+      out=$(if [ -n "$secret" ]; then printf '{"KEY":"%s"}' "$key" | $wrangler deploy --config "$config" --var "VERSION:$version" --secrets-file /dev/stdin; else $wrangler deploy --config "$config" --var "VERSION:$version"; fi 2>&1) || { printf '%s\n' "$out" >&2; exit 1; }
+      url=$(printf '%s\n' "$out" | grep -o 'https://[^ ]*\.workers\.dev' | head -n 1) || :
+      to=$(target | jq -r .url)
+      as "$version" || {
+        # Migrations only add, each in one write, so the code before runs on what the new code migrated, as an older hub
+        # does on a hex.db after bin/hex goes back.
+        if ! $wrangler rollback --config "$config" -y -m "hex: $to didn't answer as $version" >/dev/null 2>&1; then back="there was no store before it to put back"
+        elif [ -z "${was:-}" ] || as "$was"; then back="the store before it is back"
+        else back="the store before it is back, and doesn't answer either"; fi
+        echo "the store at ${to:-the Worker's address} didn't answer as $version, the one deployed, within a minute: $back" >&2
+        exit 1
+      }
+      echo "the store at $to answers as $version"
       exit 0
     fi
     if [ "${2:-}" = move ]; then
-      # A hub that writes while its records move would leave rows in a file nothing reads.
-      ! running || { echo "hex is running: stop it first, so nothing writes hex.db while its records move" >&2; exit 1; }
+      # A hub that writes while its records move would leave rows in a file nothing reads: the move holds
+      # state/records.lock alone, which hex here holds for as long as it runs, so neither starts while the other runs.
+      exec 7>"$home/state/records.lock"
+      flock -n -x 7 || { echo "hex is running here: stop it first, so nothing writes hex.db while its records move" >&2; exit 1; }
       moved=0
       where=$(elsewhere) || moved=$?
       [ "$moved" != 2 ] || { echo "hex is moving between machines: move its records once it's done, from where it runs" >&2; exit 1; }

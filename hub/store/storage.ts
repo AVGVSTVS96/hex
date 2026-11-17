@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-import { onlyReading } from "./db.ts";
-import type { Bound, Core } from "./db.ts";
+import { eachVariable, onlyReading } from "./db.ts";
+import type { Core } from "./db.ts";
 import { domains, migrate } from "./domains.ts";
 import type { Domains } from "./domains.ts";
 import { answering } from "./wire.ts";
@@ -21,8 +21,12 @@ export type Storage = {
 /* oxlint-enable anti-slop/no-unsafe-dictionary-type -- end of SQLite's rows */
 
 const HomeRow = z
-  .object({ version: z.number(), tenure: z.number(), served: z.number() })
+  .object({ version: z.number(), tenure: z.number(), served: z.number(), lease: z.number() })
   .optional();
+
+const Claim = z.object({
+  lease: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+});
 
 const Count = z.object({ n: z.number() });
 const Statements = z.object({ statements: z.array(z.string()) });
@@ -48,11 +52,27 @@ type Called = { reply: Reply; wrote: boolean };
 
 type Moved = boolean | number | { arrived: boolean; served: boolean; version: number | null };
 
-const bind = (bound: Bound[]) =>
-  bound.map((value) =>
-    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Bound is a closed union; this picks the two members a Durable Object's SQL refuses
-    typeof value === "boolean" || typeof value === "bigint" ? Number(value) : value,
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A Durable Object binds every number as a double, where Bun binds a whole one as an integer, so a whole number is cast back, and a record keeps one type in either home: the move compares them.
+function bindable(text: string, values: unknown[]): [string, unknown[]] {
+  const { text: cast } = eachVariable(text, (index) =>
+    Number.isSafeInteger(values[index - 1]) ? `cast(?${index} as integer)` : `?${index}`,
   );
+
+  return [
+    cast,
+    values.map((value) =>
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- a closed union; this picks the two members a Durable Object's SQL refuses
+      typeof value === "boolean" || typeof value === "bigint" ? Number(value) : value,
+    ),
+  ];
+}
+
+const exec = (sql: Storage["sql"], text: string, values: unknown[]) => {
+  const [cast, bind] = bindable(text, values);
+
+  return values.length === 0 ? sql.exec(text) : sql.exec(cast, ...bind);
+};
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The store's SQL over a Durable Object's: a statement's changes count the rows its triggers wrote, as Bun's do, and a write inside a write joins it.
@@ -66,16 +86,16 @@ export function sqlOver(storage: Storage): Core {
       query: (text) => ({
         run: (...bound) => {
           const before = count("total_changes()");
-          sql.exec(text, ...bind(bound)).toArray();
+          exec(sql, text, bound).toArray();
 
           return {
             changes: count("total_changes()") - before,
             lastInsertRowid: count("last_insert_rowid()"),
           };
         },
-        get: (...bound) => sql.exec(text, ...bind(bound)).toArray()[0] ?? null,
-        all: (...bound) => sql.exec(text, ...bind(bound)).toArray(),
-        values: (...bound) => [...sql.exec(text, ...bind(bound)).raw()],
+        get: (...values) => exec(sql, text, values).toArray()[0] ?? null,
+        all: (...values) => exec(sql, text, values).toArray(),
+        values: (...values) => [...exec(sql, text, values).raw()],
       }),
       run: (text) => {
         sql.exec(text).toArray();
@@ -105,8 +125,8 @@ export function recordsIn(storage: Storage, dir = "") {
   let records: Domains | undefined;
   let answer: ReturnType<typeof answering> | undefined;
 
-  const run = (text: string, ...bound: unknown[]) => sql.exec(text, ...bound).toArray();
-  const home = () => HomeRow.parse(run("select version, tenure, served from _home")[0]);
+  const run = (text: string, ...values: unknown[]) => exec(sql, text, values).toArray();
+  const home = () => HomeRow.parse(run("select version, tenure, served, lease from _home")[0]);
   const changes = () => Count.parse(run("select total_changes() as n")[0]).n;
 
   const ready = () => {
@@ -129,11 +149,13 @@ export function recordsIn(storage: Storage, dir = "") {
   };
 
   run(
-    "create table if not exists _home (one integer primary key check (one = 1), version integer not null, tenure integer not null default 0, served integer not null default 0)",
+    "create table if not exists _home (one integer primary key check (one = 1), version integer not null, tenure integer not null default 0, served integer not null default 0, lease integer not null default 0)",
   );
 
-  if (run("select 1 from pragma_table_info('_home') where name = 'served'").length === 0) {
-    run("alter table _home add column served integer not null default 0");
+  for (const column of ["served", "lease"]) {
+    if (run("select 1 from pragma_table_info('_home') where name = ?", column).length === 0) {
+      run(`alter table _home add column ${column} integer not null default 0`);
+    }
   }
 
   if (home() !== undefined) {
@@ -160,19 +182,39 @@ export function recordsIn(storage: Storage, dir = "") {
     migrations: () => home()?.version ?? null,
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // A hub says which tenure of its lease it runs on. One on an older tenure than the object has seen lost hex to another machine, whether or not it knows yet, so nothing it sends is taken.
-    lostTo(tenure: number | undefined): string | undefined {
+    // A hub sends the tenure the object gave it when it claimed hex. Only the last one given holds: a hub on any other lost hex, whether or not it knows yet, so nothing it sends is taken. What isn't one the object gave is never kept.
+    lostTo(tenure: string | undefined): string | undefined {
       const seen = home()?.tenure ?? 0;
 
-      if (tenure === undefined || tenure === seen) {
+      if (tenure === undefined || tenure === String(seen)) {
         return;
       }
 
-      if (tenure < seen) {
-        return `tenure ${tenure} no longer holds hex: tenure ${seen} does`;
+      const said = JSON.stringify(tenure.slice(0, 20));
+
+      return /^\d{1,15}$/u.test(tenure) && Number(tenure) < seen
+        ? `tenure ${tenure} no longer holds hex: tenure ${seen} does`
+        : `tenure ${said} isn't one hex's store gave out: tenure ${seen} holds hex`;
+    },
+
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // A hub taking over gets the next tenure, so every hub that claimed before it is refused from then on. A lease tool's number, when one passes hex between machines, can't go back: a hub on a lower lease than one seen is refused, one on the same lease (its machine's hub restarted) isn't.
+    claim(body: string): { tenure: number } | { lost: string } | { empty: string } {
+      const { lease = 0 } = Claim.parse(JSON.parse(body));
+      const now = home();
+
+      if (now === undefined || records === undefined) {
+        return { empty: "hex's store is empty: hex store move brings a hex.db into it" };
       }
 
-      run("update _home set tenure = ?", tenure);
+      if (lease < now.lease) {
+        return { lost: `lease ${lease} no longer holds hex: lease ${now.lease} does` };
+      }
+
+      const tenure = now.tenure + 1;
+      run("update _home set tenure = ?, lease = ?, served = 1", tenure, lease);
+
+      return { tenure };
     },
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -180,7 +222,10 @@ export function recordsIn(storage: Storage, dir = "") {
     call(text: string): Called {
       if (answer === undefined) {
         return {
-          reply: { error: "hex's store is empty: hex store move brings a hex.db into it" },
+          reply: {
+            error: "hex's store is empty: hex store move brings a hex.db into it",
+            every: true,
+          },
           wrote: false,
         };
       }

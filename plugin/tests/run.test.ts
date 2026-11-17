@@ -292,22 +292,66 @@ test("a hub that lost hex to another machine stays stopped: hex exits with its c
   writeFileSync(join(home, "state/good"), `${good}\n`);
 
   const lost = commit(
-    `import { appendFileSync } from 'fs'\nappendFileSync(process.env.HEX_DIR + '/state/hubs', 'start tenure=' + process.env.HEX_STORE_TENURE + '\\n')\nprocess.exit(3)\n`,
+    `import { appendFileSync } from 'fs'\nappendFileSync(process.env.HEX_DIR + '/state/hubs', 'start lease=' + process.env.HEX_STORE_LEASE + '\\n')\nprocess.exit(3)\n`,
     "a hub another machine took hex from",
   );
 
-  const running = run({ HEX_STORE_TENURE: "7" });
+  const running = run({ HEX_STORE_LEASE: "7" });
   expect(await running.exited).toBe(3);
   expect(await new Response(running.stderr).text()).toContain(
     "another machine holds hex now, so its hub stays stopped here",
   );
-  expect(hubs()).toEqual(["start tenure=7"]);
+  expect(hubs()).toEqual(["start lease=7"]);
   expect(git("rev-parse", "HEAD")).toBe(lost);
   expect(existsSync(join(home, "state/bad"))).toBe(false);
   expect(existsSync(join(home, "state/hub.pid"))).toBe(false);
   expect(readFileSync(join(BIN, "../systemd/hex.service"), "utf-8")).toMatch(
     /^RestartPreventExitStatus=3$/mu,
   );
+});
+
+const MOVE_THAT_RUNS_UNTIL_TOLD = `import { appendFileSync, existsSync } from 'fs'
+const [state] = process.argv.slice(2)
+appendFileSync(state + '/hubs', 'moving\\n')
+while (!existsSync(state + '/moved')) await Bun.sleep(20)
+appendFileSync(state + '/hubs', 'moved\\n')
+`;
+
+test("no hub starts on records that are moving, however hex starts, and no move starts while hex runs here", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  mkdirSync(join(hex, "hub/store"));
+  writeFileSync(join(hex, "hub/store/move.ts"), MOVE_THAT_RUNS_UNTIL_TOLD);
+
+  const move = Bun.spawn([join(hex, "bin/hex"), "store", "move", "https://store.example", "hex"], {
+    stderr: "pipe",
+  });
+
+  await until(() => hubs().length === 1);
+
+  const waiting = run();
+  await Bun.sleep(1500);
+  expect(hubs()).toEqual(["moving"]);
+  waiting.kill("SIGTERM");
+  expect(await waiting.exited).toBe(0);
+
+  run();
+  await Bun.sleep(500);
+  writeFileSync(join(home, "state/moved"), "");
+  expect(await move.exited).toBe(0);
+  await until(() => hubs().length === 3);
+  expect(hubs()[2]).toMatch(/^start mark=1 loop=1 \d+$/u);
+
+  const refused = Bun.spawnSync([
+    join(hex, "bin/hex"),
+    "store",
+    "move",
+    "https://store.example",
+    "hex",
+  ]);
+
+  expect(refused.exitCode).toBe(1);
+  expect(refused.stderr.toString()).toContain("hex is running here: stop it first");
+  expect(hubs()).toHaveLength(3);
 });
 
 const curlThatRecordsWhatGeneralIsTold = () => {

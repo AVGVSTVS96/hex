@@ -68,8 +68,18 @@ export class Records extends DurableObject<Env> {
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
       // The body is read first, so the tenure is checked and the call answered in one stretch nothing else runs in.
       const body = await request.text();
-      const tenure = request.headers.get("hex-tenure");
-      const lost = records.lostTo(tenure === null ? undefined : Number(tenure));
+
+      if (route === "claim") {
+        const claimed = records.claim(body);
+
+        return "tenure" in claimed
+          ? json({ value: claimed.tenure })
+          : "lost" in claimed
+            ? json({ error: claimed.lost }, 409)
+            : json({ error: claimed.empty, every: true }, 503);
+      }
+
+      const lost = records.lostTo(request.headers.get("hex-tenure") ?? undefined);
 
       if (lost !== undefined) {
         return json({ error: lost }, 409);

@@ -289,6 +289,7 @@ export const appendOnlyMigrations: ((store: Migrating) => void)[] = [
   sql(`create table if not exists jobs (unit text primary key, machine text not null, run text not null, spec text not null check (json_valid(spec)),
     stopped text check (stopped in ('moved', 'shutdown')), stopped_at text check (stopped_at ${SORTABLE_UTC}));`),
   carryJobRecords,
+  sql("create index if not exists messages_in_time on messages (at, n);"),
 ];
 
 const JobRecord = JobSpecJson.extend({

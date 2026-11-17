@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,10 +21,10 @@ import type { Read } from "./carry.ts";
 import { objectStorage } from "./fake.ts";
 import { appendOnlyMigrations } from "./migrations.ts";
 import { move, MOVED } from "./move.ts";
-import { LostError, remote, UnreachedError } from "./remote.ts";
+import { LostError, MovedError, RefusedError, remote, UnreachedError } from "./remote.ts";
 import { recordsIn } from "./storage.ts";
 import type { Storage } from "./storage.ts";
-import { client } from "./wire.ts";
+import { answering, client } from "./wire.ts";
 import type { Client } from "./wire.ts";
 
 type State = ConstructorParameters<typeof DurableObject>[0];
@@ -68,6 +76,10 @@ function startedEmpty(storage: Storage = objectStorage()) {
 
   return recordsIn(storage, dir);
 }
+
+const never = Promise.reject(new Error("no store.json"));
+
+void never.catch(() => null);
 
 async function thrown(pending: Promise<unknown>): Promise<Error | string> {
   try {
@@ -126,14 +138,19 @@ test("a call is answered as the records answer it, and says whether it wrote", a
   await store.threads.keep("telegram", { "-100:7": { name: "General" } });
   expect(wrote()).toBe(true);
   expect(object.records()?.threads.list()).toMatchObject([{ thread: "-100:7", name: "General" }]);
-  expect(await failure(store.messages.deliver({ ...message, key: "42" }))).toContain("Error");
+  expect(await thrown(store.messages.deliver({ ...message, key: "42" }))).toBeInstanceOf(
+    RefusedError,
+  );
   expect(wrote()).toBe(false);
   expect(object.call(raw("messages", "constructor"))).toEqual({
-    reply: { error: "the store has no messages.constructor" },
+    reply: {
+      error: "the store has no messages.constructor: it is older than this hex",
+      every: true,
+    },
     wrote: false,
   });
   expect(object.call(raw("files", "list"))).toEqual({
-    reply: { error: "the store has no files.list" },
+    reply: { error: "the store has no files.list: it is older than this hex", every: true },
     wrote: false,
   });
   expect("error" in object.call("not json").reply).toBe(true);
@@ -157,35 +174,64 @@ test("a call that fails partway leaves the records as they were, and says it wro
   expect(wrote()).toBe(false);
 });
 
-test("a read sees the records and changes nothing, even one that writes", () => {
+test("a read sees the records and refuses anything that writes", () => {
   const object = startedEmpty();
   object.call(raw("messages", "deliver", [message]));
   expect(object.read(sql('select key, "to" from messages where key = ?', message.key))).toEqual([
     { key: message.key, to: message.to },
   ]);
-  expect(object.read(sql("delete from messages returning key"))).toEqual([{ key: message.key }]);
-  expect(object.read(sql("update _home set tenure = 9 returning tenure"))).toEqual([{ tenure: 9 }]);
-  expect(object.read(sql("drop table messages"))).toEqual([]);
+
+  for (const text of [
+    "delete from messages returning key",
+    "update _home set tenure = 9 returning tenure",
+    "drop table messages",
+    "insert into passes (n) values (1)",
+    "pragma user_version = 0",
+  ]) {
+    expect(() => object.read(sql(text))).toThrow("hex sql");
+  }
+
   expect(object.records()?.messages.get(message.key)).toMatchObject({ body: message.body });
-  expect(object.lostTo(1)).toBeUndefined();
-  expect(() => object.read(sql("pragma user_version = 0"))).toThrow("hex sql");
   expect(() => object.read("not json")).toThrow();
-  expect(object.call(raw("messages", "take", [message.key, "s-1"]))).toMatchObject({
-    reply: { value: true },
-    wrote: true,
-  });
 });
 
-test("a hub on an older tenure than the object has seen lost hex, and nothing it sends is taken", () => {
+test("a hub that claims hex gets the next tenure, every hub that claimed before it is refused, and nothing it sends then is taken", () => {
   const object = startedEmpty();
   expect(object.lostTo(undefined)).toBeUndefined();
-  expect(object.lostTo(0)).toBeUndefined();
-  expect(object.lostTo(3)).toBeUndefined();
-  expect(object.lostTo(3)).toBeUndefined();
+  expect(object.claim("{}")).toEqual({ tenure: 1 });
+  expect(object.lostTo("1")).toBeUndefined();
+  expect(object.claim("{}")).toEqual({ tenure: 2 });
+  expect(object.lostTo("1")).toBe("tenure 1 no longer holds hex: tenure 2 does");
+  expect(object.lostTo("2")).toBeUndefined();
   expect(object.lostTo(undefined)).toBeUndefined();
-  expect(object.lostTo(2)).toBe("tenure 2 no longer holds hex: tenure 3 does");
-  expect(object.lostTo(4)).toBeUndefined();
-  expect(object.lostTo(3)).toBe("tenure 3 no longer holds hex: tenure 4 does");
+});
+
+test("a lease tool's number never goes back: a hub on the same lease claims again, one on a lower lease is refused", () => {
+  const object = startedEmpty();
+  expect(object.claim(JSON.stringify({ lease: 6 }))).toEqual({ tenure: 1 });
+  expect(object.claim(JSON.stringify({ lease: 6 }))).toEqual({ tenure: 2 });
+  expect(object.claim(JSON.stringify({ lease: 5 }))).toEqual({
+    lost: "lease 5 no longer holds hex: lease 6 does",
+  });
+  expect(object.lostTo("2")).toBeUndefined();
+  expect(object.claim("{}")).toEqual({ lost: "lease 0 no longer holds hex: lease 6 does" });
+  expect(object.claim(JSON.stringify({ lease: 7 }))).toEqual({ tenure: 3 });
+  expect(object.lostTo("2")).toBe("tenure 2 no longer holds hex: tenure 3 does");
+  expect(() => object.claim(JSON.stringify({ lease: -1 }))).toThrow();
+  expect(() => object.claim('{"lease": 1e999}')).toThrow();
+});
+
+test("a tenure that isn't one the object gave out is refused and never kept, so it can't wedge the object", () => {
+  const object = startedEmpty();
+  object.claim("{}");
+
+  for (const insane of ["1e999", "Infinity", "-1", "2", "abc", "", "9".repeat(30), " 1"]) {
+    expect(object.lostTo(insane)).toContain("isn't one hex's store gave out");
+  }
+
+  expect(object.lostTo("1")).toBeUndefined();
+  expect(object.call(raw("messages", "untaken"))).toMatchObject({ reply: { value: [] } });
+  expect(object.migrations()).toBe(appendOnlyMigrations.length);
 });
 
 test("an object made before it kept whether a hub had used it learns to, and counts as unused until a call", () => {
@@ -205,16 +251,19 @@ test("an object made before it kept whether a hub had used it learns to, and cou
   expect(() => object.moved("begin", "{}")).toThrow("has served a hub");
 });
 
-test("a tenure the object has seen holds through its restarts", () => {
+test("a tenure the object gave out holds through its restarts", () => {
   const storage = objectStorage();
-  startedEmpty(storage).lostTo(5);
-  expect(recordsIn(storage, dir).lostTo(4)).toBe("tenure 4 no longer holds hex: tenure 5 does");
+  const object = startedEmpty(storage);
+  object.claim("{}");
+  object.claim("{}");
+  expect(recordsIn(storage, dir).lostTo("1")).toBe("tenure 1 no longer holds hex: tenure 2 does");
 });
 
 type Between = (route: string, answer: () => Promise<Response>) => Promise<Response>;
 
 function served(storage = objectStorage(), env?: Omit<Env, "STORE">, between?: Between) {
   const objects = new Map<string, InstanceType<typeof Records>>();
+  const storages = new Map<string, Storage>([["hex", storage]]);
 
   const named: Env = {
     ...(env ?? { KEY }),
@@ -228,7 +277,8 @@ function served(storage = objectStorage(), env?: Omit<Env, "STORE">, between?: B
             objects.get(name) ??
             new Records(
               {
-                storage: name === "hex" ? storage : objectStorage(),
+                storage:
+                  storages.get(name) ?? storages.set(name, objectStorage()).get(name) ?? storage,
                 acceptWebSocket: () => {},
                 getWebSockets: () => [],
                 setWebSocketAutoResponse: () => {},
@@ -250,6 +300,7 @@ function served(storage = objectStorage(), env?: Omit<Env, "STORE">, between?: B
 
   return {
     storage,
+    storageOf: (name: string) => storages.get(name),
     url: server.url.origin,
     stop: async () => {
       await server.stop(true);
@@ -493,6 +544,8 @@ test("the object answers only its owner's key, never without one, and refuses a 
         })
       ).json(),
     ).toEqual({ version: "v7", migrations: appendOnlyMigrations.length });
+    expect(await (await post("/hex/claim", "{}")).json()).toEqual({ value: 1 });
+    expect(await (await post("/hex/claim", "{}")).json()).toEqual({ value: 2 });
     expect((await post("/hex/call", "{}", { "hex-tenure": "2" })).status).toBe(200);
 
     const refused = await post("/hex/call", raw("messages", "deliver", [message]), {
@@ -503,6 +556,8 @@ test("the object answers only its owner's key, never without one, and refuses a 
     expect(await refused.json()).toEqual({
       error: "tenure 1 no longer holds hex: tenure 2 does",
     });
+    expect((await post("/hex/call", "{}", { "hex-tenure": "1e999" })).status).toBe(409);
+    expect((await post("/hex/version", "")).status).toBe(200);
     expect(recordsIn(object.storage, dir).records()?.messages.untaken()).toEqual([]);
   } finally {
     await object.stop();
@@ -608,8 +663,8 @@ test("a store that can't reach the object fails fast until a probe gets an answe
     stop();
     expect(await store.messages.deliver(message)).toBe(true);
     await store.synced();
-    expect(await failure(store.messages.deliver({ ...message, key: "42" }))).not.toContain(
-      "UnreachedError",
+    expect(await thrown(store.messages.deliver({ ...message, key: "42" }))).toBeInstanceOf(
+      RefusedError,
     );
     await store.synced();
   } finally {
@@ -618,26 +673,41 @@ test("a store that can't reach the object fails fast until a probe gets an answe
   }
 });
 
-test("a store whose tenure the object refused is lost for good: every call after it and synced say so at once", async () => {
+test("a hub another hub claimed hex from is lost for good: every call after it and synced say so at once, and nothing it sends lands", async () => {
   const storage = objectStorage();
-  startedEmpty(storage).lostTo(3);
+  startedEmpty(storage);
   const object = served(storage);
   pointedAt(dir, object.url);
-  process.env.HEX_STORE_TENURE = "2";
-  const store = remote(dir, quick);
-  expect(process.env.HEX_STORE_TENURE).toBeUndefined();
+  process.env.HEX_STORE_LEASE = "4";
+  const first = remote(dir, quick);
+  expect(process.env.HEX_STORE_LEASE).toBeUndefined();
+  process.env.HEX_STORE_LEASE = "4";
+  const second = remote(dir, quick);
+  process.env.HEX_STORE_LEASE = "3";
+  const stale = remote(dir, quick);
+  const hook = remote(dir, quick);
 
   try {
-    if (store === undefined) {
+    if (first === undefined || second === undefined || stale === undefined || hook === undefined) {
       throw new Error("no store.json");
     }
 
-    const refused = await thrown(store.messages.deliver(message));
+    await first.claim();
+    expect(await first.messages.deliver(message)).toBe(true);
+    await second.claim();
+
+    const refused = await thrown(first.messages.deliver({ ...message, key: "telegram:-100:43" }));
     expect(refused).toBeInstanceOf(LostError);
-    expect(String(refused)).toContain("tenure 2 no longer holds hex: tenure 3 does");
-    expect(await thrown(store.clock.now())).toBeInstanceOf(LostError);
-    expect(await thrown(store.synced())).toBeInstanceOf(LostError);
-    expect(recordsIn(storage, dir).records()?.messages.untaken()).toEqual([]);
+    expect(String(refused)).toContain("tenure 1 no longer holds hex: tenure 2 does");
+    expect(await thrown(first.clock.now())).toBeInstanceOf(LostError);
+    expect(await thrown(first.synced())).toBeInstanceOf(LostError);
+    expect(await second.messages.get("telegram:-100:43")).toBeNull();
+    expect(await second.messages.get(message.key)).toMatchObject({ body: message.body });
+
+    expect(await thrown(stale.claim())).toBeInstanceOf(LostError);
+    expect(await thrown(stale.messages.untaken())).toBeInstanceOf(LostError);
+    expect(await hook.messages.deliver({ ...message, key: "telegram:-100:44" })).toBe(true);
+    await second.synced();
   } finally {
     await object.stop();
   }
@@ -659,7 +729,7 @@ test("a store.json whose address isn't https, or whose key is short, is refused 
 
 test("a watch socket that goes quiet is dropped and opened again, and one that answers its heartbeat is kept", async () => {
   let opened = 0;
-  let answering = false;
+  let pinging = false;
 
   const server = Bun.serve({
     port: 0,
@@ -669,7 +739,7 @@ test("a watch socket that goes quiet is dropped and opened again, and one that a
         opened += 1;
       },
       message: (socket, data) => {
-        if (answering && data === "ping") {
+        if (pinging && data === "ping") {
           socket.send("pong");
         }
       },
@@ -691,7 +761,7 @@ test("a watch socket that goes quiet is dropped and opened again, and one that a
 
     await until(() => opened >= 2 && rang >= 2);
 
-    answering = true;
+    pinging = true;
     await Bun.sleep(400);
     const steady = opened;
     const rings = rang;
@@ -719,6 +789,17 @@ test("hex sql can change nothing on either home: one statement, and no pragma th
     "select 1 as a; select 2 as b",
     "attach database 'other.db' as other",
     "vacuum",
+    "explain pragma ignore_check_constraints = on",
+    "explain query plan pragma recursive_triggers = 1",
+    ";pragma case_sensitive_like = 1",
+    "; ; pragma foreign_keys = off",
+    "/* a note */ pragma foreign_keys = off",
+    "delete from messages",
+    "insert into passes (n) values (1)",
+    "with gone as (select 1) delete from messages",
+    "analyze",
+    "reindex",
+    "create table extra (a)",
   ];
 
   for (const text of refused) {
@@ -729,6 +810,7 @@ test("hex sql can change nothing on either home: one statement, and no pragma th
     { semicolon: ";" },
   ]);
   expect(object.read(sql("pragma table_info('_home')")).length).toBeGreaterThan(0);
+  expect(object.read(sql("explain query plan select * from messages")).length).toBeGreaterThan(0);
   expect(object.read(sql("pragma foreign_keys"))).toEqual([{ foreign_keys: 1 }]);
   expect(storage.sql.exec("pragma foreign_keys").toArray()).toEqual([{ foreign_keys: 1 }]);
 
@@ -837,4 +919,175 @@ test("every message is read a page to a reply", async () => {
   expect((await Array.fromAsync(messagesSince(file.store, later))).flat()).toEqual(
     file.messages.since(later),
   );
+});
+
+test("the store says which no it gave: one to every call is unreached, one to this call is refused, on either home", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage);
+  const object = served(storage);
+
+  try {
+    pointedAt(dir, object.url);
+    const store = remote(dir, quick);
+    const wrongKey = join(dir, "wrong-key");
+    mkdirSync(wrongKey);
+    writeFileSync(
+      join(wrongKey, "store.json"),
+      JSON.stringify({ url: object.url, name: "hex", key: `${KEY} but not it` }),
+    );
+    const empty = join(dir, "empty");
+    pointedAt(empty, object.url, "nobody");
+
+    if (store === undefined) {
+      throw new Error("no store.json");
+    }
+
+    expect(await thrown(store.messages.deliver({ ...message, key: "42" }))).toBeInstanceOf(
+      RefusedError,
+    );
+    await store.synced();
+    expect(await thrown(remote(wrongKey, quick)?.messages.untaken() ?? never)).toBeInstanceOf(
+      UnreachedError,
+    );
+    expect(await thrown(remote(empty, quick)?.messages.untaken() ?? never)).toBeInstanceOf(
+      UnreachedError,
+    );
+  } finally {
+    await object.stop();
+  }
+
+  const file = new File(join(dir, "file"));
+  expect(await thrown(file.store.messages.deliver({ ...message, key: "42" }))).toBeInstanceOf(
+    RefusedError,
+  );
+
+  const records = startedEmpty().records();
+
+  if (records === undefined) {
+    throw new Error("no records");
+  }
+
+  Object.defineProperty(records.messages, "untaken", {
+    value: () => {
+      throw Object.assign(new Error("disk I/O error"), { code: "SQLITE_IOERR" });
+    },
+  });
+
+  const broken = client((call) => Promise.resolve(JSON.stringify(answering(records)(call))));
+  expect(await thrown(broken.messages.untaken())).toBeInstanceOf(UnreachedError);
+});
+
+test("a file home whose records moved since it opened says so on every call, so a hub that opened it before the move doesn't keep records nobody reads", async () => {
+  const hub = filled(dir);
+  const object = served();
+
+  try {
+    await move(dir, { url: object.url, name: "hex", key: KEY }, hear);
+    expect(
+      await thrown(hub.store.messages.deliver({ ...message, key: "telegram:-100:9" })),
+    ).toBeInstanceOf(MovedError);
+    expect(await thrown(hub.store.messages.untaken())).toBeInstanceOf(MovedError);
+    expect(await thrown(hub.store.read("select 1 as n"))).toBeInstanceOf(MovedError);
+    expect(await open(dir).messages.get(message.key)).toMatchObject({ body: message.body });
+  } finally {
+    await object.stop();
+  }
+});
+
+test("a process that finds the object not answering tells the next, which fails at once instead of waiting out its own time", async () => {
+  let reached = 0;
+  let hang = true;
+
+  const front = Bun.serve({
+    port: 0,
+    fetch: async () => {
+      reached += 1;
+
+      if (hang) {
+        return await new Promise<Response>(() => {});
+      }
+
+      return Response.json({ value: "2026-11-17T10:00:00.000Z" });
+    },
+  });
+
+  pointedAt(dir, front.url.origin);
+
+  try {
+    const first = remote(dir, quick);
+    expect(await thrown(first?.clock.now() ?? never)).toBeInstanceOf(UnreachedError);
+    expect(existsSync(join(dir, "store.down"))).toBe(true);
+
+    const hook = remote(dir, quick);
+    const started = performance.now();
+    const sent = reached;
+    expect(await thrown(hook?.clock.now() ?? never)).toBeInstanceOf(UnreachedError);
+    expect(performance.now() - started).toBeLessThan(50);
+    expect(reached).toBe(sent);
+
+    hang = false;
+    await until(() => !existsSync(join(dir, "store.down")));
+    expect(await remote(dir, quick)?.clock.now()).toBe("2026-11-17T10:00:00.000Z");
+
+    hang = true;
+    writeFileSync(join(dir, "store.down"), "long ago\n");
+    utimesSync(join(dir, "store.down"), new Date(0), new Date(0));
+    hang = false;
+    expect(await remote(dir, quick)?.clock.now()).toBe("2026-11-17T10:00:00.000Z");
+  } finally {
+    await front.stop(true);
+  }
+});
+
+test("a move sees a value whose type differs in the object, which JSON alone reads alike", async () => {
+  let losing: "arrived" | "state" | undefined;
+
+  const object = served(objectStorage(), undefined, async (route, answer) => {
+    const answered = await answer();
+
+    if (route === `move/${losing}`) {
+      losing = losing === "arrived" ? "state" : undefined;
+
+      return new Response("<html>bad gateway</html>", { status: 502 });
+    }
+
+    return answered;
+  });
+
+  const to = { url: object.url, name: "typed", key: KEY };
+
+  try {
+    const file = new File(dir);
+    file.messages.deliver(message);
+    file.questions.ask({
+      app: "telegram",
+      thread: "-100:7",
+      message: 50,
+      text: "Ship?",
+      options: ["Yes"],
+    });
+    file.db.close();
+    losing = "arrived";
+    expect(await failure(move(dir, to, hear))).toContain("answered 502");
+
+    const there = await fetch(new URL("/typed/sql", object.url), {
+      method: "POST",
+      headers: { authorization: `Bearer ${KEY}` },
+      body: sql("select typeof(message) as type from questions"),
+    });
+
+    expect(await there.json()).toEqual({ value: [{ type: "integer" }] });
+    object.storageOf("typed")?.sql.exec("update questions set message = cast(message as real)");
+    const said: string[] = [];
+    await move(dir, to, (line) => {
+      said.push(line);
+    });
+    expect(said.some((line) => line.includes("questions holds values of other types"))).toBe(true);
+    expect(said.some((line) => line.includes("it starts over"))).toBe(true);
+    expect(await open(dir).read("select typeof(message) as type from questions")).toEqual([
+      { type: "integer" },
+    ]);
+  } finally {
+    await object.stop();
+  }
 });

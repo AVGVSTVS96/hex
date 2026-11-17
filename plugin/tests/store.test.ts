@@ -23,7 +23,7 @@ let home: string;
 let hex: string;
 let bin: string;
 let store: ReturnType<typeof Bun.serve>;
-let answering: (deployed: string) => string;
+let answering: (deployed: string) => string | null;
 
 function script(path: string, body: string) {
   writeFileSync(path, `#!/bin/sh\n${body}\n`);
@@ -118,8 +118,11 @@ shift
 echo "$*" >> ${root}/wrangler.log
 echo "token $CLOUDFLARE_API_TOKEN" >> ${root}/wrangler.log
 case $1 in
+  secret)
+    [ -e ${root}/keys ] || { echo "This Worker does not exist on your account. [code: 10007]"; exit 1; }
+    cat ${root}/keys ;;
   deploy)
-    cat > ${root}/secrets
+    case " $* " in *" --secrets-file "*) cat > ${root}/secrets; echo '[{ "name": "KEY", "type": "secret_text" }]' > ${root}/keys ;; esac
     cp ${root}/deployed ${root}/before 2>/dev/null || :
     for arg; do case $arg in VERSION:*) printf %s "\${arg#VERSION:}" > ${root}/deployed ;; esac; done
     echo "  ${WORKERS_DEV}" ;;
@@ -151,7 +154,13 @@ esac`,
         return Response.json({ error: `hex's store has no ${pathname}` }, { status: 404 });
       }
 
-      return Response.json({ version: answering(read(join(root, "deployed"))), migrations: 1 });
+      const version = answering(read(join(root, "deployed")));
+
+      if (version === null) {
+        return Response.json({ error: "hex's store can't open its records" }, { status: 503 });
+      }
+
+      return Response.json({ version, migrations: 1 });
     },
   });
   writeFileSync(join(root, "url"), store.url.origin);
@@ -177,8 +186,10 @@ function published() {
 
 const push = () => git("push", "-q", "origin", "main");
 
-test("hex store deploy makes the store's key once, keeps it in .env, and sends it only on stdin, with the code, then waits for the Worker to answer as what it deployed", async () => {
-  writeFileSync(join(hex, "hub/fit.ts"), 'export const fit = "one";\n');
+test("hex store deploy makes the store's key once, keeps it in .env, and sends it only on stdin, with the code, to a Worker that has none, then waits for the Worker to answer as what it deployed", async () => {
+  published();
+  commit("one");
+
   const first = await run(join(hex, "bin/hex"), "store", "deploy");
   expect(first.code).toBe(0);
 
@@ -196,10 +207,46 @@ test("hex store deploy makes the store's key once, keeps it in .env, and sends i
     `the store at ${WORKERS_DEV} answers as ${read(join(root, "deployed"))}`,
   );
 
+  rmSync(join(root, "secrets"));
+
   const again = await run(join(hex, "bin/hex"), "store", "deploy");
   expect(again.code).toBe(0);
   expect(read(join(home, ".env")).match(/HEX_STORE_KEY=/gu)).toHaveLength(1);
-  expect(JSON.parse(read(join(root, "secrets")))).toEqual({ KEY: key });
+  expect(existsSync(join(root, "secrets"))).toBe(false);
+  expect(deploys().at(-1)).not.toContain("--secrets-file");
+}, 60_000);
+
+test("a deploy from a machine with no key, to a Worker that answers to one, is refused, so no hub that uses the key is locked out", async () => {
+  published();
+  commit("one");
+  writeFileSync(join(root, "keys"), '[{ "name": "KEY", "type": "secret_text" }]');
+
+  const refused = await run(join(hex, "bin/hex"), "store", "deploy");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("the Worker answers to a key already");
+  expect(deploys()).toEqual([]);
+  expect(read(join(home, ".env"))).not.toContain("HEX_STORE_KEY");
+}, 60_000);
+
+test("an update deploys nothing over a store that runs code this hex doesn't hold, or that doesn't answer, since it may be newer", async () => {
+  published();
+  const before = commit("one");
+  pointed();
+  writeFileSync(join(root, "deployed"), `a newer store@${"f".repeat(40)}`);
+  commit("two");
+  push();
+  git("reset", "-q", "--hard", before);
+
+  const newer = await run(join(hex, "bin/update"), "--now");
+  expect(newer.code).toBe(1);
+  expect(newer.out).toContain(`runs code from ${"f".repeat(40)}, which this hex doesn't hold`);
+
+  answering = () => null;
+  const silent = await run(join(hex, "bin/update"), "--now");
+  expect(silent.code).toBe(1);
+  expect(silent.out).toContain("doesn't answer, so nothing deploys over it");
+  expect(deploys()).toEqual([]);
+  expect(git("rev-parse", "HEAD")).toBe(before);
 }, 60_000);
 
 test("an update deploys the store the new hex is built with, with the token in the folder's .env, ships once the object hex points at answers as it, and deploys nothing when it already does", async () => {
@@ -218,11 +265,10 @@ test("an update deploys the store the new hex is built with, with the token in t
   const [deployed, ...more] = deploys();
   expect(more).toEqual([]);
   expect(deployed).toStartWith(`deploy --config ${join(root, "cache")}/hex-check-`);
-  expect(deployed).toEndWith(
-    `/.hex/hub/store/wrangler.jsonc --var VERSION:${version} --secrets-file /dev/stdin`,
-  );
+  expect(deployed).toEndWith(`/.hex/hub/store/wrangler.jsonc --var VERSION:${version}`);
+  expect(version).toEndWith(`@${incoming}`);
   expect(read(join(root, "wrangler.log"))).toContain("token from-dotenv");
-  expect(JSON.parse(read(join(root, "secrets")))).toEqual({ KEY });
+  expect(existsSync(join(root, "secrets"))).toBe(false);
 
   const later = commit("two", "words only");
   push();

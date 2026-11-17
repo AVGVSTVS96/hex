@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import { origin } from "./origin.ts";
 import { file } from "./store.ts";
 
 let dir: string;
@@ -270,4 +271,40 @@ test("a subagent or job of a session beside a thread is told the row that sessio
 
   expect(job?.additionalContext).toContain(said);
   expect(job?.additionalContext).toContain("/bin/hex message hub:schedule:digest`");
+});
+
+test("the owner's newest words are found in a long thread without reading it whole", async () => {
+  const store = file(dir);
+
+  for (let at = 0; at < 120; at++) {
+    store.messages.deliver({
+      key: `telegram:-100:${String(100 + at)}`,
+      to: "-100:7",
+      from: "telegram",
+      body: `Update ${String(at)}.`,
+      author: "hex",
+    });
+  }
+
+  const asked: number[] = [];
+  const { said } = store.store.messages;
+
+  const told = await origin(
+    {
+      ...store.store,
+      messages: {
+        ...store.store.messages,
+        said: async (thread: string, last?: number, before?: string, after?: string) => {
+          asked.push(last ?? -1);
+
+          return await said(thread, last, before, after);
+        },
+      },
+    },
+    "telegram:-100:7",
+  );
+
+  expect(told).toContain("/bin/hex message telegram:-100:50`");
+  expect(asked.length).toBeGreaterThan(1);
+  expect(asked).not.toContain(-1);
 });

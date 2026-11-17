@@ -39,11 +39,11 @@ import {
   writable,
 } from "./hub.ts";
 import type { Call, ChannelServer, Hub, HubLine, Message, Permission } from "./hub.ts";
-import { landed, whenLost } from "./kept.ts";
+import { landed, whenLost, whenMoved } from "./kept.ts";
 import { pictureId } from "./pictures.ts";
 import { stamp } from "./start.ts";
 import * as stores from "./store.ts";
-import { file, LostError, UnreachedError } from "./store.ts";
+import { file, LostError, MovedError, RefusedError, UnreachedError } from "./store.ts";
 import type { Author, File, Store } from "./store.ts";
 import { ATTACH, hangUpAll, http as channelLine, port } from "./testing.ts";
 import { until } from "./until.ts";
@@ -51,15 +51,39 @@ import { until } from "./until.ts";
 const CHANNEL = "plugin:telegram@hex";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The store open() hands a hub, which a test can make answer as a home across the network does when it can't be reached (unreached), or once it refuses the hub's tenure (lost).
-let outage: "unreached" | "lost" | undefined;
+// The store open() hands a hub, which a test can make answer as a home across the network does when it can't take anything (unreached), or once it refuses the hub's tenure (lost), or refuse a message over a size (refusing), or answer as a hex.db whose records moved to the folder movedTo (moved).
+let outage: "unreached" | "lost" | "moved" | undefined;
+let refusingOver: number | undefined;
+let movedTo: string | undefined;
 
 const openedFirst = stores.open;
 const outages = new Map<string, Store>();
 
+const MessageArgs = z.tuple([z.looseObject({ body: z.string().optional() })]).rest(z.unknown());
+
+function refusal(name: string | symbol, args: unknown[]) {
+  if (outage === "unreached") {
+    return new UnreachedError("hex's store didn't answer");
+  }
+
+  if (outage === "lost") {
+    return new LostError("tenure 1 no longer holds hex: tenure 2 does");
+  }
+
+  if (outage === "moved") {
+    return new MovedError("hex's records moved");
+  }
+
+  const body = name === "deliver" ? MessageArgs.safeParse(args).data?.[0].body : undefined;
+
+  return refusingOver !== undefined && body !== undefined && body.length > refusingOver
+    ? new RefusedError("the row is over the store's limit")
+    : undefined;
+}
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Every call the store's client makes, on any domain, answered as the outage says: a test seam over a client whose methods are a table built from names (store/wire.ts), so it reads them by name too.
-function answering<Domain extends object>(domain: Domain): Domain {
+// Every call the store's client makes, on any domain, answered as the outage says: a test seam over a client whose methods are a table built from names (store/wire.ts), so it reads them by name too. A store moved from answers nothing as it did.
+function answering<Domain extends object>(domain: Domain, movedFrom = false): Domain {
   return new Proxy(domain, {
     get(target, name) {
       // oxlint-disable-next-line anti-slop/no-reflect-get -- any method of any domain, by name
@@ -71,16 +95,14 @@ function answering<Domain extends object>(domain: Domain): Domain {
 
       // oxlint-disable-next-line unicorn/no-instanceof-builtins -- as above
       if (!(value instanceof Function)) {
-        return answering(value);
+        return answering(value, movedFrom);
       }
 
       return async (...args: unknown[]) => {
-        if (outage === "unreached") {
-          throw new UnreachedError("hex's store didn't answer");
-        }
+        const refusing = refusal(name, args);
 
-        if (outage === "lost") {
-          throw new LostError("tenure 1 no longer holds hex: tenure 2 does");
+        if (refusing !== undefined && (outage !== "moved" || movedFrom)) {
+          throw refusing;
         }
 
         // oxlint-disable-next-line anti-slop/no-reflect-apply, typescript/no-unsafe-return -- whatever the store's own method answers
@@ -91,8 +113,9 @@ function answering<Domain extends object>(domain: Domain): Domain {
 }
 
 function withOutages(dir: string): Store {
-  const known = outages.get(dir) ?? answering(openedFirst(dir));
-  outages.set(dir, known);
+  const at = movedTo ?? dir;
+  const known = outages.get(at) ?? answering(openedFirst(at), movedTo === undefined);
+  outages.set(at, known);
 
   return known;
 }
@@ -220,6 +243,8 @@ exit 0
 
 afterEach(() => {
   outage = undefined;
+  refusingOver = undefined;
+  movedTo = undefined;
 
   for (const socket of sockets.splice(0)) {
     socket.destroy();
@@ -5812,4 +5837,126 @@ test("a hub whose store can't be reached as it starts waits for it instead of fa
   outage = undefined;
   await starting;
   expect(started).toBe(true);
+});
+
+test("a message hex's store refuses outright reaches its session, and the store keeps a note of it under its key, so it's settled rather than lost", async () => {
+  const { received } = await onCall();
+  refusingOver = 300;
+  const long = "x".repeat(400);
+
+  expect(
+    await hub.deliver("chat:7", "Desk anchors", { ...message, content: long, key: "1:64" }),
+  ).toBe(true);
+  await until(() => heard(received).some(({ content }) => content === long));
+  await hub.synced();
+  expect(file(dir).messages.get("telegram:1:64")).toMatchObject({
+    body: matching(/^\[hub\] hex's store refused this message/u),
+    meta: { refused: "true" },
+  });
+});
+
+test("a hub whose hex.db moved to a store across the network keeps what it's given there, and restarts on it", async () => {
+  const { received } = await onCall();
+  const object = mkdtempSync(join(tmpdir(), "object-"));
+  let heardMoved = 0;
+
+  const unlisten = whenMoved(() => {
+    heardMoved++;
+  });
+
+  try {
+    movedTo = object;
+    outage = "moved";
+    await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:65" });
+    await until(() => heard(received).some(({ content }) => content === "hi"));
+    expect(heardMoved).toBeGreaterThan(0);
+
+    await hub.synced();
+    expect(file(object).messages.get("telegram:1:65")?.body).toBe("hi");
+    expect(keysKept()).toEqual([]);
+  } finally {
+    unlisten();
+    rmSync(object, { recursive: true, force: true });
+  }
+});
+
+test("a thread opened or changed while hex's store can't take anything is saved once it can", async () => {
+  await onCall();
+  outage = "unreached";
+  hub.register("chat:9", "New topic");
+  hub.configure("chat:7", { model: "sonnet" });
+  await settled();
+
+  outage = undefined;
+  await hub.synced();
+  expect(registry()).toMatchObject({
+    "chat:7": { name: "Desk anchors", model: "sonnet" },
+    "chat:9": { name: "New topic" },
+  });
+});
+
+test("what the hub kept after an outage carries the time it was given, so the turn's memory pass sees it", async () => {
+  const { send } = await onCall();
+  outage = "unreached";
+  await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:66" });
+  await send({
+    type: "state",
+    thread: "chat:7",
+    busy: true,
+    taken: ["telegram:1:66"],
+    session: SESSION,
+  });
+  await settled();
+  const turnEnded = new Date().toISOString();
+  await Bun.sleep(20);
+
+  outage = undefined;
+  await hub.synced();
+  expect(
+    file(dir)
+      .messages.observe(SESSION, turnEnded, "chat:7")
+      .map(({ key }) => key),
+  ).toEqual(["telegram:1:66"]);
+});
+
+test("what the hub owes hex's store outlives a restart during the outage, so hex's replies and what it was given aren't lost", async () => {
+  await onCall();
+  outage = "unreached";
+  await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:67" });
+  await hub.sent("chat:7", { key: "reply-67", content: "on it" });
+  await settled();
+  hub.close();
+  hangUpAll();
+
+  outage = undefined;
+  await start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } } });
+  await hub.synced();
+  expect(keysKept()).toEqual(["telegram:1:67", "telegram:reply-67"]);
+});
+
+test("the owner's words held for a turn that ends while hex's store can't take anything go to the session once it can", async () => {
+  await start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: 42 }],
+  });
+  const { received, send } = await session("chat:7");
+  await send({ type: "state", thread: "chat:7", busy: true });
+  await hub.deliver("chat:7", "Desk anchors", {
+    author: "owner",
+    content: "held",
+    meta: {},
+    key: "1:68",
+  });
+  await settled();
+
+  outage = "unreached";
+  await send({ type: "state", thread: "chat:7", busy: false });
+  await settled();
+  expect(heard(received).map((turn) => turn.content)).toEqual([]);
+
+  outage = undefined;
+  await hub.synced();
+  await until(() => received.length);
+  await settled();
+  expect(heard(received).map((turn) => turn.content)).toEqual(["held"]);
 });

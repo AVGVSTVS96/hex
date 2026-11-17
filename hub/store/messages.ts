@@ -18,7 +18,9 @@ export type Row = {
   taken?: { by: string; at: string };
 };
 
-export type NewRow = Omit<Row, "at" | "taken">;
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A message as it's kept: stamped by the store's clock, or, for one the hub held while the store didn't answer, with the time it first came.
+export type NewRow = Omit<Row, "at" | "taken"> & { at?: string };
 
 export const isAuthor = (value: unknown): value is Author => AuthorColumn.safeParse(value).success;
 
@@ -51,6 +53,8 @@ const MessageRow = z
 
 export const MessageRows = z.array(MessageRow);
 
+const Cursor = z.object({ at: z.string(), n: z.number() }).nullable();
+
 const RunRows = z.array(z.object({ at: z.string(), said: z.string() }));
 
 const withColumns = <Columns extends z.ZodObject>(columns: Columns) =>
@@ -77,14 +81,13 @@ export class Messages {
     this.write = write;
   }
 
-  deliver({ key, to, from, author, body, meta }: NewRow, by?: string): boolean {
+  deliver({ key, to, from, author, body, meta, at = now() }: NewRow, by?: string): boolean {
     if (!isAuthor(author)) {
       throw new Error(
         `${key}'s author is ${JSON.stringify(author) ?? "missing"}: a message's author is owner, hex, prompt, call or other`,
       );
     }
 
-    const at = now();
     const takenBy = by !== undefined && by !== "" ? by : undefined;
 
     return this.write(
@@ -125,14 +128,14 @@ export class Messages {
     });
   }
 
-  take(key: string, by: string): boolean {
+  take(key: string, by: string, at = now()): boolean {
     return this.write(
       () =>
         this.db
           .query(
             "update messages set taken_by = ?, taken_at = ? where key = ? and taken_at is null",
           )
-          .run(by, now(), key).changes === 1,
+          .run(by, at, key).changes === 1,
     );
   }
 
@@ -189,12 +192,14 @@ export class Messages {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Messages after a time, oldest first: at most `most` of them, starting after the message keyed `past`, so whatever reads every message reads them a page at a time.
   since(after = "", past = "", most = -1): Row[] {
+    const { at, n } = Cursor.parse(
+      this.db.query("select at, n from messages where key = ?").get(past),
+    ) ?? { at: after, n: Number.MAX_SAFE_INTEGER };
+
     return MessageRows.parse(
       this.db
-        .query(
-          "select * from messages where at > ?1 and (?2 = '' or (at, n) > (select at, n from messages where key = ?2)) order by at, n limit ?3",
-        )
-        .all(after, past, most),
+        .query("select * from messages where (at, n) > (?, ?) order by at, n limit ?")
+        .all(at, n, most),
     );
   }
 

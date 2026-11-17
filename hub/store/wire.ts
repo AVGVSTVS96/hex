@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { METHODS } from "./domains.ts";
 import type { Domains } from "./domains.ts";
+import { RefusedError, UnreachedError } from "./errors.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // One call to a store, as it crosses to the store's home and back. JSON has no undefined, so an argument left out to take its default travels as a place in `absent`.
@@ -14,8 +15,10 @@ const CallJson = z.object({
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // JSON gives every object a prototype, so a lookup table a method made without one, like threads.names(), says so, or a key like toString would find Object's method.
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// An error says `every` when the home would refuse any call now, not just this one: a method it doesn't have yet, or a disk that failed under it.
 const ReplyJson = z.union([
-  z.object({ error: z.string() }),
+  z.object({ error: z.string(), every: z.literal(true).optional() }),
   z.object({ value: z.unknown().optional(), prototype: z.null().optional() }),
 ]);
 
@@ -28,6 +31,10 @@ type Method = (...args: unknown[]) => unknown;
 
 // oxlint-disable-next-line anti-slop/no-runtime-typeof -- a property of one of the store's own domains, named in METHODS: this checks hex's code, not input
 const MethodValue = z.custom<Method>((value) => typeof value === "function");
+
+// SQLite's failures of the file under it, rather than of the call: https://www.sqlite.org/rescode.html
+const HOME_FAILED = /SQLITE_(BUSY|LOCKED|IOERR|FULL|CANTOPEN|READONLY|CORRUPT|NOTADB)/u;
+const SqliteFailure = z.object({ code: z.string() });
 
 const NAMED = new Map<string, string[]>(Object.entries(METHODS));
 
@@ -59,7 +66,10 @@ export function answering(domains: Domains): (call: string) => Reply {
       const answer = methods.get(`${domain}.${method}`);
 
       if (answer === undefined) {
-        return { error: `the store has no ${domain}.${method}` };
+        return {
+          error: `the store has no ${domain}.${method}: it is older than this hex`,
+          every: true,
+        };
       }
 
       const value = answer(...args.map((arg, at) => (absent.includes(at) ? undefined : arg)));
@@ -68,7 +78,10 @@ export function answering(domains: Domains): (call: string) => Reply {
         ? { value, prototype: null }
         : { value };
     } catch (error) {
-      return { error: error instanceof Error ? error.message : String(error) };
+      const said = error instanceof Error ? error.message : String(error);
+      const { code = said } = SqliteFailure.safeParse(error).data ?? {};
+
+      return HOME_FAILED.test(code) ? { error: said, every: true } : { error: said };
     }
   };
 }
@@ -78,7 +91,7 @@ export function decode(text: string): unknown {
   const reply = ReplyJson.parse(JSON.parse(text));
 
   if ("error" in reply) {
-    throw new Error(reply.error);
+    throw reply.every === true ? new UnreachedError(reply.error) : new RefusedError(reply.error);
   }
 
   if (reply.prototype === null) {

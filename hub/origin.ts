@@ -23,6 +23,32 @@ function keyOfEditedMessageOrOwn(row: Row | undefined): string | undefined {
 
 const present = (text: string | undefined): text is string => text !== undefined && text !== "";
 
+const PAGE = 50;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The owner's newest words a session took in a thread, read back a page at a time from its newest message, so a long thread isn't read whole. Each page reaches back to the start of the time its oldest message has, which pages share, and one where every message has the same time is read whole.
+async function newestWordsIn(store: Store, thread: string, takenBefore: string | undefined) {
+  for (let before = present(takenBefore) ? takenBefore : "9", most = PAGE; ;) {
+    const page = await store.messages.said(thread, most, before);
+
+    const found = page.findLast(
+      (row) =>
+        row.taken !== undefined &&
+        (!present(takenBefore) || row.taken.at < takenBefore) &&
+        saysWords(row),
+    );
+
+    const [oldest] = page;
+
+    if (found !== undefined || oldest === undefined || most === -1 || page.length < most) {
+      return found;
+    }
+
+    most = page.at(-1)?.at === oldest.at ? -1 : PAGE;
+    before = `${oldest.at}\uFFFF`;
+  }
+}
+
 export async function origin(
   store: Store,
   owner: string | undefined,
@@ -39,12 +65,7 @@ export async function origin(
     return await besideRun(store, thread, names, hex);
   }
 
-  const newestWords = (await store.messages.said(thread, -1, takenBefore)).findLast(
-    (row) =>
-      row.taken !== undefined &&
-      (!present(takenBefore) || row.taken.at < takenBefore) &&
-      saysWords(row),
-  );
+  const newestWords = await newestWordsIn(store, thread, takenBefore);
 
   const message = keyOfEditedMessageOrOwn(newestWords);
   const name = names[thread];

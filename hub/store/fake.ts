@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 
 import { z } from "zod";
 
-import { bare } from "./db.ts";
+import { bare, eachVariable } from "./db.ts";
 import type { Storage } from "./storage.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -66,21 +66,10 @@ function split(query: string): string[] {
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The runtime binds every number as a double, as JavaScript holds it, and a boolean as its word: a statement here is given the same.
 function asTheRuntimeBinds(statement: string, bound: unknown[]): [string, unknown[]] {
-  const code = bare(statement);
-  let text = "";
-  let from = 0;
-  let next = 0;
-  let most = 0;
-
-  for (const variable of code.matchAll(/\?(\d*)/gu)) {
-    const index = variable[1] === "" ? (next += 1) : Number(variable[1]);
-    next = Math.max(next, index);
-    most = Math.max(most, index);
+  const { text, most } = eachVariable(statement, (index) =>
     // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the members of what was bound that the runtime turns into doubles
-    const number = typeof bound[index - 1] === "number";
-    text += `${statement.slice(from, variable.index)}${number ? `cast(?${index} as real)` : `?${index}`}`;
-    from = variable.index + variable[0].length;
-  }
+    typeof bound[index - 1] === "number" ? `cast(?${index} as real)` : `?${index}`,
+  );
 
   if (most > MOST_VARIABLES) {
     throw new Error(`too many SQL variables at offset ${statement.length}: SQLITE_ERROR`);
@@ -93,7 +82,7 @@ function asTheRuntimeBinds(statement: string, bound: unknown[]): [string, unknow
   }
 
   return [
-    `${text}${statement.slice(from)}`,
+    text,
     // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the member of what was bound that the runtime turns into its word
     bound.map((value) => (typeof value === "boolean" ? String(value) : value)),
   ];

@@ -97,6 +97,7 @@ const PRAGMAS_THAT_READ = new Set([
   "foreign_keys",
   "defer_foreign_keys",
   "recursive_triggers",
+  "ignore_check_constraints",
   "data_version",
   "schema_version",
   "application_id",
@@ -109,25 +110,44 @@ const PRAGMAS_THAT_READ = new Set([
   "module_list",
 ]);
 
-const PRAGMA = /^\s*pragma\s+(?:\w+\s*\.\s*)?(\w+)\s*(\([^()]*\))?\s*;?\s*$/iu;
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A statement with each of its variables (?, ?NNN) written as `as` says, numbered as SQLite numbers them, and the highest number.
+export function eachVariable(statement: string, as: (index: number) => string) {
+  let text = "";
+  let from = 0;
+  let most = 0;
+
+  for (const variable of bare(statement).matchAll(/\?(\d*)/gu)) {
+    const index = variable[1] === "" ? most + 1 : Number(variable[1]);
+    most = Math.max(most, index);
+    text += `${statement.slice(from, variable.index)}${as(index)}`;
+    from = variable.index + variable[0].length;
+  }
+
+  return { text: `${text}${statement.slice(from)}`, most };
+}
+
+const PRAGMA = /^pragma\s+(?:\w+\s*\.\s*)?(\w+)\s*(\([^()]*\))?$/iu;
+const READS = new Set(["select", "with", "values"]);
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A query for `hex sql`, refused unless it can change nothing that outlives it: one statement, no pragma that sets anything (a pragma's setting outlives the transaction a home undoes the rest in), and no other database file.
+// A query for `hex sql`, refused unless it only reads: one statement, a select (with or values) or a pragma that reads, either of them explained or not. A home undoes whatever a query writes, but a pragma's setting outlives that.
 export function onlyReading(text: string): string {
-  const code = bare(text);
+  const statements = bare(text)
+    .split(";")
+    .map((statement) => statement.trim())
+    .filter((statement) => statement !== "");
 
-  if (code.split(";").filter((statement) => statement.trim() !== "").length !== 1) {
+  if (statements.length !== 1) {
     throw new Error("hex sql takes one statement");
   }
 
-  const first = /^\s*(\w+)/u.exec(code)?.[1]?.toLowerCase();
-
-  if (first === "attach" || first === "detach" || first === "vacuum") {
-    throw new Error(`hex sql can change nothing, so it takes no ${first}`);
-  }
+  const [statement = ""] = statements;
+  const asked = statement.replace(/^explain\s+(query\s+plan\s+)?/iu, "");
+  const first = /^\w+/u.exec(asked)?.[0].toLowerCase() ?? "";
 
   if (first === "pragma") {
-    const [, name = "", argument] = PRAGMA.exec(code) ?? [];
+    const [, name = "", argument] = PRAGMA.exec(asked) ?? [];
     const lower = name.toLowerCase();
 
     if (!PRAGMAS_THAT_READ.has(lower) || (argument !== undefined && !TABLE_PRAGMAS.has(lower))) {
@@ -135,6 +155,8 @@ export function onlyReading(text: string): string {
         "hex sql can change nothing, so it takes only a pragma that reads, like table_info(<table>)",
       );
     }
+  } else if (!READS.has(first) || /\b(insert|update|delete|replace)\b/iu.test(asked)) {
+    throw new Error("hex sql can change nothing, so it takes a select, or a pragma that reads");
   }
 
   return text;

@@ -8,8 +8,8 @@ import { ahead } from "./ahead.ts";
 import { nightly } from "./backup.ts";
 import { besideOf } from "./beside.ts";
 import { clients, engine, free, listen, up } from "./hub.ts";
-import { whenLost } from "./kept.ts";
-import { hexDir, open, syncInBackground } from "./store.ts";
+import { answered, whenLost, whenMoved } from "./kept.ts";
+import { hexDir, open, stateDir, syncInBackground } from "./store.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Before the clients load: Telegram's bot module awaits its polling loop, which never ends. A restart (HUP) and a stop (TERM, INT) end the hub alike: live calls hang up, the clients sign off, a call that came in while they did hangs up too, and once each hub's store has what was written to it, it exits for bin/hex to start the next one, so two never run at once. A stop also ends a hub still waiting for the port, and the clients stop taking in messages first, since the next hub may already be running elsewhere, with a live call's caller told that nothing answers here meanwhile.
@@ -62,6 +62,10 @@ whenLost((why) => {
   }
 });
 
+whenMoved(() => {
+  void hangUpSignOffAndExit("SIGHUP");
+});
+
 const hex = join(import.meta.dir, "..");
 const channels = join(hex, "channels");
 
@@ -79,6 +83,12 @@ if (waiting !== undefined && waiting !== "") {
 }
 
 syncInBackground();
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The hub takes hex over before it takes any message: every hub that claimed the store before it is refused from then on.
+await answered(stateDir(), "this hub takes hex over", async (store) => {
+  await store.claim();
+});
 
 await listen();
 

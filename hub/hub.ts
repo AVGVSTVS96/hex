@@ -22,11 +22,11 @@ import type { Failed } from "./failing.ts";
 import { sessionFiles } from "./files.ts";
 import { holding } from "./holds.ts";
 import { keeping, landed } from "./kept.ts";
+import type { Owing } from "./kept.ts";
 import { STARTUP } from "./loaded.ts";
 import { endpoint } from "./mcp.ts";
 import type { ChannelServer, Line, Permission, ToolArguments } from "./mcp.ts";
 import { PASS, queue } from "./observe.ts";
-import type { Pass } from "./observe.ts";
 import { ordered } from "./ordered.ts";
 import { sessionPauses } from "./pauses.ts";
 import { fileOnly, held as filesIn, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
@@ -524,36 +524,18 @@ function startupFiles(hex: string | undefined) {
 
 const ignore = (): void => undefined;
 
-type Owing = ReturnType<typeof keeping>;
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A turn's memory pass, which the hub owes hex's store when it didn't answer.
-async function queued(owing: Owing, storeDir: string, turn: Pass) {
-  try {
-    await queue(storeDir, turn);
-  } catch (error) {
-    process.stderr.write(`hub: hex couldn't queue a turn for memories: ${String(error)}\n`);
-    owing.owe(`pass:${turn.session}:${turn.by}`, async () => {
-      await queue(storeDir, turn);
-    });
-  }
-}
-
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // What a session's hooks couldn't keep while hex's store didn't answer, which the hub keeps once it does.
 function owedByHooks(
   owing: Owing,
-  storeDir: string,
   { said = [], pass: turn }: Extract<HubRequest, { type: "owed" }>,
 ) {
   for (const { row, by } of said) {
-    owing.owe(row.key, (store) => store.messages.deliver(row, by));
+    owing.owe({ kind: "deliver", row, by });
   }
 
   if (turn) {
-    owing.owe(`pass:${turn.session}:${turn.by}`, async () => {
-      await queue(storeDir, turn);
-    });
+    owing.owe({ kind: "pass", pass: turn });
   }
 }
 
@@ -628,10 +610,15 @@ export async function startHub({
   const plugin = channel.replace(/^plugin:/u, "");
   const path = `/${plugin.split("@")[0]}`;
   const app = path.slice(1);
-  const db = open(storeDir);
-  const owing = keeping(db, storeDir);
+
+  const owing = keeping(storeDir, {
+    spool: join(stateDir, `owed.${app}.json`),
+    letGo: heldLetGo,
+    queue: (turn) => queue(storeDir, turn),
+  });
+
   const { kept, must } = owing;
-  const threads = await openThreads({ app, db, kept, hexDir, link });
+  const threads = await openThreads({ app, storeDir, owing, hexDir, link });
   const turns = sessionTurns({ overdue: (thread) => void letHeldGo(thread) });
   const waiting = messagesWaiting({ runs, kept, waits });
 
@@ -1047,12 +1034,9 @@ export async function startHub({
 
     const row: NewRow = { key, to: thread, from: app, author, body: content, meta };
 
-    const adding = must(
-      key,
-      (store) =>
-        along ? store.questions.told(app, thread, along, row) : store.messages.deliver(row),
-      along ? false : undefined,
-    );
+    const adding = along
+      ? must({ kind: "told", app, thread, change: along, row }, false)
+      : must({ kind: "deliver", row }, undefined);
 
     return await delivering(thread, async () => {
       const added = await adding;
@@ -1089,7 +1073,7 @@ export async function startHub({
     };
 
     const by = caller.getStore() ?? threads.current(thread) ?? "hub";
-    await must(row.key, (store) => store.messages.deliver(row, by), false);
+    await must({ kind: "deliver", row, by }, false);
   }
 
   function pass(thread: string, name: string, message: Message) {
@@ -1185,19 +1169,24 @@ export async function startHub({
   // Each thread's latest letting go of what was held for its turn, until what it let go has gone on.
   const releasing = new Map<string, Promise<unknown>>();
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // What a turn's end let go goes on: as it ends, or once the store answers again when it ended in an outage.
+  function heldLetGo(thread: string, rows: Row[]) {
+    const name = threads.get(thread)?.name;
+
+    if (name !== undefined) {
+      for (const row of rows) {
+        forward(thread, name, toMessageWithKeyFirstForTheHook(row), true);
+      }
+    }
+  }
+
   async function letHeldGo(thread: string) {
     const { promise, resolve } = Promise.withResolvers();
     releasing.set(thread, promise);
 
     try {
-      const rows = await kept((store) => store.messages.letHeldGo(thread), []);
-      const name = threads.get(thread)?.name;
-
-      if (name !== undefined) {
-        for (const row of rows) {
-          forward(thread, name, toMessageWithKeyFirstForTheHook(row), true);
-        }
-      }
+      await must({ kind: "letHeldGo", thread }, false);
     } finally {
       if (releasing.get(thread) === promise) {
         releasing.delete(thread);
@@ -1508,9 +1497,7 @@ export async function startHub({
       return;
     }
 
-    await Promise.all(
-      keys.map((key) => must(`taken:${key}`, (store) => store.messages.take(key, session), false)),
-    );
+    await Promise.all(keys.map((key) => must({ kind: "take", key, by: session }, false)));
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1687,7 +1674,7 @@ export async function startHub({
       open: (thread, line) => void welcome(thread, line),
       close: (thread, line) => void drop(thread, line),
     },
-    db,
+    open(storeDir),
     zone,
   );
 
@@ -1795,7 +1782,7 @@ export async function startHub({
       }
 
       case "owed": {
-        owedByHooks(owing, storeDir, request);
+        owedByHooks(owing, request);
 
         return;
       }
@@ -1966,7 +1953,10 @@ export async function startHub({
       const session = threads.current(thread);
 
       if (present(session)) {
-        await queued(owing, storeDir, { session, by: new Date().toISOString(), thread });
+        await must(
+          { kind: "pass", pass: { session, by: new Date().toISOString(), thread } },
+          false,
+        );
       }
     },
     running: sessions.sessionOf,

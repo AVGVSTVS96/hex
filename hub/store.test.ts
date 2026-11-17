@@ -158,7 +158,7 @@ test("a read of the file can change nothing, and a copy is a file a hex runs on"
   expect(await store.read("select key from messages where key = ?", message.key)).toEqual([
     { key: message.key },
   ]);
-  expect(await failure(store.read("delete from messages"))).toContain("readonly");
+  expect(await failure(store.read("delete from messages"))).toContain("hex sql can change nothing");
   mkdirSync(join(dir, "copy"));
   await store.copy(join(dir, "copy", "hex.db"));
   expect(new File(join(dir, "copy")).messages.get(message.key)).toMatchObject(message);

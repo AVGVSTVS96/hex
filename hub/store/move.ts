@@ -95,6 +95,14 @@ export async function move(dir: string, to: Away, say: (line: string) => void) {
         return `the object has rows of ${table.name} the file doesn't`;
       }
 
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      // JSON reads 7 and 7.0 alike, so each column's types are counted too.
+      const types = `select ${table.columns.map((column) => `typeof("${column}")`).join(" || ',' || ")} as types, count(*) as n from "${table.name}" group by 1 order by 1`;
+
+      if (JSON.stringify(await here(types)) !== JSON.stringify(await there(types))) {
+        return `${table.name} holds values of other types in the object`;
+      }
+
       say(`${table.name}: ${same} rows the same in the object`);
     }
 
