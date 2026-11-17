@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { asked, brief, check, judge, message, ruleEdit } from "./intent.ts";
+import { asked, brief, check, judge, ruleEdit } from "./intent.ts";
 import type { Kind, Verdict } from "./intent.ts";
 import { open } from "./store.ts";
 import type { Store } from "./store.ts";
@@ -112,60 +112,6 @@ test("a brief carries the brief files it points to", () => {
   });
 
   expect(agent).toContain("Score each design on net lines.");
-});
-
-test("a message to the owner is what a session sends them", () => {
-  expect(
-    message({
-      tool_name: "mcp__plugin_telegram_telegram__reply",
-      tool_input: { text: "I picked: Feed stays out." },
-    }),
-  ).toBe("I picked: Feed stays out.");
-  expect(
-    message({
-      tool_name: "mcp__plugin_telegram_telegram__poll",
-      tool_input: { question: "Which first?", options: ["Feed", "Goals"] },
-    }),
-  ).toBe("Which first?\nFeed\nGoals");
-  expect(
-    message({
-      tool_name: "mcp__plugin_telegram_telegram__edit_message",
-      tool_input: { message_id: "5" },
-    }),
-  ).toBeUndefined();
-  expect(
-    brief({
-      tool_name: "mcp__plugin_telegram_telegram__reply",
-      tool_input: { text: "Done." },
-    }),
-  ).toBeUndefined();
-});
-
-test("a message to the owner is judged as one, against their newest words in its thread", async () => {
-  const kinds: Kind[] = [];
-  const inputs: string[] = [];
-
-  const result = await check(
-    {
-      session_id: "beside",
-      tool_name: "mcp__plugin_telegram_telegram__reply",
-      tool_input: { text: "I picked: the login page stays slow for now." },
-    },
-    store,
-    (input, kind = "brief") => {
-      inputs.push(input);
-      kinds.push(kind);
-
-      return ok();
-    },
-    [],
-    "telegram:-100:7",
-  );
-
-  expect(result?.kind).toBe("message");
-  expect(kinds).toEqual(["message"]);
-  expect(inputs[0]).toContain("The message to me (mcp__plugin_telegram_telegram__reply)");
-  expect(inputs[0]).toContain("Make the login page load fast.");
 });
 
 test("the words a brief is checked against: its tasks and the newest this session got", () => {

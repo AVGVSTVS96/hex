@@ -32,11 +32,7 @@ My rules change when I ask for a change, and then the edit carries my intent int
 
 Answer ok when my words ask for this change, or it carries out one I asked for, like taking back an edit I objected to; a standing instruction in my rules counts as asking, like adding a word voice transcripts mishear. A command that only reads the file is ok too. Answer revise when the change is the session's own idea or goes past what I asked: a note per problem, a line or two each, quoting my words where they settle it.`;
 
-const SENT = `One of my hex sessions is about to send me this message, and you read it before I do, so what hex proposes, picks and answers is what I asked for: my words for the task, the newest of mine this session got and the work hex handed it, my rules below, and what hex's memory says was decided.
-
-Answer ok when it carries out what I asked, or only tells me where work stands. Answer revise when it drops or changes part of my ask, makes a call for me that cuts what I asked for, answers less than I asked, or goes against my rules or a decision in memory: a note per problem, a line or two each, quoting my words where they settle it.`;
-
-const PROMPTS = { brief: SYSTEM, rules: RULES, message: SENT };
+const PROMPTS = { brief: SYSTEM, rules: RULES };
 
 const Judged = z.object({ verdict: z.enum(["ok", "revise"]), notes: z.string() });
 
@@ -56,9 +52,6 @@ const ToolHook = z.object({
       command: textOrNothing,
       prompt: textOrNothing,
       file_path: textOrNothing,
-      text: textOrNothing,
-      question: textOrNothing,
-      options: z.array(z.string()).optional().catch(undefined),
       content: textOrNothing,
       old_string: textOrNothing,
       new_string: textOrNothing,
@@ -102,21 +95,6 @@ export function brief({
   if (HANDOFF_TOOL.test(tool)) {
     return withFiles(JSON.stringify(input, null, 1), cwd);
   }
-}
-
-const TO_OWNER = /^mcp__plugin_[\w-]+__(reply|poll|edit_message)$/u;
-
-export function message({
-  tool_name: tool = "",
-  tool_input: input = {},
-}: Hook): string | undefined {
-  if (!TO_OWNER.test(tool)) {
-    return;
-  }
-
-  const text = [input.text ?? input.question ?? "", ...(input.options ?? [])].join("\n");
-
-  return text.trim() === "" ? undefined : text;
 }
 
 const withFiles = (text: string, cwd: string) =>
@@ -443,25 +421,17 @@ export async function check(
     onRules.through !== true;
 
   const handoff = brief(hook);
-  const toOwner = message(hook);
 
-  if (sentBack) {
+  if (sentBack || handoff === undefined || handoff === "") {
     return onRules;
   }
 
-  if (handoff !== undefined && handoff !== "") {
-    return await checkAs("brief", handoff, hook, store, decide, thread);
-  }
-
-  return toOwner === undefined
-    ? onRules
-    : await checkAs("message", toOwner, hook, store, decide, thread);
+  return await checkAs("brief", handoff, hook, store, decide, thread);
 }
 
 const NAMED: Record<Kind, [string, string]> = {
   brief: ["brief", "The brief"],
   rules: ["change to my rules", "The change to my rules"],
-  message: ["message to me", "The message to me"],
 };
 
 async function checkAs(
@@ -565,7 +535,6 @@ if (import.meta.main) {
         const reason = {
           rules: `Intent check: the owner didn't ask for this change to their rules.\n\n${verdict.notes}\n\nWhere their words do ask for it, make the change again. ${next}`,
           brief: `Intent check: this brief drifts from what the owner asked.\n\n${verdict.notes}\n\nRewrite the brief and start it again. ${next}`,
-          message: `Intent check: this message drifts from what the owner asked.\n\n${verdict.notes}\n\nRewrite it and send it again. ${next}`,
         }[kind];
 
         console.log(
