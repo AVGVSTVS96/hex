@@ -704,25 +704,3 @@ test("a subagent of a chat turn gets the instruction files Claude Code skipped, 
   );
   expect(part(1, { HEX_FRESH: "" })).toBe("");
 });
-
-test("a topic's general-purpose agent, which Claude Code starts without the instruction files and the wake, gets the instruction files, and an agent that inherits them isn't handed them twice", () => {
-  const first = (agent: string, extra: Record<string, string> = {}) => {
-    const result = Bun.spawnSync([join(home, ".hex/bin/instructions"), "1"], {
-      stdin: Buffer.from(JSON.stringify({ session_id: "s", agent_type: agent })),
-      env: env({ TMPDIR: home, HEX_FRESH: "", ...extra }),
-    });
-
-    return result.stdout.toString();
-  };
-
-  const agents = Bun.spawnSync([join(home, ".hex/bin/instructions"), "agents"], { env: env() });
-
-  expect(JSON.parse(agents.stdout.toString())).toMatchObject({
-    "general-purpose": { omitClaudeMd: true },
-  });
-  expect(
-    Context.parse(JSON.parse(first("general-purpose"))).hookSpecificOutput.additionalContext,
-  ).toStartWith("Your instruction files.\n\nThe user's instruction files are below.");
-  expect(first("code-reviewer")).toBe("");
-  expect(first("general-purpose", { HEX_THREAD: "" })).toBe("");
-});

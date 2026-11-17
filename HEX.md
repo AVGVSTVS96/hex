@@ -15,18 +15,13 @@ Your memory is OptMem:
 OptMem outlives every session, compaction, model and vendor change.
 Without it you do not know who you are, or what was decided and tried.
 
-### At startup: hex loads it for you
+### At startup: read it
 
 hex keeps what `.hex/vendor/memo wake` prints, after my profile (who I am
 and my plans that hold for a while, which the memory agent keeps current in
-hex.db; `.hex/bin/hex profile` prints it), in the file below, current after every memory
-pass, and it loads as every session starts and after every compaction. If it
-isn't in your context, run `.hex/vendor/memo wake` before any other tool call
-and follow its "Not awake yet" lines until it says "You are awake."; if it
-stops to ask for a compression, that's the memory agent's to do, so work from
-`.hex/vendor/memo recall <regex>` until it has.
-
-@../state/wake/CLAUDE.md
+hex.db; `.hex/bin/hex profile` prints it), in `state/wake/CLAUDE.md`, current after every memory
+pass. Read it before any other tool call when a session starts and after every
+compaction.
 
 ### While working: memories are recorded for you
 

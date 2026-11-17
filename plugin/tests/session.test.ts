@@ -251,53 +251,6 @@ test("a topic session, started by the hub, gets none of the chat or main additio
   expect(settings.env.HEX_THREAD).toBe("-100:5");
 });
 
-test("a topic session's general-purpose agent starts without the instruction files and the wake, and a job's agents start as before", async () => {
-  const { args } = await launch("plugin:telegram@hex", "-100:5");
-
-  expect(JSON.parse(flagValue(args, "--agents"))).toMatchObject({
-    "general-purpose": { omitClaudeMd: true },
-  });
-  Bun.spawnSync([join(home, ".hex/bin/session"), "-p", "build it"], {
-    cwd: home,
-    env: { ...process.env, HEX_OWNER: "telegram:-100:7" },
-  });
-  expect(Args.parse(JSON.parse(readFileSync(join(home, "launched"), "utf-8")))).not.toContain(
-    "--agents",
-  );
-});
-
-test("a topic session loads its rules and wake from its own copy, which a resume keeps and a new session takes again", async () => {
-  const wake = join(home, "state/wake/CLAUDE.md");
-  const { args, file, settings } = await launch("plugin:telegram@hex", "-100:5");
-  const held = z.string().parse(settings.env.HEX_HELD);
-  expect(args[args.indexOf("--add-dir") + 1]).toBe(held);
-  expect(settings.claudeMdExcludes).toEqual([
-    join(home, ".claude/CLAUDE.md"),
-    join(home, "AGENTS.md"),
-    wake,
-  ]);
-  const copy = readFileSync(join(held, "CLAUDE.md"), "utf-8");
-  expect(copy).toContain(`Contents of ${join(home, "AGENTS.md")}`);
-  expect(copy).toContain("- Keep it short.");
-  expect(copy).toContain("#0 a memory");
-  writeFileSync(wake, "a newer wake\n");
-  writeFileSync(join(home, "AGENTS.md"), "- Keep it shorter.\n\n@state/wake/CLAUDE.md\n");
-
-  const again = (...flags: string[]) =>
-    Bun.spawnSync([join(home, ".hex/bin/session"), "--bg", ...flags, "--settings", file], {
-      cwd: home,
-      env: process.env,
-    });
-
-  writeFileSync(file, JSON.stringify({ env: settings.env }));
-  again("--resume", "abc");
-  expect(readFileSync(join(held, "CLAUDE.md"), "utf-8")).toBe(copy);
-  writeFileSync(file, JSON.stringify({ env: settings.env }));
-  again();
-  expect(readFileSync(join(held, "CLAUDE.md"), "utf-8")).toContain("a newer wake");
-  expect(readFileSync(join(held, "CLAUDE.md"), "utf-8")).toContain("- Keep it shorter.");
-});
-
 test("a session started in another project gets the hex folder's settings under the hub's, in its file", async () => {
   writeFileSync(
     join(home, ".claude/settings.json"),
@@ -361,7 +314,6 @@ test("every folder a background session starts in is trusted (a -p run never ask
 });
 
 test("a job starts without the wake, in the hex folder and in another project, and a run that isn't a job keeps it", () => {
-  const wake = join(home, "state/wake/CLAUDE.md");
   const project = join(home, "project");
 
   mkdirSync(project);
@@ -376,12 +328,7 @@ test("a job starts without the wake, in the hex folder and in another project, a
   };
 
   for (const cwd of [home, project]) {
-    const args = launched(cwd, { HEX_OWNER: "telegram:-100:7" });
-
-    expect(Settings.parse(JSON.parse(flagValue(args, "--settings"))).claudeMdExcludes).toEqual([
-      wake,
-    ]);
-    expect(args).not.toContain(join(home, "state/wake"));
+    expect(launched(cwd, { HEX_OWNER: "telegram:-100:7" })).not.toContain(join(home, "state/wake"));
   }
 
   expect(launched(home)).not.toContain("--settings");
