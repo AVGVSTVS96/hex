@@ -3,10 +3,7 @@
     "SessionStart": [
       {
         "matcher": "startup|resume|clear",
-        "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/live-status" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/chat begin" }
-        ]
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/chat begin" }]
       },
       {
         "matcher": "compact|startup",
