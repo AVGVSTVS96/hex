@@ -415,7 +415,7 @@ test("a job's end is kept for its owner's thread while no hub runs, by its id or
   ]);
 });
 
-test("a job's output is kept in a file of its own, and its end brings the last of it, says where all of it is, and calls a claude job's words its own account to check", async () => {
+test("a job's output is kept in a file of its own, and its end brings the last of it, says where all of it is, and where a claude job's conversation is", async () => {
   const jobs = join(home, "state/jobs");
   const weekOld = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
 
@@ -468,11 +468,10 @@ test("a job's output is kept in a file of its own, and its end brings the last o
   expect(said("pages")).toContain(
     "What it printed last:\n<output>\npages runs on server\nbuilt 3 pages\nall pushed\n</output>",
   );
-  expect(said("pages")).toContain("the agent's own account, not proof");
   expect(said("pages")).toContain("log -- s-9");
   expect(said("chatty")).toContain(`, all of it in ${join(jobs, "chatty.log")}:\n<output>\n2\n3\n`);
   expect(said("chatty")).toContain("\n41\n</output>");
-  expect(said("chatty")).not.toContain("own account");
+  expect(said("chatty")).not.toContain("log --");
   expect(said("wide")).toContain(`<output>\n${"0".repeat(1999)}3\n</output>`);
   expect(said("quiet")).toContain("It printed nothing.");
   expect(said("unkept")).toContain("Its output wasn't kept.");

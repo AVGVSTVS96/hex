@@ -364,7 +364,7 @@ if (mode === "--owner") {
   const result = service === "success" && process.env.EXIT_CODE === "killed" ? "stopped" : service;
 
   const check = isSet(session)
-    ? `That's the agent's own account, not proof: check what it says against the real thing (files, commits, links, what's live) before you pass any of it on. Its conversation, if it ran here: \`${join(import.meta.dir, "hex")} log -- ${session}\``
+    ? `Its conversation, if it ran here: \`${join(import.meta.dir, "hex")} log -- ${session}\``
     : "Check what it shows against the real thing before you report it.";
 
   const invocation = process.env.INVOCATION_ID ?? `${Date.now()}`;
