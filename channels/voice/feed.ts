@@ -182,7 +182,7 @@ export class Feed extends Changes {
         id: `decided:${question.id}`,
         kind: "decided",
         title: question.question,
-        body: words === "" ? (question.took ?? "") : words,
+        body: words,
         topic: question.topic,
         at: question.decided,
         opens: question.id,

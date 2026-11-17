@@ -1,1 +1,31 @@
-send-gate.ts
+#!/bin/sh
+input=$(cat)
+gate='^mcp__claude_ai_[^_].*__((send|reply|forward|trash|delete)[a-z_]*|mark_[a-z_]*spam)$'
+printf '%s' "$input" | jq -e --arg gate "$gate" '.tool_name | test($gate)' >/dev/null || exit 0
+
+printf '%s' "$input" | jq -e --arg machines "${HEX_SEND_MACHINES:-}" '
+  ($machines | ascii_downcase | [scan("[^\\s,]+")]) as $machines
+  | [.tool_input | .to, .cc, .bcc | arrays | .[] | ascii_downcase] as $recipients
+  | (.tool_name | test("__(send|forward)[a-z_]*$"))
+    and ($recipients | length > 0)
+    and ($recipients - $machines | length == 0)
+' >/dev/null 2>&1 && exit 0
+
+transcript=$(printf '%s' "$input" | jq -r .transcript_path)
+id=$(printf '%s' "$input" | jq -r .tool_use_id)
+
+[ -f "$transcript" ] && jq -se --arg gate "$gate" --arg id "$id" '
+  def text: .message.content | if type == "string" then . else map(.text // "") | join("") end;
+  def gated: .message.content | arrays | .[] | select(.type == "tool_use" and .id != $id and (.name | test($gate)));
+  (map(.origin.kind == "channel") | rindex(true)) as $said
+  | $said != null
+    and (.[$said] | text | sub("^<channel[^>]*>\\s*(<@[!&]?[0-9]+>\\s*)*"; "") | sub("\\s*</channel>\\s*$"; "")
+      | test("^(yes|yep|yeah|yup|sure|ok|okay|send it|do it|go ahead)[.!\\s]*$"; "i"))
+    and ([.[$said + 1:][] | gated] | length == 0)
+' "$transcript" >/dev/null && exit 0
+
+jq -n '{hookSpecificOutput: {
+  hookEventName: "PreToolUse",
+  permissionDecision: "deny",
+  permissionDecisionReason: "Sending, replying, forwarding, trashing, deleting or marking spam through a connector needs my yes. Tell me in chat exactly what this call will do, wait for me to reply yes, then retry it. Each yes covers one call."
+}}'

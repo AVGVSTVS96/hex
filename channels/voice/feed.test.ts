@@ -163,7 +163,7 @@ test("an idea check that found news is found in the feed, its first sentence the
   ]);
 });
 
-test("what hex decided itself is decided in the feed, its why as the body, or the pick it took when it has none", () => {
+test("what hex decided itself is decided in the feed, its why as the body", () => {
   const asked = {
     kind: "pick" as const,
     task: "",
@@ -181,15 +181,6 @@ test("what hex decided itself is decided in the feed, its why as the body, or th
       topic: "phoneapp",
       decided: daysAgo(1),
       why: "It only changes copy. Links: https://example.com/diff",
-    },
-    {
-      ...asked,
-      id: "telegram:-1001234567890:6",
-      question: "bun or pnpm?",
-      topic: "orchard",
-      decided: daysAgo(2),
-      why: "",
-      took: "bun",
     },
   ];
 
@@ -214,15 +205,6 @@ test("what hex decided itself is decided in the feed, its why as the body, or th
       topic: "phoneapp",
       opens: "telegram:-1001234567890:5",
       links: [{ label: "example.com/diff", url: "https://example.com/diff" }],
-    },
-    {
-      id: "decided:telegram:-1001234567890:6",
-      kind: "decided",
-      title: "bun or pnpm?",
-      body: "bun",
-      topic: "orchard",
-      opens: "telegram:-1001234567890:6",
-      links: [],
     },
   ]);
 });

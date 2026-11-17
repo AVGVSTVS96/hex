@@ -4049,7 +4049,7 @@ export function serve(voiceHub: Hub, state: string) {
     activity.changed();
     chats.changed();
   });
-  yours = new Questions(state, { takesPicks: env.VOICE_TAKES_PICKS === "1" });
+  yours = new Questions(state);
   ideas = new Ideas(state);
   feed = new Feed(state, {
     closedSince: (from) => board.closedSince(from),
