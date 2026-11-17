@@ -64,6 +64,9 @@ managed=/etc/claude-code/managed-settings.json
 managed=${HEX_MANAGED_SETTINGS:-$managed}
 units_dir=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 systemd() { systemctl --user show-environment >/dev/null 2>&1; }
+# hex.service runs this folder's hex: a stop or a start goes through it, so systemd neither brings hex back after a
+# stop nor runs a second beside one started by hand.
+own_unit() { systemd && systemctl --user show -p ExecStart --value hex.service 2>/dev/null | grep -qF "$hex/bin/hex run"; }
 # A machine whose systemd has oomd, with it off.
 oomd_off() { systemctl cat systemd-oomd.service >/dev/null 2>&1 && ! systemctl is-active -q systemd-oomd.service; }
 
@@ -202,23 +205,26 @@ case "${1:-}" in
       pkill -P $$ -f channels/iikb/door.ts || :
       while doors; do sleep 0.1; done
       export HEX_DOOR="$now"
-      if [ -n "$now" ]; then (. "$hex/bin/settings"; exec bun "$hex/channels/iikb/door.ts" "$home/state") 7>&- & fi
+      if [ -n "$now" ]; then (. "$hex/bin/settings"; exec bun "$hex/channels/iikb/door.ts" "$home/state") 6>&- 7>&- & fi
     }
     start() {
       door
       bun install --no-summary --cwd "$hex" >/dev/null || :
       # Read at every start, so a restart takes the settings as they are now.
-      (. "$hex/bin/settings"; exec bun "$hex/hub/serve.ts") 7>&- &
+      (. "$hex/bin/settings"; exec bun "$hex/hub/serve.ts") 6>&- 7>&- &
       hub=$!
     }
+    # One hex runs a folder on a machine, however it was started: a second leaves the first be.
+    exec 6>"$home/state/run.lock"
+    flock -n 6 || { echo "hex runs here already" >&2; exit 0; }
     # A move holds state/records.lock alone, and hex here holds it beside nothing but itself for as long as it runs,
-    # however it was started, so no hub starts on records that are moving. What hex starts doesn't hold it (7>&-).
+    # however it was started, so no hub starts on records that are moving. What hex starts holds neither (6>&- 7>&-).
     exec 7>"$home/state/records.lock"
-    flock -n -s 7 || { echo "hex waits for its records to finish moving before its hub starts" >&2; flock -s 7 & wait $!; }
+    flock -n -s 7 || { echo "hex waits for its records to finish moving before its hub starts" >&2; flock -s 7 6>&- & wait $!; }
     # Started ahead of its turn, while hex still runs on another machine that's handing it over, the hub gets ready and
     # waits (hub/ahead.ts), and so does the rest of hex here, until the file HEX_AHEAD names is gone.
     start
-    [ -z "${HEX_AHEAD:-}" ] || bun "$hex/hub/ahead.ts" "$HEX_AHEAD" 7>&-
+    [ -z "${HEX_AHEAD:-}" ] || bun "$hex/hub/ahead.ts" "$HEX_AHEAD" 6>&- 7>&-
     echo $$ > "$pidfile"
     # Apps following hex with `hex watch` read it again as it starts, as after a restore of hex.db.
     printf . >> "$home/state/hex.bell"
@@ -227,7 +233,7 @@ case "${1:-}" in
       [ -n "$hub" ] || start
       # Jobs a move or their machine going down stopped carry on, alongside each start of the hub, so a pass that failed
       # is tried again; one whose unit runs is left alone.
-      (. "$hex/bin/settings"; bun "$hex/bin/job" --resume || echo "hex: jobs that were stopped didn't resume; the hub's next start tries again" >&2) 7>&- &
+      (. "$hex/bin/settings"; bun "$hex/bin/job" --resume || echo "hex: jobs that were stopped didn't resume; the hub's next start tries again" >&2) 6>&- 7>&- &
       exited=0
       wait "$hub" || exited=$?
       hub=
@@ -238,7 +244,7 @@ case "${1:-}" in
       fi
       # The store refused the hub for an older tenure: another machine holds hex, so a hub here would fight it. hex stays
       # stopped here, with the same code, which hex.service doesn't restart.
-      [ "$exited" != 3 ] || { echo "hex stopped on $(uname -n): another machine holds hex now, so its hub stays stopped here" >&2; rm -f "$pidfile"; exit 3; }
+      [ "$exited" != 3 ] || { down "hex stopped on $(uname -n): hex's store says another machine holds hex now, so its hub stays stopped here. If no other machine runs hex, start it here again with \`hex start\`."; rm -f "$pidfile"; exit 3; }
       first=$second second=$third third=$(date +%s)
       if [ -n "$first" ] && [ $((third - first)) -le 60 ]; then
         # A store that doesn't answer stops a hub whatever its commit, so hex stays on the commit and tries again.
@@ -255,10 +261,12 @@ case "${1:-}" in
     ;;
   start)
     running && exit 0
+    if own_unit; then systemctl --user start --no-block hex.service; echo "hex started, as hex.service"; exit 0; fi
     nohup "$0" run >> "$home/state/hub.log" 2>&1 &
     echo "hex started; its log is state/hub.log"
     ;;
   stop)
+    ! own_unit || systemctl --user stop hex.service
     running || exit 0
     pid=$(cat "$pidfile")
     kill "$pid"
@@ -286,9 +294,9 @@ case "${1:-}" in
       built=$(mktemp -d)
       trap 'rm -rf "$built"' EXIT
       # The store's version is what its Worker is built from, so a change anywhere in its bundle deploys it and nothing
-      # else does, then the commit it was built at, so no deploy puts older code over newer.
+      # else does, then the commit it was built at and when, so no deploy puts older code over newer.
       $wrangler deploy --dry-run --outdir "$built" --config "$config" >/dev/null
-      version="$(cat "$built"/*.js "$config" | git hash-object --stdin)@$(git -C "$from" rev-parse HEAD)"
+      version="$(cat "$built"/*.js "$config" | git hash-object --stdin)@$(git -C "$from" log -1 --format=%H@%ct)"
       # Proven where hex points, or before a move at the Worker's own address.
       target() { if [ -e "$store" ]; then cat "$store"; else printf '{"url":"%s","name":"hex","key":"%s"}' "$url" "$key"; fi; }
       # Waits up to a minute for the store to answer as the version given.
@@ -296,13 +304,20 @@ case "${1:-}" in
       secret=
       if [ -e "$store" ]; then
         was=$(answers < "$store") || { echo "the store at $(jq -r .url "$store") doesn't answer, so nothing deploys over it: whether this one is newer can't be told" >&2; exit 1; }
-        [ "${was%@*}" != "${version%@*}" ] || { echo "the store hex points at runs this code already ($was)"; exit 0; }
-        case $was in *@*) git -C "$from" merge-base --is-ancestor "${was#*@}" HEAD 2>/dev/null || { echo "the store hex points at runs code from ${was#*@}, which this hex doesn't hold, so it may be newer and stays" >&2; exit 1; } ;; esac
+        [ "${was%%@*}" != "${version%%@*}" ] || { echo "the store hex points at runs this code already ($was)"; exit 0; }
+        # Which commit is newer goes by when each was made, since a squash merge leaves the one a store was deployed
+        # from out of main's history.
+        made=${was##*@}
+        case $made in '' | *[!0-9]*) ;; *) [ "$made" -le "${version##*@}" ] || { echo "the store hex points at was built from a commit made after this one (${was#*@}), so it stays: deploy from a hex at least as new" >&2; exit 1; } ;; esac
         key=$(jq -r .key "$store")
       else
         # The key goes up only to a Worker that answers to none yet, so no machine that has no key locks out the ones
         # that use it.
-        keys=$($wrangler secret list --config "$config" --format json 2>&1) || case $keys in *"not found"*|*10007*) keys= ;; *) printf '%s\n' "$keys" >&2; exit 1 ;; esac
+        worker=$(sed -n 's/^ *"name": *"\([^"]*\)".*/\1/p' "$config" | head -n 1)
+        keys=$($wrangler secret list --config "$config" --format json 2>&1) || case $keys in
+          *"Worker \"$worker\" not found."*"If this is a new Worker, run"*) keys= ;;
+          *) printf '%s\n' "$keys" >&2; exit 1 ;;
+        esac
         if printf %s "$keys" | tr -d ' \n' | grep -q '"name":"KEY"'; then
           key=${HEX_STORE_KEY:-}
           [ -n "$key" ] || { echo "the Worker answers to a key already: put HEX_STORE_KEY from the .env of the machine that made it in this one's, or copy its state/store.json" >&2; exit 1; }
@@ -379,7 +394,7 @@ case "${1:-}" in
   restore)
     PATH=$HOME/.local/bin:$HOME/.bun/bin:$PATH
     missing=
-    for tool in git curl jq python3; do command -v "$tool" >/dev/null || missing="$missing $tool"; done
+    for tool in git curl jq python3 flock; do command -v "$tool" >/dev/null || missing="$missing $tool"; done
     [ -z "$missing" ] || { echo "restore: install$missing with the system's package manager first (INSTALL.md step 1)" >&2; exit 1; }
     # Each thing a list installs is made by its line when it's missing. A line that fails is said and fails restore at
     # its end, once the rest is set up, so one broken install leaves no unit off.
@@ -471,7 +486,7 @@ case "${1:-}" in
     # The hub gets hex.service's environment files, then the settings; a file it writes as it starts may not be there yet.
     files=$(! systemd || hub EnvironmentFiles | sed 's/ (ignore_errors=[a-z]*)$//')
     unwritten=$(printf '%s\n' "$files" | while IFS= read -r file; do [ -z "$file" ] || [ -f "$file" ] || echo "$file"; done)
-    for tool in git curl jq python3 bun claude; do
+    for tool in git curl jq python3 flock bun claude; do
       command -v "$tool" >/dev/null && ok "$tool" || fix "$tool isn't on PATH (INSTALL.md step 1)"
     done
     if command -v claude >/dev/null && command -v jq >/dev/null; then

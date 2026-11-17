@@ -195,35 +195,50 @@ test("a read sees the records and refuses anything that writes", () => {
   expect(() => object.read("not json")).toThrow();
 });
 
+const by = (claimant: string, lease?: number) =>
+  JSON.stringify({ claimant, ...(lease !== undefined && { lease }) });
+
 test("a hub that claims hex gets the next tenure, every hub that claimed before it is refused, and nothing it sends then is taken", () => {
   const object = startedEmpty();
   expect(object.lostTo(undefined)).toBeUndefined();
-  expect(object.claim("{}")).toEqual({ tenure: 1 });
+  expect(object.claim(by("a"))).toEqual({ tenure: 1 });
   expect(object.lostTo("1")).toBeUndefined();
-  expect(object.claim("{}")).toEqual({ tenure: 2 });
+  expect(object.claim(by("b"))).toEqual({ tenure: 2 });
   expect(object.lostTo("1")).toBe("tenure 1 no longer holds hex: tenure 2 does");
   expect(object.lostTo("2")).toBeUndefined();
   expect(object.lostTo(undefined)).toBeUndefined();
+  expect(() => object.claim("{}")).toThrow();
 });
 
-test("a lease tool's number never goes back: a hub on the same lease claims again, one on a lower lease is refused", () => {
+test("a claim that arrives again gets its tenure while it holds hex, and one the network held back past a later claim takes nothing from it", () => {
   const object = startedEmpty();
-  expect(object.claim(JSON.stringify({ lease: 6 }))).toEqual({ tenure: 1 });
-  expect(object.claim(JSON.stringify({ lease: 6 }))).toEqual({ tenure: 2 });
-  expect(object.claim(JSON.stringify({ lease: 5 }))).toEqual({
+  expect(object.claim(by("a"))).toEqual({ tenure: 1 });
+  expect(object.claim(by("a"))).toEqual({ tenure: 1 });
+  expect(object.lostTo("1")).toBeUndefined();
+  expect(object.claim(by("b"))).toEqual({ tenure: 2 });
+  expect(object.claim(by("a"))).toEqual({ lost: "tenure 1 no longer holds hex: tenure 2 does" });
+  expect(object.lostTo("2")).toBeUndefined();
+});
+
+test("a lease tool's number never goes back: a hub on the same lease claims again, one on a lower lease is refused, and a hub with no lease runs hex outside any", () => {
+  const object = startedEmpty();
+  expect(object.claim(by("a", 6))).toEqual({ tenure: 1 });
+  expect(object.claim(by("b", 6))).toEqual({ tenure: 2 });
+  expect(object.claim(by("c", 5))).toEqual({
     lost: "lease 5 no longer holds hex: lease 6 does",
   });
   expect(object.lostTo("2")).toBeUndefined();
-  expect(object.claim("{}")).toEqual({ lost: "lease 0 no longer holds hex: lease 6 does" });
-  expect(object.claim(JSON.stringify({ lease: 7 }))).toEqual({ tenure: 3 });
+  expect(object.claim(by("d", 7))).toEqual({ tenure: 3 });
   expect(object.lostTo("2")).toBe("tenure 2 no longer holds hex: tenure 3 does");
-  expect(() => object.claim(JSON.stringify({ lease: -1 }))).toThrow();
-  expect(() => object.claim('{"lease": 1e999}')).toThrow();
+  expect(object.claim(by("plain"))).toEqual({ tenure: 4 });
+  expect(object.claim(by("e", 1))).toEqual({ tenure: 5 });
+  expect(() => object.claim(by("f", -1))).toThrow();
+  expect(() => object.claim('{"claimant": "g", "lease": 1e999}')).toThrow();
 });
 
 test("a tenure that isn't one the object gave out is refused and never kept, so it can't wedge the object", () => {
   const object = startedEmpty();
-  object.claim("{}");
+  object.claim(by("a"));
 
   for (const insane of ["1e999", "Infinity", "-1", "2", "abc", "", "9".repeat(30), " 1"]) {
     expect(object.lostTo(insane)).toContain("isn't one hex's store gave out");
@@ -254,8 +269,8 @@ test("an object made before it kept whether a hub had used it learns to, and cou
 test("a tenure the object gave out holds through its restarts", () => {
   const storage = objectStorage();
   const object = startedEmpty(storage);
-  object.claim("{}");
-  object.claim("{}");
+  object.claim(by("a"));
+  object.claim(by("b"));
   expect(recordsIn(storage, dir).lostTo("1")).toBe("tenure 1 no longer holds hex: tenure 2 does");
 });
 
@@ -544,8 +559,8 @@ test("the object answers only its owner's key, never without one, and refuses a 
         })
       ).json(),
     ).toEqual({ version: "v7", migrations: appendOnlyMigrations.length });
-    expect(await (await post("/hex/claim", "{}")).json()).toEqual({ value: 1 });
-    expect(await (await post("/hex/claim", "{}")).json()).toEqual({ value: 2 });
+    expect(await (await post("/hex/claim", by("a"))).json()).toEqual({ value: 1 });
+    expect(await (await post("/hex/claim", by("b"))).json()).toEqual({ value: 2 });
     expect((await post("/hex/call", "{}", { "hex-tenure": "2" })).status).toBe(200);
 
     const refused = await post("/hex/call", raw("messages", "deliver", [message]), {
@@ -555,6 +570,7 @@ test("the object answers only its owner's key, never without one, and refuses a 
     expect(refused.status).toBe(409);
     expect(await refused.json()).toEqual({
       error: "tenure 1 no longer holds hex: tenure 2 does",
+      lost: true,
     });
     expect((await post("/hex/call", "{}", { "hex-tenure": "1e999" })).status).toBe(409);
     expect((await post("/hex/version", "")).status).toBe(200);
@@ -822,7 +838,7 @@ test("hex sql can change nothing on either home: one statement, and no pragma th
   expect(await file.store.read("pragma table_info('messages')")).not.toEqual([]);
 });
 
-test("the stand-in refuses what the runtime refuses: more than 100 variables, statements over 100 KB, values over 2.2 MB, and it binds numbers as doubles", () => {
+test("the stand-in refuses what the runtime refuses: more than 100 variables, statements over 100 KB, values over 8 MiB, and it binds numbers as doubles", () => {
   const { sql: run } = objectStorage();
 
   expect(() =>
@@ -840,7 +856,12 @@ test("the stand-in refuses what the runtime refuses: more than 100 variables, st
       .toArray(),
   ).toHaveLength(1);
   expect(() => run.exec(`select 1 /*${"a".repeat(100_000)}*/`)).toThrow("statement too long");
-  expect(() => run.exec("select length(?) as n", "a".repeat(2_200_001))).toThrow("too big");
+  expect(() => run.exec("select length(?) as n", "a".repeat(8 * 1024 * 1024 + 1))).toThrow(
+    "too big",
+  );
+  expect(run.exec("select length(?) as n", "a".repeat(8 * 1024 * 1024)).toArray()).toEqual([
+    { n: 8 * 1024 * 1024 },
+  ]);
   expect(
     run.exec("select typeof(?) as number, ?2 as same, typeof(?) as word", 5, 7, true).toArray(),
   ).toEqual([{ number: "real", same: 7, word: "text" }]);
@@ -1089,5 +1110,123 @@ test("a move sees a value whose type differs in the object, which JSON alone rea
     ]);
   } finally {
     await object.stop();
+  }
+});
+
+test("a 409 that isn't the object's word, like Cloudflare's edge sends for its own errors, is an outage, not another hub", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage);
+  const object = served(storage);
+  let edge = true;
+
+  const front = Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      if (edge) {
+        return new Response("<html>error code: 1018</html>", { status: 409 });
+      }
+
+      return await fetch(new URL(new URL(request.url).pathname, object.url), {
+        method: request.method,
+        headers: request.headers,
+        body: await request.text(),
+      });
+    },
+  });
+
+  pointedAt(dir, front.url.origin);
+
+  try {
+    const store = remote(dir, quick);
+    expect(await thrown(store?.claim() ?? never)).toBeInstanceOf(UnreachedError);
+    expect(await thrown(store?.messages.untaken() ?? never)).toBeInstanceOf(UnreachedError);
+    edge = false;
+    await until(async () => (await thrown(store?.claim() ?? never)) === "it didn't throw");
+    expect(await store?.messages.deliver(message)).toBe(true);
+    await store?.synced();
+  } finally {
+    await front.stop(true);
+    await object.stop();
+  }
+});
+
+test("a first claim the network holds back until after its retry never makes a lone hub refuse itself", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage);
+  const object = served(storage);
+  const held: (() => void)[] = [];
+  let holding = true;
+  let heldLanded = false;
+
+  const front = Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      const body = await request.text();
+
+      const pass = async () =>
+        await fetch(new URL(new URL(request.url).pathname, object.url), {
+          method: request.method,
+          headers: request.headers,
+          body,
+        });
+
+      if (holding && new URL(request.url).pathname.endsWith("/claim")) {
+        holding = false;
+        await new Promise<void>((resolve) => {
+          held.push(resolve);
+        });
+
+        const answer = await pass();
+        heldLanded = true;
+
+        return answer;
+      }
+
+      return await pass();
+    },
+  });
+
+  pointedAt(dir, front.url.origin);
+
+  try {
+    const hub = remote(dir, quick);
+    expect(await thrown(hub?.claim() ?? never)).toBeInstanceOf(UnreachedError);
+    await until(async () => (await thrown(hub?.claim() ?? never)) === "it didn't throw");
+    expect(await hub?.messages.deliver(message)).toBe(true);
+
+    for (const release of held) {
+      release();
+    }
+
+    await until(() => heldLanded);
+    expect(
+      await hub?.messages.deliver({ ...message, key: "telegram:-100:43", body: "after" }),
+    ).toBe(true);
+    await hub?.synced();
+  } finally {
+    await front.stop(true);
+    await object.stop();
+  }
+});
+
+test("hex sql reads a query that only names a word like replace or update, and refuses a with that writes", async () => {
+  const object = startedEmpty();
+  const file = new File(join(dir, "file"));
+
+  for (const text of [
+    "select replace('abc', 'a', 'b') as r",
+    "select 1 as update_count",
+    "with x as (select replace('a', 'a', 'b') as r) select r from x",
+  ]) {
+    expect(object.read(sql(text)).length).toBe(1);
+    expect(await file.store.read(text)).toHaveLength(1);
+  }
+
+  for (const text of [
+    "with x as (select 1) delete from messages",
+    "with x as (select 1), y as (select 2) insert into passes (n) select 1 from x",
+  ]) {
+    expect(() => object.read(sql(text))).toThrow("hex sql");
+    expect(await failure(file.store.read(text))).toContain("hex sql");
   }
 });

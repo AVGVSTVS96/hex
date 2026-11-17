@@ -296,11 +296,16 @@ test("a hub that lost hex to another machine stays stopped: hex exits with its c
     "a hub another machine took hex from",
   );
 
-  const running = run({ HEX_STORE_LEASE: "7" });
+  writeFileSync(join(home, ".env"), "TELEGRAM_BOT_TOKEN=test\nHEX_MAIN_THREAD=-100\n");
+  const { PATH, read } = curlThatRecordsWhatGeneralIsTold();
+
+  const running = run({ HEX_STORE_LEASE: "7", PATH });
   expect(await running.exited).toBe(3);
   expect(await new Response(running.stderr).text()).toContain(
     "another machine holds hex now, so its hub stays stopped here",
   );
+  expect(read()).toContain("chat_id=-100");
+  expect(read()).toContain("another machine holds hex now");
   expect(hubs()).toEqual(["start lease=7"]);
   expect(git("rev-parse", "HEAD")).toBe(lost);
   expect(existsSync(join(home, "state/bad"))).toBe(false);
@@ -308,6 +313,46 @@ test("a hub that lost hex to another machine stays stopped: hex exits with its c
   expect(readFileSync(join(BIN, "../systemd/hex.service"), "utf-8")).toMatch(
     /^RestartPreventExitStatus=3$/mu,
   );
+});
+
+test("a second hex on a folder one already runs leaves it be", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  run();
+  await until(() => hubs().length === 1);
+
+  const second = Bun.spawnSync([join(hex, "bin/hex"), "run"]);
+  expect(second.exitCode).toBe(0);
+  expect(second.stderr.toString()).toContain("hex runs here already");
+  await Bun.sleep(500);
+  expect(hubs()).toHaveLength(1);
+});
+
+test("where hex.service runs this folder's hex, a stop and a start go through it, so systemd neither brings hex back nor runs a second", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+
+  const fakes = join(home, "systemd-bin");
+  mkdirSync(fakes);
+  writeFileSync(
+    join(fakes, "systemctl"),
+    `#!/bin/sh\ncase "$*" in\n  "--user show-environment") ;;\n  "--user show -p ExecStart --value hex.service") echo "{ path=${hex}/bin/hex ; argv[]=${hex}/bin/hex run ; }" ;;\n  *) echo "$*" >> "${home}/systemctl" ;;\nesac\n`,
+    { mode: 0o755 },
+  );
+
+  const env = { ...process.env, PATH: `${fakes}:${process.env.PATH}` };
+
+  const told = () =>
+    existsSync(join(home, "systemctl")) ? readFileSync(join(home, "systemctl"), "utf-8") : "";
+
+  expect(Bun.spawnSync([join(hex, "bin/hex"), "start"], { env }).exitCode).toBe(0);
+  expect(told()).toBe("--user start --no-block hex.service\n");
+  await Bun.sleep(500);
+  expect(hubs()).toEqual([]);
+
+  const byHand = run();
+  await until(() => existsSync(join(home, "state/hub.pid")));
+  expect(await Bun.spawn([join(hex, "bin/hex"), "stop"], { env }).exited).toBe(0);
+  expect(told()).toContain("--user stop hex.service");
+  expect(await byHand.exited).toBe(0);
 });
 
 const MOVE_THAT_RUNS_UNTIL_TOLD = `import { appendFileSync, existsSync } from 'fs'

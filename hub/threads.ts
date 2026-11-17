@@ -48,7 +48,7 @@ const FIELDS = Object.values({
 export type Threads = Awaited<ReturnType<typeof openThreads>>;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The app's open threads, from hex.db, and the session each is on. The hub starts only once it can read them (answered), so no save closes threads it never loaded, and each change is saved as it's made, one save after another, so an earlier one never lands last.
+// The app's open threads, from hex.db, and the session each is on. The hub starts only once it can read them (answered), after what it owed the store from before a restart, so no save closes threads it never loaded or puts back what it changed since, and each change is saved as it's made, one save after another, so an earlier one never lands last.
 export async function openThreads({
   app,
   storeDir,
@@ -62,11 +62,11 @@ export async function openThreads({
   hexDir: string;
   link: ((thread: string) => string | undefined) | undefined;
 }) {
-  const listed = await answered(
-    storeDir,
-    `the ${app} hub starts`,
-    async (store) => await store.threads.list({ app, open: true }),
-  );
+  const listed = await answered(storeDir, `the ${app} hub starts`, async (store) => {
+    await owing.settled();
+
+    return await store.threads.list({ app, open: true });
+  });
 
   const saved = new Map<string, Saved>(
     listed.map(({ app: _app, open: _open, link: _link, thread, model, ...known }) => [

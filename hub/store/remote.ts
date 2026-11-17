@@ -31,13 +31,15 @@ export type Away = z.infer<typeof StoreJson>;
 export const at = ({ url, name }: Pick<Away, "url" | "name">, route: string) =>
   new URL(`/${name}/${route}`, url);
 
-const ErrorReply = z.object({ error: z.string() });
+const LostReply = z.object({ error: z.string(), lost: z.literal(true) });
 
-function saidIn(text: string) {
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What the object said when it refused this process's tenure, if this is the object's word: any other 409, like one Cloudflare's edge sends for its own errors, isn't.
+function lostIn(text: string): string | null {
   try {
-    return ErrorReply.parse(JSON.parse(text)).error;
+    return LostReply.parse(JSON.parse(text)).error;
   } catch {
-    return text;
+    return null;
   }
 }
 
@@ -222,6 +224,7 @@ export function remote(dir: string, times = TIMES): (Client & Home) | undefined 
   // The number of the lease a hub runs on, from whatever passes hex between machines, is its own: the sessions it starts outlive it, and write as any other process does.
   const { HEX_STORE_LEASE: lease } = process.env;
   delete process.env.HEX_STORE_LEASE;
+  const claimant = crypto.randomUUID();
   const headers: Asking = { authorization: `Bearer ${away.key}` };
   const socket = watcher(at(away, "watch"), headers, times);
   const elsewhere = word(dir, times);
@@ -244,13 +247,15 @@ export function remote(dir: string, times = TIMES): (Client & Home) | undefined 
       });
     }
 
-    if (response.status === 409) {
-      throw new LostError(saidIn(text));
+    const lostTo = response.status === 409 ? lostIn(text) : null;
+
+    if (lostTo !== null) {
+      throw new LostError(lostTo);
     }
 
     if (
       response.status >= 500 ||
-      [401, 404, 429].includes(response.status) ||
+      [401, 404, 409, 429].includes(response.status) ||
       !text.startsWith("{")
     ) {
       throw new UnreachedError(
@@ -342,7 +347,10 @@ export function remote(dir: string, times = TIMES): (Client & Home) | undefined 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The object takes this process's calls as a hub's once it has given it a tenure of its own.
   const claim = async () => {
-    const asked = lease === undefined || lease === "" ? {} : { lease: Lease.parse(lease) };
+    const asked = {
+      claimant,
+      ...(lease !== undefined && lease !== "" && { lease: Lease.parse(lease) }),
+    };
 
     await inTurn(async () => {
       const { value } = Claimed.parse(JSON.parse(await guarded("claim", JSON.stringify(asked))));

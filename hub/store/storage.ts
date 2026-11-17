@@ -25,8 +25,15 @@ const HomeRow = z
   .optional();
 
 const Claim = z.object({
+  claimant: z.string().min(1).max(100),
   lease: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
 });
+
+const Claimed = z.object({ tenure: z.number() }).optional();
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The claims kept, so one that arrives again (a retry, or a request the network held back) is known by its claimant; older ones go.
+const CLAIMS_KEPT = 100;
 
 const Count = z.object({ n: z.number() });
 const Statements = z.object({ statements: z.array(z.string()) });
@@ -152,6 +159,10 @@ export function recordsIn(storage: Storage, dir = "") {
     "create table if not exists _home (one integer primary key check (one = 1), version integer not null, tenure integer not null default 0, served integer not null default 0, lease integer not null default 0)",
   );
 
+  run(
+    "create table if not exists _claims (claimant text primary key, tenure integer not null unique)",
+  );
+
   for (const column of ["served", "lease"]) {
     if (run("select 1 from pragma_table_info('_home') where name = ?", column).length === 0) {
       run(`alter table _home add column ${column} integer not null default 0`);
@@ -198,21 +209,33 @@ export function recordsIn(storage: Storage, dir = "") {
     },
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // A hub taking over gets the next tenure, so every hub that claimed before it is refused from then on. A lease tool's number, when one passes hex between machines, can't go back: a hub on a lower lease than one seen is refused, one on the same lease (its machine's hub restarted) isn't.
+    // A hub taking over gets the next tenure, so every hub that claimed before it is refused from then on. A process's claim that arrives again gets its tenure again while it still holds hex, and is refused once another has claimed since, so a claim the network held back never takes hex from a later one. A lease tool's number, when one passes hex between machines, can't go back: a hub on a lower lease than one seen is refused, one on the same lease (its machine's hub restarted) isn't. A hub with no lease runs hex outside any lease from then on, so a hex can stop using a lease tool.
     claim(body: string): { tenure: number } | { lost: string } | { empty: string } {
-      const { lease = 0 } = Claim.parse(JSON.parse(body));
+      const { claimant, lease } = Claim.parse(JSON.parse(body));
       const now = home();
 
       if (now === undefined || records === undefined) {
         return { empty: "hex's store is empty: hex store move brings a hex.db into it" };
       }
 
-      if (lease < now.lease) {
+      const before = Claimed.parse(
+        run("select tenure from _claims where claimant = ?", claimant)[0],
+      );
+
+      if (before !== undefined) {
+        return before.tenure === now.tenure
+          ? { tenure: now.tenure }
+          : { lost: `tenure ${before.tenure} no longer holds hex: tenure ${now.tenure} does` };
+      }
+
+      if (lease !== undefined && lease < now.lease) {
         return { lost: `lease ${lease} no longer holds hex: lease ${now.lease} does` };
       }
 
       const tenure = now.tenure + 1;
-      run("update _home set tenure = ?, lease = ?, served = 1", tenure, lease);
+      run("update _home set tenure = ?, lease = ?, served = 1", tenure, lease ?? 0);
+      run("insert into _claims (claimant, tenure) values (?, ?)", claimant, tenure);
+      run("delete from _claims where tenure <= ?", tenure - CLAIMS_KEPT);
 
       return { tenure };
     },
@@ -266,7 +289,7 @@ export function recordsIn(storage: Storage, dir = "") {
 
       try {
         storage.transactionSync(() => {
-          rows = run(text, ...bound);
+          rows = sql.exec(text, ...bound).toArray();
 
           throw new UndoneError();
         });

@@ -129,6 +129,24 @@ export function eachVariable(statement: string, as: (index: number) => string) {
 
 const PRAGMA = /^pragma\s+(?:\w+\s*\.\s*)?(\w+)\s*(\([^()]*\))?$/iu;
 const READS = new Set(["select", "with", "values"]);
+const STATEMENTS = new Set(["select", "values", "insert", "update", "delete", "replace"]);
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What a statement that starts with `with` does once its common tables are named: the first word outside every bracket that begins a statement.
+function mainOf(statement: string) {
+  let depth = 0;
+
+  for (const [token] of statement.matchAll(/[()]|\w+/gu)) {
+    depth += token === "(" ? 1 : token === ")" ? -1 : 0;
+    const word = token.toLowerCase();
+
+    if (depth === 0 && STATEMENTS.has(word)) {
+      return word;
+    }
+  }
+
+  return "";
+}
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A query for `hex sql`, refused unless it only reads: one statement, a select (with or values) or a pragma that reads, either of them explained or not. A home undoes whatever a query writes, but a pragma's setting outlives that.
@@ -155,7 +173,7 @@ export function onlyReading(text: string): string {
         "hex sql can change nothing, so it takes only a pragma that reads, like table_info(<table>)",
       );
     }
-  } else if (!READS.has(first) || /\b(insert|update|delete|replace)\b/iu.test(asked)) {
+  } else if (!READS.has(first) || (first === "with" && !READS.has(mainOf(asked)))) {
     throw new Error("hex sql can change nothing, so it takes a select, or a pragma that reads");
   }
 

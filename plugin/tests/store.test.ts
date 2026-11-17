@@ -119,7 +119,8 @@ echo "$*" >> ${root}/wrangler.log
 echo "token $CLOUDFLARE_API_TOKEN" >> ${root}/wrangler.log
 case $1 in
   secret)
-    [ -e ${root}/keys ] || { echo 'Worker "hex-store" not found.'; exit 1; }
+    [ ! -e ${root}/secret-list-fails ] || { cat ${root}/secret-list-fails; exit 1; }
+    [ -e ${root}/keys ] || { printf '%s\\n\\n%s\\n' '✘ [ERROR] Worker "hex-store" not found.' 'If this is a new Worker, run "wrangler deploy" first to create it.'; exit 1; }
     cat ${root}/keys ;;
   deploy)
     case " $* " in *" --secrets-file "*) cat > ${root}/secrets; echo '[{ "name": "KEY", "type": "secret_text" }]' > ${root}/keys ;; esac
@@ -224,22 +225,31 @@ test("a deploy from a machine with no key, to a Worker that answers to one, is r
   const refused = await run(join(hex, "bin/hex"), "store", "deploy");
   expect(refused.code).toBe(1);
   expect(refused.err).toContain("the Worker answers to a key already");
+
+  writeFileSync(
+    join(root, "secret-list-fails"),
+    "✘ [ERROR] A request to the Cloudflare API failed: the route was not found.\n",
+  );
+
+  const unsure = await run(join(hex, "bin/hex"), "store", "deploy");
+  expect(unsure.code).toBe(1);
+  expect(unsure.err).toContain("the route was not found");
   expect(deploys()).toEqual([]);
   expect(read(join(home, ".env"))).not.toContain("HEX_STORE_KEY");
 }, 60_000);
 
-test("an update deploys nothing over a store that runs code this hex doesn't hold, or that doesn't answer, since it may be newer", async () => {
+test("an update deploys nothing over a store built from a commit made after its own, or one that doesn't answer, and goes over one from a commit a squash merge left out of main", async () => {
   published();
   const before = commit("one");
   pointed();
-  writeFileSync(join(root, "deployed"), `a newer store@${"f".repeat(40)}`);
-  commit("two");
+  writeFileSync(join(root, "deployed"), `a newer store@${"f".repeat(40)}@9999999999`);
+  const incoming = commit("two");
   push();
   git("reset", "-q", "--hard", before);
 
   const newer = await run(join(hex, "bin/update"), "--now");
   expect(newer.code).toBe(1);
-  expect(newer.out).toContain(`runs code from ${"f".repeat(40)}, which this hex doesn't hold`);
+  expect(newer.out).toContain(`was built from a commit made after this one (${"f".repeat(40)}@`);
 
   answering = () => null;
   const silent = await run(join(hex, "bin/update"), "--now");
@@ -247,6 +257,12 @@ test("an update deploys nothing over a store that runs code this hex doesn't hol
   expect(silent.out).toContain("doesn't answer, so nothing deploys over it");
   expect(deploys()).toEqual([]);
   expect(git("rev-parse", "HEAD")).toBe(before);
+
+  answering = (deployed) => deployed;
+  writeFileSync(join(root, "deployed"), `a store from a squashed branch@${"e".repeat(40)}@1000`);
+  expect((await run(join(hex, "bin/update"), "--now")).code).toBe(0);
+  expect(git("rev-parse", "HEAD")).toBe(incoming);
+  expect(deploys()).toHaveLength(1);
 }, 60_000);
 
 test("an update deploys the store the new hex is built with, with the token in the folder's .env, ships once the object hex points at answers as it, and deploys nothing when it already does", async () => {
@@ -266,7 +282,7 @@ test("an update deploys the store the new hex is built with, with the token in t
   expect(more).toEqual([]);
   expect(deployed).toStartWith(`deploy --config ${join(root, "cache")}/hex-check-`);
   expect(deployed).toEndWith(`/.hex/hub/store/wrangler.jsonc --var VERSION:${version}`);
-  expect(version).toEndWith(`@${incoming}`);
+  expect(version).toMatch(new RegExp(`@${incoming}@\\d+$`, "u"));
   expect(read(join(root, "wrangler.log"))).toContain("token from-dotenv");
   expect(existsSync(join(root, "secrets"))).toBe(false);
 

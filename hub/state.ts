@@ -3,7 +3,8 @@ import { connect } from "node:net";
 import { z } from "zod";
 
 import type { HubLine } from "./hub.ts";
-import { open, stateDir, UnreachedError } from "./store.ts";
+import { followed } from "./kept.ts";
+import { MovedError, stateDir, UnreachedError } from "./store.ts";
 import type { NewRow } from "./store.ts";
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER, HEX_BESIDE } = process.env;
@@ -81,9 +82,9 @@ if (answered && stop_hook_active !== true && session_id) {
     (!given(HEX_CHANNEL) || HEX_CHANNEL.startsWith("plugin:t3@"));
 
   try {
-    const said = await open(stateDir()).turns.unanswered(
-      session_id,
-      lastWordsReachTheOwner ? 1 : 0,
+    const said = await followed(
+      stateDir(),
+      async (store) => await store.turns.unanswered(session_id, lastWordsReachTheOwner ? 1 : 0),
     );
 
     if (said.length > 0) {
@@ -109,20 +110,28 @@ let recorded = false;
 
 if (key !== undefined) {
   try {
-    const store = open(stateDir());
-    let took: boolean;
+    const { took, secondCopyTheHubResent } = await followed(stateDir(), async (store) => {
+      let taken: boolean;
 
-    try {
-      took = await store.turns.took(key, session_id, busy, at);
-      recorded = took && !!session_id;
-    } catch (error) {
-      console.error(`hex couldn't record this turn: ${String(error)}`);
-      const mine = (await store.messages.get(key))?.taken?.by === session_id;
-      took = mine || (await store.messages.take(key, session_id));
-      recorded = mine;
-    }
+      try {
+        taken = await store.turns.took(key, session_id, busy, at);
+        recorded = taken && !!session_id;
+      } catch (error) {
+        if (error instanceof MovedError) {
+          throw error;
+        }
 
-    const secondCopyTheHubResent = !took && (await store.messages.get(key)) !== null;
+        console.error(`hex couldn't record this turn: ${String(error)}`);
+        const mine = (await store.messages.get(key))?.taken?.by === session_id;
+        taken = mine || (await store.messages.take(key, session_id));
+        recorded = mine;
+      }
+
+      return {
+        took: taken,
+        secondCopyTheHubResent: !taken && (await store.messages.get(key)) !== null,
+      };
+    });
 
     if (took) {
       leftForTheHubToTake = undefined;
@@ -139,12 +148,14 @@ if (session_id && !recorded) {
   try {
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // bin/quiet trusts this record over Claude Code's busy status once it says the turn ended, so an update lands between turns.
-    await open(stateDir()).turns.recorded(
-      session_id,
-      busy,
-      at,
-      answered ? (background ? "waitsOnAgents" : "handled") : undefined,
-    );
+    await followed(stateDir(), async (store) => {
+      await store.turns.recorded(
+        session_id,
+        busy,
+        at,
+        answered ? (background ? "waitsOnAgents" : "handled") : undefined,
+      );
+    });
   } catch (error) {
     console.error(`hex couldn't record this turn: ${String(error)}`);
   }
@@ -167,20 +178,21 @@ if (typedInTheTerminal !== undefined && typedInTheTerminal !== "" && session_id)
     author,
     body: typedInTheTerminal,
     meta: { session: session_id },
+    at,
   };
 
   try {
-    const store = open(stateDir());
+    await followed(stateDir(), async (store) => {
+      const theHubStartedTheSessionWithIt =
+        author === "owner" &&
+        (await store.messages.said(row.to, 20)).some(
+          (said) => said.from === "hub" && said.body.trim() === typedInTheTerminal.trim(),
+        );
 
-    const theHubStartedTheSessionWithIt =
-      author === "owner" &&
-      (await store.messages.said(row.to, 20)).some(
-        (said) => said.from === "hub" && said.body.trim() === typedInTheTerminal.trim(),
-      );
-
-    if (!theHubStartedTheSessionWithIt) {
-      await store.messages.deliver(row, session_id);
-    }
+      if (!theHubStartedTheSessionWithIt) {
+        await store.messages.deliver(row, session_id);
+      }
+    });
   } catch (error) {
     if (error instanceof UnreachedError) {
       owed.said = [{ row, by: session_id }];

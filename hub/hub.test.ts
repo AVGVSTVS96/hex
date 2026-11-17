@@ -5934,7 +5934,7 @@ test("what the hub owes hex's store outlives a restart during the outage, so hex
   expect(keysKept()).toEqual(["telegram:1:67", "telegram:reply-67"]);
 });
 
-test("the owner's words held for a turn that ends while hex's store can't take anything go to the session once it can", async () => {
+test("the owner's words held for a turn that ends while hex's store can't take anything go on as it ends, before newer words, and only once", async () => {
   await start({
     registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
     agents: [{ sessionId: SESSION, pid: 42 }],
@@ -5948,15 +5948,102 @@ test("the owner's words held for a turn that ends while hex's store can't take a
     key: "1:68",
   });
   await settled();
+  expect(heard(received)).toEqual([]);
 
   outage = "unreached";
   await send({ type: "state", thread: "chat:7", busy: false });
-  await settled();
-  expect(heard(received).map((turn) => turn.content)).toEqual([]);
+  await hub.deliver("chat:7", "Desk anchors", {
+    author: "owner",
+    content: "newer",
+    meta: {},
+    key: "1:69",
+  });
+  await until(() => received.length === 2);
+  expect(heard(received).map((turn) => turn.content)).toEqual(["held", "newer"]);
 
   outage = undefined;
   await hub.synced();
-  await until(() => received.length);
   await settled();
-  expect(heard(received).map((turn) => turn.content)).toEqual(["held"]);
+  expect(heard(received).map((turn) => turn.content)).toEqual(["held", "newer"]);
+  expect(file(dir).messages.get("telegram:1:68")?.body).toBe("held");
+});
+
+test("a message too long for hex's store keeps as much of it as the store takes, under its key", async () => {
+  const { received } = await onCall();
+  refusingOver = 7_500_000;
+  const long = "x".repeat(8_000_000);
+
+  await hub.deliver("chat:7", "Desk anchors", { ...message, content: long, key: "1:70" });
+  await until(() => heard(received).some(({ content }) => content?.length === long.length));
+  await hub.synced();
+
+  const kept = file(dir).messages.get("telegram:1:70");
+  expect(kept?.meta?.refused).toBe("cut");
+  expect(kept?.body.startsWith("x".repeat(7_000_000))).toBe(true);
+  expect(kept?.body).toContain("so it keeps only the part above");
+});
+
+test("a hub restarted while hex's store can't take anything keeps the thread changes it owed, rather than the store's older ones", async () => {
+  await onCall();
+  outage = "unreached";
+  hub.register("chat:9", "New topic");
+  hub.configure("chat:7", { model: "sonnet" });
+  await settled();
+  hub.close();
+  hangUpAll();
+
+  const restarting = start();
+  await Bun.sleep(300);
+  outage = undefined;
+  await restarting;
+  await hub.synced();
+  await settled();
+  expect(registry()).toMatchObject({
+    "chat:7": { name: "Desk anchors", model: "sonnet" },
+    "chat:9": { name: "New topic" },
+  });
+});
+
+test("a hub whose spool can't be written goes on from memory, so a full disk never leaves hex deaf", async () => {
+  const { received } = await onCall();
+  mkdirSync(join(dir, "owed.telegram.json.next"));
+  outage = "unreached";
+
+  expect(await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:71" })).toBe(true);
+  await until(() => heard(received).some(({ content }) => content === "hi"));
+  expect(await settles(hub.synced())).toMatchObject({ status: "rejected" });
+
+  outage = undefined;
+  await hub.synced();
+  expect(keysKept()).toEqual(["telegram:1:71"]);
+});
+
+test("a turn's last words a hook handed the hub during an outage keep the time it said them, so the turn's memory pass sees them", async () => {
+  const { send } = await onCall();
+  outage = "unreached";
+  const spokeAt = new Date().toISOString();
+  await Bun.sleep(5);
+  const turnEnded = new Date().toISOString();
+
+  const words = {
+    key: "terminal:2",
+    to: "chat:7",
+    from: "terminal",
+    author: "hex" as const,
+    body: "Done.",
+    meta: { session: SESSION },
+    at: spokeAt,
+  };
+
+  await send({ type: "owed", thread: "chat:7", said: [{ row: words, by: SESSION }] });
+  await settled();
+  await Bun.sleep(20);
+
+  outage = undefined;
+  await hub.synced();
+  expect(
+    file(dir)
+      .messages.observe(SESSION, turnEnded, "chat:7")
+      .map(({ key }) => key),
+  ).toEqual(["terminal:2"]);
 });

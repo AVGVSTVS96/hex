@@ -8,7 +8,7 @@ import { z } from "zod";
 
 import { File, messagesSince, open } from "../store.ts";
 import { until } from "../until.ts";
-import { UnreachedError } from "./errors.ts";
+import { LostError, RefusedError, UnreachedError } from "./errors.ts";
 import type { NewRow } from "./messages.ts";
 import { move } from "./move.ts";
 import { remote } from "./remote.ts";
@@ -76,16 +76,18 @@ async function runtime(vars: Record<string, string>) {
 const Answer = z.object({ value: z.unknown().optional(), error: z.string().optional() });
 const Version = z.object({ version: z.string().nullable(), migrations: z.number().nullable() });
 
-const sql = async (text: string) =>
+const sqlIn = async (name: string, text: string, bound: unknown[] = []) =>
   Answer.parse(
     await (
-      await fetch(`${url}/hex/sql`, {
+      await fetch(`${url}/${name}/sql`, {
         method: "POST",
         headers: auth,
-        body: JSON.stringify({ text, bound: [] }),
+        body: JSON.stringify({ text, bound }),
       })
     ).json(),
   );
+
+const sql = async (text: string) => await sqlIn("hex", text);
 
 const version = async () =>
   Version.parse(await (await fetch(`${url}/hex/version`, { headers: auth })).json());
@@ -344,4 +346,175 @@ test("a store whose object is gone fails at once after the first call, and synce
   expect(await thrown(far?.messages.untaken())).toBeInstanceOf(UnreachedError);
   expect(performance.now() - started).toBeLessThan(20);
   expect(await thrown(far?.synced())).toBeInstanceOf(UnreachedError);
+});
+
+const progress: string[] = [];
+
+const quiet = (line: string) => {
+  progress.push(line);
+};
+
+async function movedInto(name: string) {
+  const dir = join(scratch, `${name}-state`);
+  new File(dir).db.close();
+  await move(dir, { url, name, key: KEY }, quiet);
+
+  return dir;
+}
+
+const MIB = 1024 * 1024;
+
+test("the store says which no it gave: a refused call is refused, a wrong key or an empty object is unreached", async () => {
+  const store = remote(await movedInto("refusals"), QUICK);
+  const wrong = join(scratch, "wrong-key");
+  mkdirSync(wrong);
+  writeFileSync(
+    join(wrong, "store.json"),
+    JSON.stringify({ url, name: "refusals", key: `${KEY} but not it` }),
+  );
+
+  const empty = join(scratch, "empty");
+  mkdirSync(empty);
+  writeFileSync(join(empty, "store.json"), JSON.stringify({ url, name: "nobody", key: KEY }));
+
+  expect(await thrown(store?.messages.deliver({ ...message, key: "42" }))).toBeInstanceOf(
+    RefusedError,
+  );
+  await store?.synced();
+  expect(await thrown(remote(wrong, QUICK)?.messages.untaken())).toBeInstanceOf(UnreachedError);
+  expect(await thrown(remote(empty, QUICK)?.messages.untaken())).toBeInstanceOf(UnreachedError);
+}, 60_000);
+
+test("a tenure the object didn't give out gets the object's 409, and never wedges it", async () => {
+  const dir = await movedInto("tenures");
+
+  for (const insane of ["1e999", "Infinity", "abc", "-1"]) {
+    const answer = await fetch(`${url}/tenures/call`, {
+      method: "POST",
+      headers: { ...auth, "hex-tenure": insane },
+      body: JSON.stringify({ domain: "messages", method: "untaken", args: [] }),
+    });
+
+    expect(answer.status).toBe(409);
+    expect(await answer.json()).toMatchObject({ lost: true });
+  }
+
+  expect((await fetch(`${url}/tenures/version`, { headers: auth })).status).toBe(200);
+  expect(await remote(dir, QUICK)?.messages.untaken()).toEqual([]);
+}, 60_000);
+
+test("a hub that claims refuses every hub that claimed before it, a lease never goes back, and a hook is never refused", async () => {
+  const dir = await movedInto("claims");
+
+  const lease = (value?: string) => {
+    if (value === undefined) {
+      delete process.env.HEX_STORE_LEASE;
+    } else {
+      process.env.HEX_STORE_LEASE = value;
+    }
+
+    return remote(dir, QUICK);
+  };
+
+  const first = lease("6");
+  const second = lease("6");
+  const stale = lease("5");
+  const plain = lease();
+  const hook = lease();
+
+  await first?.claim();
+  expect(await first?.messages.deliver(message)).toBe(true);
+  await second?.claim();
+  expect(
+    await thrown(first?.messages.deliver({ ...message, key: "telegram:-100:43", body: "late" })),
+  ).toBeInstanceOf(LostError);
+  expect(await thrown(first?.synced())).toBeInstanceOf(LostError);
+  expect(await second?.messages.get("telegram:-100:43")).toBeNull();
+  expect(await thrown(stale?.claim())).toBeInstanceOf(LostError);
+  expect(await hook?.messages.deliver({ ...message, key: "telegram:-100:44", body: "hook" })).toBe(
+    true,
+  );
+  await plain?.claim();
+  expect(await thrown(second?.messages.untaken())).toBeInstanceOf(LostError);
+  await lease("1")?.claim();
+}, 60_000);
+
+test("hex sql reads what only reads, and nothing it's given changes the object's settings", async () => {
+  for (const text of [
+    "explain pragma ignore_check_constraints = on",
+    ";pragma recursive_triggers = 1",
+    "explain query plan pragma case_sensitive_like = 1",
+    "delete from _home",
+    "with x as (select 1) delete from _home",
+  ]) {
+    expect((await sql(text)).error).toContain("hex sql");
+  }
+
+  expect(await sql("pragma ignore_check_constraints")).toEqual({
+    value: [{ ignore_check_constraints: 0 }],
+  });
+  expect(await sql("pragma recursive_triggers")).toEqual({ value: [{ recursive_triggers: 0 }] });
+  expect(await sql("select replace('abc', 'a', 'b') as r")).toEqual({ value: [{ r: "bbc" }] });
+});
+
+test("whole numbers keep their type in the object, a late message keeps its time, and the log reads through its index", async () => {
+  const store = remote(await movedInto("records"), QUICK);
+  const at = "2026-11-17T10:00:00.000Z";
+
+  await store?.questions.ask({
+    app: "telegram",
+    thread: "-100:7",
+    message: 50,
+    text: "Ship?",
+    options: ["Yes"],
+  });
+  await store?.messages.deliver({ ...message, at }, "s-9");
+
+  expect(await sqlIn("records", "select typeof(message) as type from questions")).toEqual({
+    value: [{ type: "integer" }],
+  });
+  expect((await store?.messages.get(message.key))?.taken?.at).toBe(at);
+  expect(
+    JSON.stringify(
+      await sqlIn(
+        "records",
+        "explain query plan select * from messages where (at, n) > ('', 0) order by at, n limit 500",
+      ),
+    ),
+  ).toContain("messages_in_time");
+}, 60_000);
+
+test("the object keeps a value or row of 8 MiB and refuses one past it, as the stand-in does", async () => {
+  const store = remote(await movedInto("sizes"), { ...QUICK, answerWithin: 60_000 });
+  const length = "select length(?) as n";
+
+  expect(await sqlIn("sizes", length, ["a".repeat(8 * MIB)])).toEqual({ value: [{ n: 8 * MIB }] });
+  expect((await sqlIn("sizes", length, ["a".repeat(8 * MIB + 64 * 1024)])).error).toContain(
+    "too big",
+  );
+  expect(
+    await store?.messages.deliver({
+      ...message,
+      key: "telegram:-100:8",
+      body: "a".repeat(8 * MIB - 1024),
+    }),
+  ).toBe(true);
+  expect(
+    await thrown(
+      store?.messages.deliver({
+        ...message,
+        key: "telegram:-100:9",
+        body: "a".repeat(8 * MIB + 64 * 1024),
+      }),
+    ),
+  ).toBeInstanceOf(RefusedError);
+}, 120_000);
+
+test("a process that finds the object not answering tells the next, which fails at once", async () => {
+  const dir = pointedAt("told", `http://127.0.0.1:${await freePort()}`);
+  expect(await thrown(remote(dir, QUICK)?.clock.now())).toBeInstanceOf(UnreachedError);
+
+  const started = performance.now();
+  expect(await thrown(remote(dir, QUICK)?.clock.now())).toBeInstanceOf(UnreachedError);
+  expect(performance.now() - started).toBeLessThan(20);
 });

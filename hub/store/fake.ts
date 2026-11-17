@@ -20,11 +20,10 @@ const REFUSED: [RegExp, string][] = [
   [/^\s*(attach|detach|vacuum)\b/iu, "not authorized: SQLITE_AUTH"],
 ];
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The runtime's limits, measured on it: 100 variables in a statement, 100,000 bytes of statement, and 2,200,000 bytes in a value or a row.
+// The runtime's limits, as Cloudflare states them (https://developers.cloudflare.com/durable-objects/platform/limits/) and as the runtime hex deploys with keeps them: 100 variables in a statement, 100,000 bytes of statement, and 8 MiB in a value or a row.
 const MOST_VARIABLES = 100;
 const LONGEST_STATEMENT = 100_000;
-const LONGEST_ROW = 2_200_000;
+const LONGEST_ROW = 8 * 1024 * 1024;
 
 const ILLEGAL =
   "Illegal invocation: function called with incorrect `this` reference. See https://developers.cloudflare.com/workers/observability/errors/#illegal-invocation-errors for details.";

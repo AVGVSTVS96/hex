@@ -139,7 +139,12 @@ test("what a session's hooks can't keep while hex's store is unreachable goes to
     const owed = lines.flatMap((line) => Owed.safeParse(JSON.parse(line)).data?.said ?? []);
 
     expect(
-      owed.map(({ row: { key, ...row }, by }) => [key.startsWith("terminal:"), row, by]),
+      owed.map(({ row: { key, at, ...row }, by }) => [
+        key.startsWith("terminal:") &&
+          (z.string().safeParse(at).data ?? "9") <= new Date().toISOString(),
+        row,
+        by,
+      ]),
     ).toEqual([
       [
         true,

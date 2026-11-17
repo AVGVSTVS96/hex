@@ -13,7 +13,11 @@ const NAME = /^[a-z0-9][a-z0-9-]{0,62}$/u;
 
 type Version = { version: string | null; migrations: number | null };
 
-const json = (body: Reply | Version, status = 200) => Response.json(body, { status });
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Cloudflare's own edge answers 409 for some of its errors too (1001, 1004, 1018), so only the object's word, `lost`, says another hub holds hex.
+type Lost = { error: string; lost: true };
+
+const json = (body: Reply | Version | Lost, status = 200) => Response.json(body, { status });
 const bytes = new TextEncoder();
 
 const digest = async (text: string) =>
@@ -75,14 +79,14 @@ export class Records extends DurableObject<Env> {
         return "tenure" in claimed
           ? json({ value: claimed.tenure })
           : "lost" in claimed
-            ? json({ error: claimed.lost }, 409)
+            ? json({ error: claimed.lost, lost: true }, 409)
             : json({ error: claimed.empty, every: true }, 503);
       }
 
       const lost = records.lostTo(request.headers.get("hex-tenure") ?? undefined);
 
       if (lost !== undefined) {
-        return json({ error: lost }, 409);
+        return json({ error: lost, lost: true }, 409);
       }
 
       if (route === "call") {

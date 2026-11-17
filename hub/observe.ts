@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import * as claude from "./claude.ts";
+import { followed } from "./kept.ts";
 import { cut, holds, keysOf, owners, problems, quotesOf, verdict } from "./notes.ts";
 import { hexDir, open, replied, shown, stateDir, UnreachedError } from "./store.ts";
 import type { NewRow, Row, Store } from "./store.ts";
@@ -452,7 +453,9 @@ export async function queue(state: string, turn: Pass) {
   }
 
   try {
-    await open(state).passes.wait(turn);
+    await followed(state, async (store) => {
+      await store.passes.wait(turn);
+    });
     const observeLog = openSync(join(state, "observe.log"), "a");
 
     try {
@@ -499,10 +502,11 @@ export async function ended(state: string, session: string, last?: string): Prom
       author: "hex",
       body: answer,
       meta: { session, ...(heldByAnotherApp && { unsent: "true" }) },
+      at: new Date().toISOString(),
     };
 
     try {
-      await open(state).messages.deliver(row, session);
+      await followed(state, async (store) => await store.messages.deliver(row, session));
     } catch (error) {
       process.stderr.write(`hex couldn't keep this turn's answer: ${String(error)}\n`);
 

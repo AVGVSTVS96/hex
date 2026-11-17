@@ -21,7 +21,7 @@ import { failedStarts } from "./failing.ts";
 import type { Failed } from "./failing.ts";
 import { sessionFiles } from "./files.ts";
 import { holding } from "./holds.ts";
-import { keeping, landed } from "./kept.ts";
+import { keeping, landed, OwedRow } from "./kept.ts";
 import type { Owing } from "./kept.ts";
 import { STARTUP } from "./loaded.ts";
 import { endpoint } from "./mcp.ts";
@@ -126,20 +126,14 @@ const HubRequestLine = z.discriminatedUnion("type", [
     to: z.string(),
     where: z.string().optional(),
   }),
+  z.object({ type: z.literal("tookHeld"), thread: z.string(), keys: z.array(z.string()) }),
   z.object({
     type: z.literal("owed"),
     thread: z.string(),
     said: z
       .array(
         z.object({
-          row: z.object({
-            key: z.string(),
-            to: z.string(),
-            from: z.string(),
-            author: z.custom<Author>(isAuthor),
-            body: z.string(),
-            meta: z.record(z.string(), z.string()).default({}),
-          }),
+          row: OwedRow,
           by: z.string(),
         }),
       )
@@ -610,15 +604,21 @@ export async function startHub({
   const plugin = channel.replace(/^plugin:/u, "");
   const path = `/${plugin.split("@")[0]}`;
   const app = path.slice(1);
+  let started = false;
 
   const owing = keeping(storeDir, {
     spool: join(stateDir, `owed.${app}.json`),
-    letGo: heldLetGo,
+    letGo: (thread, rows) => {
+      if (started) {
+        heldLetGo(thread, rows);
+      }
+    },
     queue: (turn) => queue(storeDir, turn),
   });
 
   const { kept, must } = owing;
   const threads = await openThreads({ app, storeDir, owing, hexDir, link });
+  started = true;
   const turns = sessionTurns({ overdue: (thread) => void letHeldGo(thread) });
   const waiting = messagesWaiting({ runs, kept, waits });
 
@@ -1152,6 +1152,8 @@ export async function startHub({
 
     void (async () => {
       if (await kept((store) => store.messages.hold(key, session), false)) {
+        heldHere.set(thread, [...(heldHere.get(thread) ?? []), message]);
+
         return;
       }
 
@@ -1170,12 +1172,17 @@ export async function startHub({
   const releasing = new Map<string, Promise<unknown>>();
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // What a turn's end let go goes on: as it ends, or once the store answers again when it ended in an outage.
+  // The owner's words this hub had the store hold for a turn, so a turn that ends while the store can't let them go still gives them first, from memory (goneOnFromMemory), before anything that came after them.
+  const heldHere = new Map<string, Message[]>();
+  const goneOnFromMemory = new Set<string>();
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // What a turn's end let go goes on: as it ends, or once the store answers again when it ended in an outage, less what went on from memory meanwhile.
   function heldLetGo(thread: string, rows: Row[]) {
     const name = threads.get(thread)?.name;
 
-    if (name !== undefined) {
-      for (const row of rows) {
+    for (const row of rows) {
+      if (!goneOnFromMemory.delete(row.key) && name !== undefined) {
         forward(thread, name, toMessageWithKeyFirstForTheHook(row), true);
       }
     }
@@ -1184,9 +1191,19 @@ export async function startHub({
   async function letHeldGo(thread: string) {
     const { promise, resolve } = Promise.withResolvers();
     releasing.set(thread, promise);
+    const remembered = heldHere.get(thread) ?? [];
+    heldHere.delete(thread);
 
     try {
       await must({ kind: "letHeldGo", thread }, false);
+      const name = threads.get(thread)?.name;
+
+      if (owing.owes({ kind: "letHeldGo", thread }) && name !== undefined) {
+        for (const message of remembered) {
+          goneOnFromMemory.add(message.meta.key ?? "");
+          forward(thread, name, message, true);
+        }
+      }
     } finally {
       if (releasing.get(thread) === promise) {
         releasing.delete(thread);
@@ -1777,6 +1794,16 @@ export async function startHub({
           ...(request.key !== undefined && { key: request.key }),
           author: request.author,
         });
+
+        return;
+      }
+
+      case "tookHeld": {
+        const keys = new Set(request.keys);
+        heldHere.set(
+          request.thread,
+          (heldHere.get(request.thread) ?? []).filter(({ meta }) => !keys.has(meta.key ?? "")),
+        );
 
         return;
       }
