@@ -302,7 +302,7 @@ case "${1:-}" in
       else
         # The key goes up only to a Worker that answers to none yet, so no machine that has no key locks out the ones
         # that use it.
-        keys=$($wrangler secret list --config "$config" --format json 2>&1) || case $keys in *10007*) keys= ;; *) printf '%s\n' "$keys" >&2; exit 1 ;; esac
+        keys=$($wrangler secret list --config "$config" --format json 2>&1) || case $keys in *"not found"*|*10007*) keys= ;; *) printf '%s\n' "$keys" >&2; exit 1 ;; esac
         if printf %s "$keys" | tr -d ' \n' | grep -q '"name":"KEY"'; then
           key=${HEX_STORE_KEY:-}
           [ -n "$key" ] || { echo "the Worker answers to a key already: put HEX_STORE_KEY from the .env of the machine that made it in this one's, or copy its state/store.json" >&2; exit 1; }

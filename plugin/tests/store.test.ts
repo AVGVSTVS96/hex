@@ -119,7 +119,7 @@ echo "$*" >> ${root}/wrangler.log
 echo "token $CLOUDFLARE_API_TOKEN" >> ${root}/wrangler.log
 case $1 in
   secret)
-    [ -e ${root}/keys ] || { echo "This Worker does not exist on your account. [code: 10007]"; exit 1; }
+    [ -e ${root}/keys ] || { echo 'Worker "hex-store" not found.'; exit 1; }
     cat ${root}/keys ;;
   deploy)
     case " $* " in *" --secrets-file "*) cat > ${root}/secrets; echo '[{ "name": "KEY", "type": "secret_text" }]' > ${root}/keys ;; esac
