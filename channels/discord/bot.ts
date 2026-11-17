@@ -1144,7 +1144,7 @@ function serve(token: string) {
       return;
     }
 
-    const answered = hub.deliver(
+    const answered = await hub.deliver(
       thread,
       hub.name(thread) ?? thread,
       {
@@ -1160,7 +1160,7 @@ function serve(token: string) {
           answered_in: answeredIn(via),
         },
       },
-      () => ledger.answered(thread, message, label, via),
+      ledger.answer(thread, message, label, via),
     );
 
     if (answered) {
@@ -1191,7 +1191,7 @@ function serve(token: string) {
 
     const taken = question.answer?.label;
 
-    const reopened = filled(taken)
+    const reopened = await (filled(taken)
       ? hub.deliver(
           thread,
           hub.name(thread) ?? thread,
@@ -1206,9 +1206,9 @@ function serve(token: string) {
               [isPoll(question) ? "poll_message_id" : "button_message_id"]: String(message),
             },
           },
-          () => ledger.reopened(thread, message),
+          ledger.reopen(thread, message),
         )
-      : ledger.reopened(thread, message);
+      : ledger.reopened(thread, message));
 
     if (reopened) {
       await draw(thread, message);
@@ -1682,7 +1682,7 @@ function serve(token: string) {
       },
     };
 
-    hub.deliver(ch.id, nameOf(ch), message);
+    await hub.deliver(ch.id, nameOf(ch), message);
     ledger.heard(ch.id, msg.id, message.content, message.meta.reply_to_message_id);
   }
 
@@ -1715,7 +1715,7 @@ function serve(token: string) {
 
     const who = user.partial ? await user.fetch() : user;
     const emoji = reaction.emoji.toString();
-    hub.deliver(ch.id, nameOf(ch), {
+    await hub.deliver(ch.id, nameOf(ch), {
       author: "owner",
       content: `(${removed ? "reaction removed" : "reaction"}: ${emoji})`,
       meta: {
@@ -1745,7 +1745,7 @@ function serve(token: string) {
     }
 
     void ledger.deleted(ch.id, msg.id);
-    hub.deliver(ch.id, nameOf(ch), {
+    await hub.deliver(ch.id, nameOf(ch), {
       author: "other",
       content: "(deleted a message)",
       meta: {
@@ -1784,7 +1784,7 @@ function serve(token: string) {
 
     const vote = msg.poll.answers.get(answer.id)?.text ?? "";
     const who = await client.users.fetch(userId);
-    hub.deliver(
+    await hub.deliver(
       ch.id,
       nameOf(ch),
       {
@@ -1801,11 +1801,11 @@ function serve(token: string) {
           poll: msg.poll.question.text ?? "",
         },
       },
-      () => {
+      (tx) => {
         if (!removed) {
-          ledger.answered(ch.id, msg.id, vote, "discord", true);
+          ledger.answer(ch.id, msg.id, vote, "discord", true)(tx);
         } else if (questionAt(ch.id, msg.id)?.answer?.label === vote) {
-          ledger.reopened(ch.id, msg.id);
+          ledger.reopen(ch.id, msg.id)(tx);
         }
 
         return true;
@@ -1821,7 +1821,7 @@ function serve(token: string) {
     message: string,
   ) {
     const question = questionAt(ch.id, message);
-    hub.deliver(
+    await hub.deliver(
       ch.id,
       nameOf(ch),
       {
@@ -1836,7 +1836,7 @@ function serve(token: string) {
           button_message_id: message,
         },
       },
-      question && (() => ledger.answered(ch.id, message, label, "discord")),
+      question && ledger.answer(ch.id, message, label, "discord"),
     );
 
     if (question !== undefined) {

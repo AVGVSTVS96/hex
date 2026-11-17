@@ -176,7 +176,7 @@ if (import.meta.main) {
       const store = open(stateDir());
 
       if (source === "compact" || source === "clear") {
-        store.seen.unshow(session, "tasks");
+        await store.seen.unshow(session, "tasks");
       }
 
       const worksFor = nonEmpty(process.env.HEX_THREAD) ?? served();
@@ -206,7 +206,7 @@ if (import.meta.main) {
           : "";
 
       if (before === null ? record !== last : diff !== "") {
-        store.seen.show(session, "tasks", record);
+        await store.seen.show(session, "tasks", record);
         console.log(out);
       }
     }

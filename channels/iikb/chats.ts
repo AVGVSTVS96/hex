@@ -217,10 +217,10 @@ const photoMeta = (photos: Photo[]) =>
           .join("; "),
       };
 
-export function send(chat: string, text: string, id: string, photos: Photo[] = []) {
+export async function send(chat: string, text: string, id: string, photos: Photo[] = []) {
   const { app, thread } = placeOf(chat);
 
-  const taken = say(app, thread, {
+  const taken = await say(app, thread, {
     content: content(text, photos.length),
     key: `iikb-${id}`,
     meta: { user: "iikb", ts: new Date().toISOString(), ...photoMeta(photos) },
@@ -297,7 +297,7 @@ async function route(
     return status(502, UNREACHABLE);
   }
 
-  send(chat, text, id, await keep(photos, id, files));
+  await send(chat, text, id, await keep(photos, id, files));
   await store.synced();
 
   return status(204);

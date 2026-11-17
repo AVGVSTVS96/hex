@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
 import { clause, found, now, TextOrAbsent } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Mode, Written, Write } from "./db.ts";
 import { AuthorColumn, sent, spoken } from "./messages.ts";
 import type { Author, Messages } from "./messages.ts";
 
@@ -102,18 +102,26 @@ function toLine(row: StoredTask): Omit<Task, "words"> {
   };
 }
 
-export class Tasks {
+export class Tasks<M extends Mode = "queued"> {
   private readonly db: Database;
-  private readonly write: Write;
-  private readonly messages: Messages;
+  private readonly write: Write<M>;
+  private readonly messages: Messages<"tx">;
 
-  constructor({ db, write }: Core, messages: Messages) {
+  constructor({ db, write }: Core<M>, messages: Messages<"tx">) {
     this.db = db;
     this.write = write;
     this.messages = messages;
   }
 
-  create({ title, message, quote, owner, status = "open", project, doneWhen }: NewTask): Task {
+  create({
+    title,
+    message,
+    quote,
+    owner,
+    status = "open",
+    project,
+    doneWhen,
+  }: NewTask): Written<M, Task> {
     const line = oneLine(title);
 
     if (line === "") {
@@ -134,7 +142,7 @@ export class Tasks {
     });
   }
 
-  addWords(id: string, message: string, quote?: string): Task {
+  addWords(id: string, message: string, quote?: string): Written<M, Task> {
     return this.write(() => {
       const live = this.live(id);
       this.quote(live, message, quote);
@@ -143,7 +151,7 @@ export class Tasks {
     });
   }
 
-  requote(id: string, message: string, quote: string): Task {
+  requote(id: string, message: string, quote: string): Written<M, Task> {
     return this.write(() => {
       const live = this.live(id);
       const said = this.messages.get(message);
@@ -206,7 +214,7 @@ export class Tasks {
     });
   }
 
-  edit(id: string, change: TaskChange): Task {
+  edit(id: string, change: TaskChange): Written<M, Task> {
     const title = change.title === undefined ? undefined : oneLine(change.title);
 
     if (title === "") {
@@ -254,7 +262,7 @@ export class Tasks {
     });
   }
 
-  addAgents(id: string, agents: string[], thread?: string): Task {
+  addAgents(id: string, agents: string[], thread?: string): Written<M, Task> {
     return this.write(() => {
       const short = agents.find((agent) => !/^[\w-]{8,}$/u.test(agent));
 
@@ -317,7 +325,7 @@ export class Tasks {
     );
   }
 
-  merge(into: string, from: string): Task {
+  merge(into: string, from: string): Written<M, Task> {
     return this.write(() => {
       if (number(into) === number(from)) {
         throw new Error(`${into} can't be merged into itself`);

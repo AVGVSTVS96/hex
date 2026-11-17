@@ -77,7 +77,7 @@ export function restarts(
       return;
     }
 
-    store.messages.deliver({
+    void store.messages.deliver({
       key: `restarts:${day}`,
       to: besideOf(main),
       from: "restarts",

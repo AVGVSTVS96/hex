@@ -349,7 +349,7 @@ async function update(fields: Omit<Update, "update_id">) {
 
 beforeAll(async () => {
   writeFileSync(join(state, "access.json"), JSON.stringify({ allowFrom: [String(OWNER)] }));
-  open(state).threads.keep("telegram", {
+  await open(state).threads.keep("telegram", {
     [DESK]: { name: "desk" },
     [String(OWNER)]: { name: "Victor" },
     [`${FORUM}:6`]: { name: "notes" },
@@ -1126,7 +1126,7 @@ test("a message no session has read shows it waits, until a session takes it", a
     () => notes.received,
   );
 
-  open(state).messages.take(handed.meta.key ?? "", "notes-session");
+  await open(state).messages.take(handed.meta.key ?? "", "notes-session");
   expect(
     await called(
       "setMessageReaction",
@@ -1191,8 +1191,8 @@ test("a session's own reaction stays once the message it took stops waiting, and
   );
 
   await topic.call("react", { message_id: String(reacted.message_id), emoji: "🔥" });
-  open(state).messages.take(first.meta.key ?? "", "topic-session");
-  open(state).messages.take(second.meta.key ?? "", "topic-session");
+  await open(state).messages.take(first.meta.key ?? "", "topic-session");
+  await open(state).messages.take(second.meta.key ?? "", "topic-session");
   await until(
     () =>
       reactionsOn(plain.message_id).at(-1) === "👀" && reactionsOn(plain.message_id).length === 3,

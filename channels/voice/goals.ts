@@ -130,7 +130,7 @@ export class Goals extends Changes {
     );
   }
 
-  undo(id: string) {
+  async undo(id: string) {
     const was = this.undos.get(id);
 
     if (was === undefined) {
@@ -148,7 +148,7 @@ export class Goals extends Changes {
 
     const store = open(this.state);
 
-    const task = store.tasks.edit(id, {
+    const task = await store.tasks.edit(id, {
       status: was.status,
       ...(was.proof !== undefined && { proof: was.proof }),
     });
@@ -176,7 +176,7 @@ export class Goals extends Changes {
     return this.view.goals.find((goal) => goal.id === id)?.run;
   }
 
-  private change(id: string, status: Task["status"], told: (task: Task) => string) {
+  private async change(id: string, status: Task["status"], told: (task: Task) => string) {
     const store = open(this.state);
     const before = store.tasks.get(id);
 
@@ -190,7 +190,7 @@ export class Goals extends Changes {
       ...(before.proof !== undefined && { proof: before.proof }),
     });
 
-    const task = store.tasks.edit(id, { status });
+    const task = await store.tasks.edit(id, { status });
     this.refresh();
 
     return { task, told: told(task) };

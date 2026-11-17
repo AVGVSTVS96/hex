@@ -14,12 +14,12 @@ const ok = (): Promise<Verdict> => Promise.resolve({ verdict: "ok", notes: "" })
 let dir: string;
 let store: Store;
 
-beforeEach(() => {
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "intent-"));
   mkdirSync(join(dir, "telegram"));
   store = open(dir);
-  store.threads.keep("telegram", { "-100:7": { name: "Website" } });
-  store.messages.deliver({
+  await store.threads.keep("telegram", { "-100:7": { name: "Website" } });
+  await store.messages.deliver({
     key: "telegram:-100:50",
     to: "-100:7",
     from: "telegram",
@@ -27,8 +27,8 @@ beforeEach(() => {
     author: "owner",
     meta: { user: "owner" },
   });
-  store.messages.take("telegram:-100:50", "main");
-  store.messages.deliver({
+  await store.messages.take("telegram:-100:50", "main");
+  await store.messages.deliver({
     key: "telegram:-100:51",
     to: "-100:7",
     from: "telegram",
@@ -114,8 +114,8 @@ test("a brief carries the brief files it points to", () => {
   expect(agent).toContain("Score each design on net lines.");
 });
 
-test("the words a brief is checked against: its tasks and the newest this session got", () => {
-  const task = store.tasks.create({
+test("the words a brief is checked against: its tasks and the newest this session got", async () => {
+  const task = await store.tasks.create({
     title: "Fast login",
     message: "telegram:-100:50",
     owner: "-100:7",
@@ -130,8 +130,8 @@ test("the words a brief is checked against: its tasks and the newest this sessio
   expect(words).not.toContain("On it.");
 });
 
-test("work hex handed a session is read next to his words, newest last", () => {
-  store.messages.deliver(
+test("work hex handed a session is read next to his words, newest last", async () => {
+  await store.messages.deliver(
     {
       key: "hex:general-1",
       to: "-100:7",
@@ -142,7 +142,7 @@ test("work hex handed a session is read next to his words, newest last", () => {
     },
     "main",
   );
-  store.messages.deliver(
+  await store.messages.deliver(
     {
       key: "terminal:job-1",
       to: "-100:7",
@@ -163,8 +163,8 @@ test("work hex handed a session is read next to his words, newest last", () => {
   expect(job).toContain("which that thread's own session answers:\n\n[telegram:-100:50");
 });
 
-test("what a session said since its newest ask shows where that work stands", () => {
-  store.messages.deliver(
+test("what a session said since its newest ask shows where that work stands", async () => {
+  await store.messages.deliver(
     {
       key: "terminal:resume",
       to: "-100:7",
@@ -180,7 +180,10 @@ test("what a session said since its newest ask shows where that work stands", ()
     ["terminal:r1", "I gave the builder the go on webrtc."],
     ["terminal:r2", "webrtc is on main and on the phone."],
   ] as const) {
-    store.messages.deliver({ key, to: "-100:7", from: "terminal", body, author: "hex" }, "orch");
+    await store.messages.deliver(
+      { key, to: "-100:7", from: "terminal", body, author: "hex" },
+      "orch",
+    );
   }
 
   const words = asked(store, "orch", "SendMessage to its builder: fix the crash on launch.");
@@ -193,15 +196,15 @@ test("what a session said since its newest ask shows where that work stands", ()
   expect(asked(store, "main", "claude -p 'Make login fast.'")).not.toContain("said since");
 });
 
-test("a job is held to its own task, and sees what the owner said to its thread since as maybe other work", () => {
-  const task = store.tasks.create({
+test("a job is held to its own task, and sees what the owner said to its thread since as maybe other work", async () => {
+  const task = await store.tasks.create({
     title: "Fast login",
     message: "telegram:-100:50",
     owner: "-100:7",
   });
 
-  store.tasks.addAgents(task.id, ["job-session"]);
-  store.messages.deliver({
+  await store.tasks.addAgents(task.id, ["job-session"]);
+  await store.messages.deliver({
     key: "telegram:-100:52",
     to: "-100:7",
     from: "telegram",
@@ -209,7 +212,7 @@ test("a job is held to its own task, and sees what the owner said to its thread 
     author: "owner",
     meta: { user: "owner" },
   });
-  store.messages.take("telegram:-100:52", "main");
+  await store.messages.take("telegram:-100:52", "main");
 
   const words = asked(store, "job-session", "SendMessage to its builder: inline the login CSS.");
   expect(words).toContain(`${task.id} (open`);
@@ -228,9 +231,12 @@ test("a job is held to its own task, and sees what the owner said to its thread 
   expect(withThread).toContain("fan controller");
 });
 
-test("a delivery is checked against the words it cites and the thread it goes to", () => {
-  store.threads.keep("telegram", { "-100:7": { name: "Website" }, "-100:9": { name: "General" } });
-  store.messages.deliver({
+test("a delivery is checked against the words it cites and the thread it goes to", async () => {
+  await store.threads.keep("telegram", {
+    "-100:7": { name: "Website" },
+    "-100:9": { name: "General" },
+  });
+  await store.messages.deliver({
     key: "telegram:-100:90",
     to: "-100:9",
     from: "telegram",

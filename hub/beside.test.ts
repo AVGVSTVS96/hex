@@ -58,19 +58,19 @@ function found<T>(value: T | null): T {
   return value;
 }
 
-test("a run is named for its timed job, or the job whose report it is", () => {
+test("a run is named for its timed job, or the job whose report it is", async () => {
   const store = open(dir);
   const row = { to: "beside:general", from: "job", author: "prompt" as const, body: "ended" };
-  store.messages.deliver({ ...row, key: "job:mail@1", meta: { user: "job", job: "mail" } });
-  store.messages.deliver({ ...row, key: "job:beat@1", meta: { schedule: "beat" } });
+  await store.messages.deliver({ ...row, key: "job:mail@1", meta: { user: "job", job: "mail" } });
+  await store.messages.deliver({ ...row, key: "job:beat@1", meta: { schedule: "beat" } });
   expect(jobOf(found(store.messages.get("job:mail@1")))).toBe("mail");
   expect(jobOf(found(store.messages.get("job:beat@1")))).toBe("beat");
 });
 
-test("a run beside a thread that ended is dealt with once, not at every hub start", () => {
+test("a run beside a thread that ended is dealt with once, not at every hub start", async () => {
   const store = open(dir);
   const at = new Date(Date.now() - 60_000).toISOString();
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "job:beat@1",
     to: "beside:general",
     from: "job",
@@ -78,9 +78,11 @@ test("a run beside a thread that ended is dealt with once, not at every hub star
     body: "check",
     meta: { schedule: "beat" },
   });
-  store.turns.turned("failed", true, at);
-  store.messages.take("job:beat@1", "failed");
+  await store.turns.turned("failed", true, at);
+  await store.messages.take("job:beat@1", "failed");
   expect(store.turns.unfinishedBeside([])).toEqual(["failed"]);
-  expect(store.turns.besideEnded("failed").given.map((row) => row.key)).toEqual(["job:beat@1"]);
+  expect((await store.turns.besideEnded("failed")).given.map((row) => row.key)).toEqual([
+    "job:beat@1",
+  ]);
   expect(store.turns.unfinishedBeside([])).toEqual([]);
 });

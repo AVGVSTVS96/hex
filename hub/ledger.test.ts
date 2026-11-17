@@ -118,16 +118,16 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
   expect(open(dir).pins.list()).toHaveLength(2);
 });
 
-test("a hex.db that took a ledger in at each start brings in only what an older hex changed in it since, then renames it", () => {
+test("a hex.db that took a ledger in at each start brings in only what an older hex changed in it since, then renames it", async () => {
   const store = new Store(dir);
-  store.pins.pinned({
+  await store.pins.pinned({
     app: "telegram",
     thread: "-100:8",
     message: 30,
     text: "pinned again here",
     note: "pinned again here",
   });
-  store.pins.pinned({
+  await store.pins.pinned({
     app: "telegram",
     thread: "-100:9",
     message: 20,
@@ -188,11 +188,11 @@ test("a question stays open through an edit and leaves the waiting list only whe
   ]);
   ledger.settled("-100:7", 41, "✓ Settled");
   expect(store.questions.list({ waiting: true })).toEqual([]);
-  ledger.reopened("-100:7", 41);
-  ledger.answered("-100:7", 41, "Deploy", "app");
+  await ledger.reopened("-100:7", 41);
+  await ledger.answered("-100:7", 41, "Deploy", "app");
   expect(ledger.find("-100:7", 41)).toMatchObject({ answer: { label: "Deploy", via: "app" } });
   expect(found(ledger.find("-100:7", 41)).settled).toBeUndefined();
-  open(dir).pins.pinned({
+  await open(dir).pins.pinned({
     app: "telegram",
     thread: "-100:7",
     message: 9,
@@ -278,7 +278,7 @@ test("a status post is sent under its note and pinned in place of the last, rewr
   const slow: Post = {
     ...post,
     edit: async (...args) => {
-      open(dir).pins.pinned({
+      await open(dir).pins.pinned({
         app: "telegram",
         thread: "-100:8",
         message: 11,
@@ -413,7 +413,7 @@ test("a status post is rebuilt when its own thread's questions change, not on ev
   await Bun.sleep(100);
   rendered.length = 0;
 
-  open(dir).messages.deliver({
+  await open(dir).messages.deliver({
     key: "telegram:-100:8:1",
     to: "-100:8",
     from: "telegram",

@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
 import { found, KeyValues, now, TextOrAbsent, TextOrNull } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Mode, Written, Write } from "./db.ts";
 import type { Messages } from "./messages.ts";
 
 export type Held = { thread: string; ended?: string; ending?: string; woke?: string };
@@ -66,18 +66,18 @@ function holdNumber(id: string) {
   return Number(n);
 }
 
-export class Holds {
+export class Holds<M extends Mode = "queued"> {
   private readonly db: Database;
-  private readonly write: Write;
-  private readonly messages: Messages;
+  private readonly write: Write<M>;
+  private readonly messages: Messages<"tx">;
 
-  constructor({ db, write }: Core, messages: Messages) {
+  constructor({ db, write }: Core<M>, messages: Messages<"tx">) {
     this.db = db;
     this.write = write;
     this.messages = messages;
   }
 
-  create({ threads, by, why, message, until }: NewHold): Hold {
+  create({ threads, by, why, message, until }: NewHold): Written<M, Hold> {
     const reason = why.trim();
     const others = [...new Set(threads)].filter((thread) => thread !== by);
 
@@ -138,7 +138,11 @@ export class Holds {
     }));
   }
 
-  unhold(id: string, ending: string, threads?: string[], at = now()): string[] {
+  unhold(id: string, ending: string, threads?: string[], at = now()): Written<M, string[]> {
+    return this.write(() => this.release(id, ending, threads, at));
+  }
+
+  private release(id: string, ending: string, threads: string[] | undefined, at: string) {
     const hold = this.get(id);
 
     if (hold === null) {
@@ -155,23 +159,21 @@ export class Holds {
       throw new Error(`${id} doesn't hold ${stray.join(", ")}`);
     }
 
-    return this.write(() =>
-      KeyValues.parse(
-        this.db
-          .query(
-            "update held set ended = ?, ending = ? where hold = ? and ended is null and (?4 is null or thread in (select value from json_each(?4))) returning thread",
-          )
-          .values(
-            at,
-            ending.trim(),
-            holdNumber(id),
-            threads === undefined ? null : JSON.stringify(threads),
-          ),
-      ).map(([thread]) => thread),
-    );
+    return KeyValues.parse(
+      this.db
+        .query(
+          "update held set ended = ?, ending = ? where hold = ? and ended is null and (?4 is null or thread in (select value from json_each(?4))) returning thread",
+        )
+        .values(
+          at,
+          ending.trim(),
+          holdNumber(id),
+          threads === undefined ? null : JSON.stringify(threads),
+        ),
+    ).map(([thread]) => thread);
   }
 
-  due(at = now()): string[] {
+  due(at = now()): Written<M, string[]> {
     return this.write(() =>
       NumberValues.parse(
         this.db
@@ -179,7 +181,7 @@ export class Holds {
             "select n from holds where until <= ? and exists (select 1 from held where hold = n and ended is null)",
           )
           .values(at),
-      ).flatMap(([n]) => this.unhold(`h-${n}`, "its time came", undefined, at)),
+      ).flatMap(([n]) => this.release(`h-${n}`, "its time came", undefined, at)),
     );
   }
 
@@ -195,14 +197,14 @@ export class Holds {
   }
 
   woke(thread: string, key: string) {
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query("update held set woke = ? where thread = ? and ended is not null and woke is null")
         .run(key, thread),
     );
   }
 
-  waking(patience: number, at = now()): { count: number; until?: string } {
+  waking(patience: number, at = now()): Written<M, { count: number; until?: string }> {
     return this.write(() => {
       this.db
         .query(`update held set settled = ?1 where woke is not null and settled is null and (

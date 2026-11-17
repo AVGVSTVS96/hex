@@ -28,11 +28,11 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-function kept(thread: string, turns: [Author, string][]) {
+async function kept(thread: string, turns: [Author, string][]) {
   const store = open(join(home, "state"));
 
   for (const [i, [author, body]] of turns.entries()) {
-    store.messages.deliver(
+    await store.messages.deliver(
       { key: `telegram:${i}`, to: thread, from: "telegram", author, body },
       SESSION,
     );
@@ -66,13 +66,13 @@ function hook(env: Record<string, string> = {}, source = "compact") {
   return out;
 }
 
-test("brings back the thread's whole conversation when it fits", () => {
-  kept("42", [
+test("brings back the thread's whole conversation when it fits", async () => {
+  await kept("42", [
     ["owner", "hi"],
     ["hex", "hey"],
     ["owner", "what is up"],
   ]);
-  kept("43", [["owner", "another thread"]]);
+  await kept("43", [["owner", "another thread"]]);
   const out = hook({ HEX_THREAD: "42" });
   expect(out).toContain("the conversation's newest messages");
   expect(out).toContain("## owner · telegram · 42 · 2026-10-06 16:00 · [telegram:0]\n\nhi");
@@ -80,8 +80,8 @@ test("brings back the thread's whole conversation when it fits", () => {
   expect(out).not.toContain("another thread");
 });
 
-test("brings back the last whole turns of a long conversation, and points to the earlier ones", () => {
-  kept(
+test("brings back the last whole turns of a long conversation, and points to the earlier ones", async () => {
+  await kept(
     SESSION,
     Array.from({ length: 40 }, (_, i): [Author, string] => [
       i % 2 ? "hex" : "owner",
@@ -97,16 +97,16 @@ test("brings back the last whole turns of a long conversation, and points to the
   expect(out).not.toContain("turn 20 ");
 });
 
-test("brings back the end of a message too long for a hook on its own", () => {
-  kept(SESSION, [["owner", `start ${"z".repeat(20_000)} the end`]]);
+test("brings back the end of a message too long for a hook on its own", async () => {
+  await kept(SESSION, [["owner", `start ${"z".repeat(20_000)} the end`]]);
   const out = hook();
   expect(out).toEndWith("the end\n");
   expect(out).toContain("## owner · telegram · ");
   expect(out).not.toContain("start");
 });
 
-test("a new session taking over a thread gets the session it continues from, and nothing else", () => {
-  kept("42", [
+test("a new session taking over a thread gets the session it continues from, and nothing else", async () => {
+  await kept("42", [
     ["owner", "ship it"],
     ["hex", "shipped"],
   ]);
@@ -118,8 +118,8 @@ test("a new session taking over a thread gets the session it continues from, and
   );
 });
 
-test("a new session taking over from one whose transcript isn't on this machine gets where the thread's messages are", () => {
-  kept("42", [["owner", "ship it"]]);
+test("a new session taking over from one whose transcript isn't on this machine gets where the thread's messages are", async () => {
+  await kept("42", [["owner", "ship it"]]);
   const transcript = join(home, "0d1e2f3a-0000-4000-8000-000000000000.jsonl");
   const out = hook({ HEX_THREAD: "42", HEX_HANDOFF: transcript }, "startup");
   expect(out).toBe(
@@ -127,8 +127,8 @@ test("a new session taking over from one whose transcript isn't on this machine 
   );
 });
 
-test("a session that starts without taking over, or resumes, gets nothing from it", () => {
-  kept("42", [["owner", "hi"]]);
+test("a session that starts without taking over, or resumes, gets nothing from it", async () => {
+  await kept("42", [["owner", "hi"]]);
   expect(hook({ HEX_THREAD: "42" }, "startup")).toBe("");
   expect(hook({ HEX_THREAD: "42", HEX_HANDOFF: "/old.jsonl" }, "resume")).toBe("");
 });

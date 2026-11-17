@@ -75,9 +75,7 @@ export function sessionPauses({
     }
 
     process.stderr.write(`hub: ${thread}'s session paused mid-turn: ${needs}\n`);
-    kept((store) => {
-      store.turns.handled(session);
-    }, undefined);
+    void kept.later((store) => store.turns.handled(session), undefined);
     turnEnded(thread);
     const refusal = claude.refused(claude.transcript(threads.cwd(thread), session));
     const { model } = threads.of(thread);

@@ -3,22 +3,22 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
 import { fromJson } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Mode, Write } from "./db.ts";
 
 const PassRow = z.object({ n: z.number(), pass: z.string() }).nullable();
 const PassJson = z.record(z.string(), z.string());
 
-export class Passes {
+export class Passes<M extends Mode = "queued"> {
   private readonly db: Database;
-  private readonly write: Write;
+  private readonly write: Write<M>;
 
-  constructor({ db, write }: Core) {
+  constructor({ db, write }: Core<M>) {
     this.db = db;
     this.write = write;
   }
 
   wait(pass: Record<string, string | undefined>) {
-    this.write(() =>
+    return this.write(() =>
       this.db.query("insert into passes (pass) values (?)").run(JSON.stringify(pass)),
     );
   }
@@ -30,6 +30,6 @@ export class Passes {
   }
 
   passed(n: number) {
-    this.write(() => this.db.query("delete from passes where n = ?").run(n));
+    return this.write(() => this.db.query("delete from passes where n = ?").run(n));
   }
 }

@@ -92,7 +92,7 @@ export function said(store: Store, thread: string, session: string, prompt = "")
     ROOM - earlier.join("\n").length,
   );
 
-  store.seen.show(session, "said", new Date().toISOString());
+  void store.seen.show(session, "said", new Date().toISOString());
 
   return [
     others.length > 0

@@ -2,9 +2,13 @@ import type { Database } from "bun:sqlite";
 
 import { z } from "zod";
 
-export type Write = <T>(fn: () => T) => T;
+export type Mode = "tx" | "queued";
 
-export type Core = { db: Database; write: Write };
+export type Written<M extends Mode, T> = M extends "tx" ? T : Promise<T>;
+
+export type Write<M extends Mode> = <T>(fn: () => T) => Written<M, T>;
+
+export type Core<M extends Mode> = { db: Database; write: Write<M> };
 
 export type MessageId = number | string;
 

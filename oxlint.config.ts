@@ -17,8 +17,8 @@ const longestFunctionIn = {
   "channels/discord/bot.ts": 1227,
   "channels/voice/phone.test.ts": 219,
   "channels/voice/reconnect.test.ts": 304,
-  "hub/hub.ts": 1014,
-  "hub/mcp.ts": 300,
+  "hub/hub.ts": 1049,
+  "hub/mcp.ts": 306,
   "hub/sessions.ts": 356,
 };
 

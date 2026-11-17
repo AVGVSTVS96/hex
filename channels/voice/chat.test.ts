@@ -41,7 +41,7 @@ beforeEach(() => {
       calls.push(["deliver", thread, name, message]);
       delivered.push(message);
 
-      return true;
+      return Promise.resolve(true);
     },
     stop: (thread) => {
       calls.push(["hub stop", thread]);
@@ -59,9 +59,9 @@ afterEach(() => {
   rmSync(hexDir, { recursive: true, force: true });
 });
 
-test("a thread's chat is what the owner said and hex replied across its sessions, then what's waiting", () => {
+test("a thread's chat is what the owner said and hex replied across its sessions, then what's waiting", async () => {
   const store = open(state);
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:1",
     to: DESK,
     from: "telegram",
@@ -69,16 +69,16 @@ test("a thread's chat is what the owner said and hex replied across its sessions
     body: "ship it",
     meta: { user_id: "1" },
   });
-  store.messages.take("telegram:1", OLD);
-  store.messages.deliver(
+  await store.messages.take("telegram:1", OLD);
+  await store.messages.deliver(
     { key: "terminal:1", to: DESK, from: "terminal", author: "hex", body: "thinking out loud" },
     OLD,
   );
-  store.messages.deliver(
+  await store.messages.deliver(
     { key: "telegram:10", to: DESK, from: "telegram", author: "hex", body: "Shipped." },
     OLD,
   );
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:2",
     to: DESK,
     from: "telegram",
@@ -86,12 +86,12 @@ test("a thread's chat is what the owner said and hex replied across its sessions
     body: "and the tests",
     meta: { user: "hex app" },
   });
-  store.messages.take("telegram:2", NOW);
-  store.messages.deliver(
+  await store.messages.take("telegram:2", NOW);
+  await store.messages.deliver(
     { key: "telegram:11", to: DESK, from: "telegram", author: "hex", body: "On it." },
     NOW,
   );
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:3",
     to: DESK,
     from: "telegram",
@@ -99,7 +99,7 @@ test("a thread's chat is what the owner said and hex replied across its sessions
     body: "then ship",
     meta: { user_id: "1" },
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "schedule:4",
     to: DESK,
     from: "schedule",
@@ -163,7 +163,7 @@ test("photos and clips go with the owner's words as images the session reads, an
     throw new Error("nothing was delivered");
   }
 
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:app-00000002",
     to: DESK,
     from: "telegram",
@@ -171,7 +171,7 @@ test("photos and clips go with the owner's words as images the session reads, an
     body: message.content,
     meta: message.meta,
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:app-00000003",
     to: DESK,
     from: "telegram",
@@ -179,7 +179,7 @@ test("photos and clips go with the owner's words as images the session reads, an
     body: "this one\n(photo)",
     meta: { media: "photo p2" },
   });
-  store.messages.take("telegram:app-00000002", NOW);
+  await store.messages.take("telegram:app-00000002", NOW);
   expect(chats.of(where)).toMatchObject({
     turns: [
       {
@@ -199,7 +199,7 @@ test("photos and clips go with the owner's words as images the session reads, an
 
 test("pictures hex and the owner sent in the chat app show as pictures, each fetched by its id", async () => {
   const store = open(state);
-  store.messages.deliver(
+  await store.messages.deliver(
     {
       key: "telegram:20",
       to: DESK,
@@ -210,7 +210,7 @@ test("pictures hex and the owner sent in the chat app show as pictures, each fet
     },
     NOW,
   );
-  store.messages.deliver(
+  await store.messages.deliver(
     {
       key: "telegram:21",
       to: DESK,
@@ -221,7 +221,7 @@ test("pictures hex and the owner sent in the chat app show as pictures, each fet
     },
     NOW,
   );
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:22",
     to: DESK,
     from: "telegram",
@@ -229,7 +229,7 @@ test("pictures hex and the owner sent in the chat app show as pictures, each fet
     body: "(photo)",
     meta: { image_path: "/inbox/shot.jpg" },
   });
-  store.messages.take("telegram:22", NOW);
+  await store.messages.take("telegram:22", NOW);
 
   const { turns } = chats.of(where);
   expect(turns).toMatchObject([
@@ -291,7 +291,7 @@ test("an app that shows only turns it starts, doesn't hold the thread, or isn't 
 test("a wait for the chat ends when it changes, and not on a change elsewhere", async () => {
   const { version } = chats.of(where);
   const waited = chats.next(() => where, version, 5000);
-  open(state).messages.deliver({
+  await open(state).messages.deliver({
     key: "telegram:5",
     to: "-1009:1",
     from: "telegram",
@@ -300,7 +300,7 @@ test("a wait for the chat ends when it changes, and not on a change elsewhere", 
     meta: { user_id: "1" },
   });
   await Bun.sleep(50);
-  open(state).messages.deliver({
+  await open(state).messages.deliver({
     key: "telegram:6",
     to: DESK,
     from: "telegram",
@@ -314,9 +314,9 @@ test("a wait for the chat ends when it changes, and not on a change elsewhere", 
   expect((await chats.next(() => where, chat.version, 100)).version).toBe(chat.version);
 });
 
-test("a chat is read again only once its thread's messages change", () => {
+test("a chat is read again only once its thread's messages change", async () => {
   const store = open(state);
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:1",
     to: DESK,
     from: "telegram",
@@ -325,7 +325,7 @@ test("a chat is read again only once its thread's messages change", () => {
     meta: { user_id: "1" },
   });
   const first = chats.of(where);
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:5",
     to: "-1001234:6",
     from: "telegram",
@@ -334,7 +334,7 @@ test("a chat is read again only once its thread's messages change", () => {
     meta: { user_id: "1" },
   });
   expect(chats.of(where)).toBe(first);
-  store.messages.take("telegram:1", NOW);
+  await store.messages.take("telegram:1", NOW);
   const taken = chats.of(where);
   expect(taken).not.toBe(first);
   expect(taken).toMatchObject({ total: 1, waiting: [] });

@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
 import { MessageIdColumn, now } from "./db.ts";
-import type { Core, MessageId, Write } from "./db.ts";
+import type { Core, Mode, MessageId, Write } from "./db.ts";
 
 export type Pin = {
   app: string;
@@ -27,11 +27,11 @@ const PinRows = z.array(PinRow);
 
 const ChangedRows = z.array(z.object({ thread: z.string(), n: z.number() }));
 
-export class Pins {
+export class Pins<M extends Mode = "queued"> {
   private readonly db: Database;
-  private readonly write: Write;
+  private readonly write: Write<M>;
 
-  constructor({ db, write }: Core) {
+  constructor({ db, write }: Core<M>) {
     this.db = db;
     this.write = write;
   }
@@ -68,7 +68,7 @@ export class Pins {
     note,
     at = now(),
   }: Omit<Pin, "at" | "note"> & { note: string | undefined; at?: string | undefined }) {
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query(
           "insert into pins (app, thread, message, text, note, at) values (?, ?, ?, ?, ?, ?) on conflict (app, thread) do update set message = excluded.message, text = excluded.text, note = excluded.note, at = excluded.at",
@@ -78,7 +78,7 @@ export class Pins {
   }
 
   unpinned(app: string, thread?: string, message?: MessageId) {
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query(
           "delete from pins where app = ?1 and (?2 is null or thread = ?2) and (?3 is null or message = ?3)",

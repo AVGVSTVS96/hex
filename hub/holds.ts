@@ -1,7 +1,7 @@
 import { clock } from "./clock.ts";
 import { clip } from "./fit.ts";
 import { open } from "./store.ts";
-import type { Held, Hold, Store } from "./store.ts";
+import type { Held, Hold, Store, Tx } from "./store.ts";
 
 const FREED_THREADS_WOKEN_AT_ONCE = 2;
 const PATIENCE_FOR_A_WOKEN_TURN_TO_END = 15 * 60_000;
@@ -41,14 +41,14 @@ export function place(
   store: Store,
   hold: Parameters<Store["holds"]["create"]>[0],
   { zone, working }: { zone?: string; working: Set<string> },
-): Hold {
-  return store.write(() => {
-    const placed = store.holds.create(hold);
-    const by = store.threads.names()[placed.by] ?? placed.by;
+): Promise<Hold> {
+  return store.write((tx) => {
+    const placed = tx.holds.create(hold);
+    const by = tx.threads.names()[placed.by] ?? placed.by;
     const ends = `${placed.until !== undefined && placed.until !== "" ? `at ${when(placed.until, zone)}, or ` : ""}when my word lifts it`;
 
     for (const { thread } of placed.threads.filter((held) => working.has(held.thread))) {
-      store.messages.deliver({
+      tx.messages.deliver({
         key: `hold:${placed.id}@${thread}`,
         to: thread,
         from: "hold",
@@ -62,39 +62,37 @@ export function place(
   });
 }
 
-export function wake(store: Store, at = new Date(clock.now()).toISOString()): string | undefined {
-  return store.write(() => {
-    const waking = store.holds.waking(PATIENCE_FOR_A_WOKEN_TURN_TO_END, at);
-    let room = FREED_THREADS_WOKEN_AT_ONCE - waking.count;
-    const woken = new Set<string>();
+export function wake(tx: Tx, at = new Date(clock.now()).toISOString()): string | undefined {
+  const waking = tx.holds.waking(PATIENCE_FOR_A_WOKEN_TURN_TO_END, at);
+  let room = FREED_THREADS_WOKEN_AT_ONCE - waking.count;
+  const woken = new Set<string>();
 
-    for (const { id, thread, why, ending } of store.holds.freed()) {
-      if (woken.has(thread)) {
-        continue;
-      }
-
-      if (room-- <= 0) {
-        break;
-      }
-
-      woken.add(thread);
-
-      const key = `hold:${id}@${thread}:ended`;
-      store.messages.deliver({
-        key,
-        to: thread,
-        from: "hold",
-        author: "prompt",
-        body: `[hold ${id} ended] ${ending}. The hold on this thread (${why}) is over: pick up where you stopped.`,
-        meta: { user: "hold" },
-      });
-      store.holds.woke(thread, key);
+  for (const { id, thread, why, ending } of tx.holds.freed()) {
+    if (woken.has(thread)) {
+      continue;
     }
 
-    return woken.size > 0
-      ? new Date(Date.parse(at) + PATIENCE_FOR_A_WOKEN_TURN_TO_END).toISOString()
-      : waking.until;
-  });
+    if (room-- <= 0) {
+      break;
+    }
+
+    woken.add(thread);
+
+    const key = `hold:${id}@${thread}:ended`;
+    tx.messages.deliver({
+      key,
+      to: thread,
+      from: "hold",
+      author: "prompt",
+      body: `[hold ${id} ended] ${ending}. The hold on this thread (${why}) is over: pick up where you stopped.`,
+      meta: { user: "hold" },
+    });
+    tx.holds.woke(thread, key);
+  }
+
+  return woken.size > 0
+    ? new Date(Date.parse(at) + PATIENCE_FOR_A_WOKEN_TURN_TO_END).toISOString()
+    : waking.until;
 }
 
 export function holding(storeDir: string): () => void {
@@ -111,32 +109,46 @@ export function holding(storeDir: string): () => void {
 
   let timer: ReturnType<typeof clock.setTimeout> | undefined;
 
-  const step = () => {
-    let next = Infinity;
+  const stepAt = (next: number) => {
+    clock.clearTimeout(timer);
+
+    if (next < Infinity) {
+      timer = clock.setTimeout(step, Math.min(2 ** 31 - 1, Math.max(0, next - clock.now())));
+    }
+  };
+
+  const until = (patience: string | undefined) =>
+    Math.min(
+      patience !== undefined && patience !== "" ? Date.parse(patience) : Infinity,
+      ...store.holds
+        .list()
+        .flatMap((hold) =>
+          hold.until !== undefined && hold.until !== "" ? [Date.parse(hold.until)] : [],
+        ),
+    );
+
+  const moveOn = async () => {
+    const at = new Date(clock.now()).toISOString();
 
     try {
-      const at = new Date(clock.now()).toISOString();
-      store.holds.due(at);
-      const patience = wake(store, at);
+      await store.write(
+        (tx) => {
+          tx.holds.due(at);
 
-      next = Math.min(
-        patience !== undefined && patience !== "" ? Date.parse(patience) : Infinity,
-        ...store.holds
-          .list()
-          .flatMap((hold) =>
-            hold.until !== undefined && hold.until !== "" ? [Date.parse(hold.until)] : [],
-          ),
+          return wake(tx, at);
+        },
+        (patience) => {
+          stepAt(until(patience));
+        },
       );
     } catch (error) {
       process.stderr.write(`hub: holds couldn't move on: ${String(error)}\n`);
-      next = clock.now() + 60_000;
-    } finally {
-      clock.clearTimeout(timer);
-
-      if (next < Infinity) {
-        timer = clock.setTimeout(step, Math.min(2 ** 31 - 1, Math.max(0, next - clock.now())));
-      }
+      stepAt(clock.now() + 60_000);
     }
+  };
+
+  const step = () => {
+    void moveOn();
   };
 
   const unwatch = store.watch(step);

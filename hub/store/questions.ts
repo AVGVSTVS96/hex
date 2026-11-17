@@ -3,7 +3,7 @@ import type { Database, SQLQueryBindings } from "bun:sqlite";
 import { z } from "zod";
 
 import { clause, fromJson, MessageIdColumn, now, TextOrAbsent } from "./db.ts";
-import type { Core, MessageId, Write } from "./db.ts";
+import type { Core, Mode, Written, MessageId, Write } from "./db.ts";
 
 export type Answer = { label: string; at: string; via: string; message?: MessageId; kept?: true };
 
@@ -76,11 +76,11 @@ const QuestionRow = z
 
 const QuestionRows = z.array(QuestionRow);
 
-export class Questions {
+export class Questions<M extends Mode = "queued"> {
   private readonly db: Database;
-  private readonly write: Write;
+  private readonly write: Write<M>;
 
-  constructor({ db, write }: Core) {
+  constructor({ db, write }: Core<M>) {
     this.db = db;
     this.write = write;
   }
@@ -120,7 +120,7 @@ export class Questions {
 
     const columns = Object.keys(row);
 
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query(
           `insert into questions (${columns.join(", ")}) values (${columns.map(() => "?").join(", ")}) on conflict do nothing`,
@@ -170,7 +170,8 @@ export class Questions {
 
   replied(app: string, thread: string, answer: Answer, to?: MessageId) {
     const which = to === undefined ? `json_extract(answer, '$.kept') is null` : "message = ?";
-    this.write(() =>
+
+    return this.write(() =>
       this.db
         .query(
           `update questions set answer = ? where asker = 'owner' and app = ? and thread = ? and settled is null and ${which}`,
@@ -185,7 +186,7 @@ export class Questions {
   }
 
   returned(app: string, thread: string) {
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query(
           `update questions set answer = json_set(answer, '$.kept', json('true')) where asker = 'owner' and app = ? and thread = ? and answer is not null and settled is null`,
@@ -201,7 +202,7 @@ export class Questions {
     label: string,
     via: string,
     again = false,
-  ): boolean {
+  ): Written<M, boolean> {
     return this.write(
       () =>
         this.db
@@ -213,7 +214,7 @@ export class Questions {
   }
 
   reworded(app: string, thread: string, message: MessageId, text: string) {
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query("update questions set text = ? where app = ? and thread = ? and message = ?")
         .run(text, app, thread, message),
@@ -221,14 +222,14 @@ export class Questions {
   }
 
   settled(app: string, thread: string, message: MessageId, note: string) {
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query("update questions set settled = ? where app = ? and thread = ? and message = ?")
         .run(JSON.stringify({ note, at: now() }), app, thread, message),
     );
   }
 
-  reopened(app: string, thread: string, message: MessageId): boolean {
+  reopened(app: string, thread: string, message: MessageId): Written<M, boolean> {
     return this.write(
       () =>
         this.db
@@ -240,7 +241,7 @@ export class Questions {
   }
 
   unask(app: string, thread: string, message?: MessageId) {
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query(
           "delete from questions where app = ? and thread = ? and (?3 is null or message = ?3)",

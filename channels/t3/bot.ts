@@ -429,7 +429,7 @@ function prompt(
       compaction(turn, thread, "in_progress");
       void hub.command(thread, "/compact");
     } else {
-      hub.deliver(thread, name, message(thread, blocks, turn.since, _meta));
+      void hub.deliver(thread, name, message(thread, blocks, turn.since, _meta));
     }
   });
 }
@@ -525,7 +525,7 @@ async function rejoin(
     const compactEndedWhileHexWasDown = !working && !promptSeen;
 
     if (!startsWithCompact(blocks)) {
-      hub.deliver(thread, name, message(thread, blocks, since, _meta));
+      void hub.deliver(thread, name, message(thread, blocks, since, _meta));
     } else if (compactEndedWhileHexWasDown) {
       finish(thread, "end_turn");
 

@@ -3,6 +3,7 @@ import { connect } from "node:net";
 import { z } from "zod";
 
 import { open, stateDir } from "./store.ts";
+import type { Tx } from "./store.ts";
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER, HEX_BESIDE } = process.env;
 const at = new Date().toISOString();
@@ -108,16 +109,16 @@ if (key !== undefined) {
     let took: boolean;
 
     try {
-      const takenAsOneTurn = () =>
-        store.messages.take(key, session_id) &&
-        (!session_id || (store.turns.turned(session_id, busy, at), true));
+      const takenAsOneTurn = (tx: Tx) =>
+        tx.messages.take(key, session_id) &&
+        (!session_id || (tx.turns.turned(session_id, busy, at), true));
 
-      took = store.write(takenAsOneTurn);
+      took = await store.write(takenAsOneTurn);
       recorded = took && !!session_id;
     } catch (error) {
       console.error(`hex couldn't record this turn: ${String(error)}`);
       const mine = store.messages.get(key)?.taken?.by === session_id;
-      took = mine || store.messages.take(key, session_id);
+      took = mine || (await store.messages.take(key, session_id));
       recorded = mine;
     }
 
@@ -137,15 +138,15 @@ if (key !== undefined) {
 if (session_id && !recorded) {
   try {
     const store = open(stateDir());
-    store.write(() => {
+    await store.write((tx) => {
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
       // bin/quiet trusts this record over Claude Code's busy status once it says the turn ended, so an update lands between turns.
-      store.turns.turned(session_id, busy, at);
+      tx.turns.turned(session_id, busy, at);
 
       if (answered && background) {
-        store.turns.waitsOnAgents(session_id, at);
+        tx.turns.waitsOnAgents(session_id, at);
       } else if (answered) {
-        store.turns.handled(session_id, at);
+        tx.turns.handled(session_id, at);
       }
     });
   } catch (error) {
@@ -170,7 +171,7 @@ if (typedInTheTerminal !== undefined && typedInTheTerminal !== "" && session_id)
         .some((row) => row.from === "hub" && row.body.trim() === typedInTheTerminal.trim());
 
     if (!theHubStartedTheSessionWithIt) {
-      store.messages.deliver(
+      await store.messages.deliver(
         {
           key: `terminal:${crypto.randomUUID()}`,
           to,

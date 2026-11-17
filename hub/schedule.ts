@@ -169,7 +169,7 @@ export function check(
   } catch (error) {
     const body = `[schedules] schedules.json no longer loads, so no job runs until it's fixed: ${error instanceof Error ? error.message : String(error)}`;
 
-    store.messages.deliver({
+    void store.messages.deliver({
       key: `schedule:broken@${Bun.hash(text).toString(36)}`,
       to: besideOf(main),
       from: "schedule",
@@ -213,17 +213,18 @@ export function check(
 
   const alive = sessions(store);
   stalled(store, alive.values(), now * MINUTE);
-  const signals = store.scheduler.signals();
 
   const where = (job: Job) =>
     job.thread === undefined || job.check === true ? besideOf(job.thread ?? main) : job.thread;
 
-  store.write(() => {
+  void store.write((tx) => {
+    const signals = tx.scheduler.signals();
+
     for (const [name, minute] of slots) {
       const job = jobs[name];
 
       if (job !== undefined && job.idea === undefined) {
-        store.scheduler.fire(name, minute, where(job), `[${name}] ${job.prompt}`, minute < now);
+        tx.scheduler.fire(name, minute, where(job), `[${name}] ${job.prompt}`, minute < now);
       }
     }
 
@@ -236,22 +237,22 @@ export function check(
         continue;
       }
 
-      if (store.scheduler.running(name, [...alive.keys()])) {
+      if (tx.scheduler.running(name, [...alive.keys()])) {
         for (const row of heard) {
           busy.add(row.key);
         }
       } else {
-        store.scheduler.fireOn(name, heard, where(job), `[${name}] ${job.prompt}${whyNow(heard)}`);
+        tx.scheduler.fireOn(name, heard, where(job), `[${name}] ${job.prompt}${whyNow(heard)}`);
       }
     }
 
     for (const row of signals) {
       if (!busy.has(row.key)) {
-        store.messages.take(row.key, "schedule");
+        tx.messages.take(row.key, "schedule");
       }
     }
 
-    store.scheduler.check(now);
+    tx.scheduler.check(now);
   });
 
   for (const [name, job] of Object.entries(jobs)) {

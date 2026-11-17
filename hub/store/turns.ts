@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
 import { KeyValues, now, TextOrAbsent, TextOrNull } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Mode, Written, Write } from "./db.ts";
 import { MessageRows } from "./messages.ts";
 import type { Row } from "./messages.ts";
 
@@ -23,17 +23,29 @@ const RepliesRow = z.object({ replies: z.number() });
 
 const TURNS = 30 * 24 * 60 * 60 * 1000;
 
-export class Turns {
+export class Turns<M extends Mode = "queued"> {
   private readonly db: Database;
-  private readonly write: Write;
+  private readonly write: Write<M>;
 
-  constructor({ db, write }: Core) {
+  constructor({ db, write }: Core<M>) {
     this.db = db;
     this.write = write;
   }
 
   turned(session: string, busy: boolean, at = now()) {
-    this.write(() => {
+    return this.write(() => {
+      this.turn(session, busy, at);
+    });
+  }
+
+  handled(session: string, at = now()) {
+    return this.write(() => {
+      this.handle(session, at);
+    });
+  }
+
+  private turn(session: string, busy: boolean, at: string) {
+    {
       if (busy) {
         this.db
           .query(
@@ -51,32 +63,36 @@ export class Turns {
       this.db
         .query("delete from turns where coalesce(ended, began) < ?")
         .run(new Date(Date.parse(at) - TURNS).toISOString());
-    });
+    }
   }
 
-  handled(session: string, at = now()) {
-    this.write(() => {
-      const { began, ended } = this.get(session);
+  private handle(session: string, at: string) {
+    const { began, ended } = this.get(session);
 
-      if (began !== undefined && ended === undefined) {
-        this.turned(session, false, at);
-      }
+    if (began !== undefined && ended === undefined) {
+      this.turn(session, false, at);
+    }
 
-      this.db
-        .query(
-          "insert into turns (session, ended, handled) values (?1, ?2, ?2) on conflict (session) do update set handled = max(coalesce(handled, ?2), ?2), waiting = null",
-        )
-        .run(session, at);
-    });
+    this.db
+      .query(
+        "insert into turns (session, ended, handled) values (?1, ?2, ?2) on conflict (session) do update set handled = max(coalesce(handled, ?2), ?2), waiting = null",
+      )
+      .run(session, at);
   }
 
   waitsOnAgents(session: string, at = now()) {
-    this.db.query("update turns set waiting = ? where session = ?").run(at, session);
+    return this.write(() => {
+      this.db.query("update turns set waiting = ? where session = ?").run(at, session);
+    });
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A turn that ended with agents still working answered what it took, as any turn that ends does, so a session cut short gives back only what it took since, however often it is cut. waited: one of them had started agents, and any still working ended with it.
-  cut(thread: string, session?: string, at = now()): { given: string[]; waited: boolean } {
+  cut(
+    thread: string,
+    session?: string,
+    at = now(),
+  ): Written<M, { given: string[]; waited: boolean }> {
     return this.write(() => {
       const cutShort = UnfinishedTurnRows.parse(
         this.db
@@ -90,7 +106,7 @@ export class Turns {
         const lastTurnEnded =
           waiting !== null && (handled === null || waiting > handled) ? waiting : handled;
 
-        this.turned(died, false, at);
+        this.turn(died, false, at);
 
         this.db
           .query("update turns set waiting = null, handled = ? where session = ?")
@@ -116,7 +132,7 @@ export class Turns {
     start?: string,
     at = now(),
     stall = true,
-  ): { given: Row[]; left: Row[] } {
+  ): Written<M, { given: Row[]; left: Row[] }> {
     return this.write(() => {
       const { handled } = this.get(session);
 
@@ -145,7 +161,7 @@ export class Turns {
           .run(row.key, stall, at);
       }
 
-      this.handled(session, at);
+      this.handle(session, at);
 
       return { given, left };
     });

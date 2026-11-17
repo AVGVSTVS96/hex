@@ -220,8 +220,8 @@ try {
   const store = open(stateDir());
 
   if (hook_event_name === "SessionEnd") {
-    store.seen.unshowAll(session_id, "rules");
-    store.seen.unshow(session_id, "hex");
+    await store.seen.unshowAll(session_id, "rules");
+    await store.seen.unshow(session_id, "hex");
     process.exit(0);
   }
 
@@ -290,8 +290,8 @@ try {
   const keepBeforeSayingSoAKeepThatFailsSaysNothing = () => {
     if (hook_event_name === "SessionStart") {
       if (held === undefined) {
-        store.seen.unshowAll(session_id, "rules");
-        store.seen.show(session_id, "rules", JSON.stringify(now));
+        void store.seen.unshowAll(session_id, "rules");
+        void store.seen.show(session_id, "rules", JSON.stringify(now));
       }
 
       return;
@@ -303,7 +303,7 @@ try {
 
     for (const n of anOlderHookRunsItAloneSoItsTheLastPart ? PARTS : [thisPart]) {
       if (held === undefined) {
-        store.seen.show(session_id, keptAs(n), JSON.stringify(now));
+        void store.seen.show(session_id, keptAs(n), JSON.stringify(now));
       } else {
         mkdirSync(dirname(keptAs(n)), { recursive: true });
         writeFileSync(keptAs(n), JSON.stringify(now));
@@ -331,7 +331,7 @@ try {
       const changedAgainSinceItWasTold = told === "" || updates.changed(told).length > 0;
 
       if (from !== undefined && changed.length > 0 && changedAgainSinceItWasTold) {
-        store.seen.show(session_id, "hex", updates.head);
+        await store.seen.show(session_id, "hex", updates.head);
 
         const names = (keys: Startup[]) =>
           new Intl.ListFormat("en").format(keys.map((key) => WHAT[key]));

@@ -42,7 +42,7 @@ export function stalled(store: Store, sessions: Iterable<Session>, now = Date.no
       continue;
     }
 
-    store.scheduler.signal(
+    void store.scheduler.signal(
       "stalled",
       `${session.name ?? session.id} (session ${session.id}, thread ${session.thread}) is mid-turn and has written nothing since ${new Date(last).toISOString()}`,
       `${session.id}@${Math.floor(last)}`,

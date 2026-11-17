@@ -43,14 +43,14 @@ async function hook(step: "busy" | "idle", input: Input) {
   return (await new Response(run.stdout).text()).trim();
 }
 
-function said(key: string, body: string) {
-  open(dir).messages.deliver({ key, to: "dm", from: "telegram", author: "owner", body });
+async function said(key: string, body: string) {
+  await open(dir).messages.deliver({ key, to: "dm", from: "telegram", author: "owner", body });
 
-  return hook("busy", { hook_event_name: "UserPromptSubmit", prompt: tag(key, body) });
+  return await hook("busy", { hook_event_name: "UserPromptSubmit", prompt: tag(key, body) });
 }
 
-function replied(key: string) {
-  open(dir).messages.deliver(
+async function replied(key: string) {
+  await open(dir).messages.deliver(
     { key, to: "dm", from: "telegram", author: "hex", body: "Fixed." },
     "s",
   );
@@ -62,33 +62,33 @@ const stop = (input: Input = {}) =>
 test("a turn that took a second message mid-turn and replied once doesn't end until it answers", async () => {
   await said("telegram:dm:980", "fix the wrong line in the design spec");
   await said("telegram:app-1", "what's the server's uptime?");
-  replied("telegram:dm:981");
+  await replied("telegram:dm:981");
 
   const blocked = Blocked.parse(JSON.parse(await stop()));
   expect(blocked.reason).toContain("telegram:app-1: what's the server's uptime?");
   expect(blocked.reason).toContain("telegram:dm:980");
   expect(open(dir).turns.atWork("s")).toBe(true);
 
-  replied("telegram:dm:982");
+  await replied("telegram:dm:982");
   expect(await stop({ stop_hook_active: true })).toBe("");
   expect(open(dir).turns.atWork("s")).toBe(false);
 });
 
 test("a turn ends as it is once each message has a reply, and the next turn counts from there", async () => {
   await said("telegram:dm:1", "how's the build?");
-  replied("telegram:dm:2");
+  await replied("telegram:dm:2");
   expect(await stop()).toBe("");
 
   await said("telegram:dm:3", "and the install?");
   await said("telegram:dm:4", "and the iPad?");
-  replied("telegram:dm:5");
-  replied("telegram:dm:6");
+  await replied("telegram:dm:5");
+  await replied("telegram:dm:6");
   expect(await stop()).toBe("");
 });
 
 test("a reaction mid-turn asks for no reply", async () => {
   await said("telegram:dm:1", "how's the build?");
-  open(dir).messages.deliver({
+  await open(dir).messages.deliver({
     key: "telegram:dm:2",
     to: "dm",
     from: "telegram",
@@ -100,6 +100,6 @@ test("a reaction mid-turn asks for no reply", async () => {
     hook_event_name: "UserPromptSubmit",
     prompt: tag("telegram:dm:2", "(reaction: 👍)"),
   });
-  replied("telegram:dm:3");
+  await replied("telegram:dm:3");
   expect(await stop()).toBe("");
 });

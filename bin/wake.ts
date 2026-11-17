@@ -129,13 +129,15 @@ if (memoryDir === undefined || memoryDir === "") {
   const stuck = aWakeHoldingTheLeaseThisLongIsStuckMs;
   const until = Date.now() + stuck;
 
-  while (store?.leases.take("wake", holder, stuck) === false && Date.now() < until) {
+  const taken = async () => store === undefined || (await store.leases.take("wake", holder, stuck));
+
+  while (!(await taken()) && Date.now() < until) {
     Bun.sleepSync(100);
   }
 
   try {
     rewriteOrKeepTheLastSayingWhy(store);
   } finally {
-    store?.leases.release("wake", holder);
+    await store?.leases.release("wake", holder);
   }
 }

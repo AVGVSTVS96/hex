@@ -177,9 +177,9 @@ export class Ideas extends Changes {
     this.changed();
   }
 
-  status(id: string, status: "open" | "idea" | "dropped") {
+  async status(id: string, status: "open" | "idea" | "dropped") {
     const was = this.get(id).status;
-    open(this.state).tasks.edit(id, { status });
+    await open(this.state).tasks.edit(id, { status });
 
     return was;
   }

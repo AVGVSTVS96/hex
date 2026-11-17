@@ -155,7 +155,7 @@ export function failed(state: string, error: string) {
   const general = first ? generalOf(openStore(state).threads.list()) : undefined;
 
   if (general) {
-    openStore(state).messages.deliver({
+    void openStore(state).messages.deliver({
       key: `check:failed:${createHash("sha256").update(error).digest("hex").slice(0, 12)}`,
       to: general.thread,
       from: "check",
@@ -246,7 +246,7 @@ export function handBack(state: string, back: Back[], threads: Record<string, st
     const source = from.find((ref) => ref.message !== undefined);
 
     if (task in threads) {
-      openStore(state).messages.deliver({
+      void openStore(state).messages.deliver({
         key: source
           ? `check:back:${source.app}:${source.thread}:${source.message}`
           : `check:back:${id}`,

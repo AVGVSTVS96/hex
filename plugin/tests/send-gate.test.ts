@@ -70,7 +70,7 @@ function inThread(...said: Said[]) {
   const lines = said.flatMap(({ author, user, body, seen = shown }) => {
     const key = `telegram:${id}:${made++}`;
 
-    store.messages.deliver({ key, to: id, from: "telegram", author, body, meta: { user } });
+    void store.messages.deliver({ key, to: id, from: "telegram", author, body, meta: { user } });
 
     return seen === null ? [] : [seen(key, user, body)];
   });

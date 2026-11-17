@@ -55,7 +55,7 @@ const noted = () =>
     ? readFileSync(join(dir, "noted"), "utf-8").trim().split("\n")
     : [];
 
-beforeEach(() => {
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "observe-"));
   memo = join(dir, "memo");
   writeFileSync(
@@ -68,7 +68,7 @@ beforeEach(() => {
   );
   chmodSync(memo, 0o755);
   const store = open(dir);
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-100:40",
     to: "-100:7",
     from: "telegram",
@@ -76,7 +76,7 @@ beforeEach(() => {
     body: "get the login page fixed first",
     meta: { user_id: "1" },
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-100:50",
     to: "-100:7",
     from: "telegram",
@@ -84,7 +84,7 @@ beforeEach(() => {
     body: "ship it on fridays only, my team reviews thursdays",
     meta: { user_id: "1", ts: "2026-10-20T06:31:00.000Z" },
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "schedule:nightly:1",
     to: "-100:7",
     from: "schedule",
@@ -94,7 +94,7 @@ beforeEach(() => {
   });
 
   for (const key of ["telegram:-100:40", "telegram:-100:50", "schedule:nightly:1"]) {
-    store.messages.take(key, "s");
+    await store.messages.take(key, "s");
   }
 });
 
@@ -112,7 +112,7 @@ test("the turn's messages reach the pass, which writes notes for the owner's no 
     profile: null,
   }));
 
-  open(dir).messages.deliver(
+  await open(dir).messages.deliver(
     {
       key: "telegram:-100:51",
       to: "-100:7",
@@ -192,7 +192,7 @@ test("a pass that fails hands its messages to the next one, and one that died do
   expect(asked).toHaveLength(1);
 
   const store = open(dir);
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-100:60",
     to: "-100:7",
     from: "telegram",
@@ -200,14 +200,16 @@ test("a pass that fails hands its messages to the next one, and one that died do
     body: "move standup to 10",
     meta: { user_id: "1" },
   });
-  store.messages.take("telegram:-100:60", "s");
-  expect(store.messages.observe("s", new Date().toISOString()).map((row) => row.key)).toEqual([
-    "telegram:-100:60",
-  ]);
-  expect(store.messages.observe("s", new Date().toISOString())).toEqual([]);
+  await store.messages.take("telegram:-100:60", "s");
+  expect(
+    (await store.messages.observe("s", new Date().toISOString())).map((row) => row.key),
+  ).toEqual(["telegram:-100:60"]);
+  expect(await store.messages.observe("s", new Date().toISOString())).toEqual([]);
   await Bun.sleep(2);
   expect(
-    store.messages.observe("s", new Date().toISOString(), undefined, 0).map((row) => row.key),
+    (await store.messages.observe("s", new Date().toISOString(), undefined, 0)).map(
+      (row) => row.key,
+    ),
   ).toEqual(["telegram:-100:60"]);
 });
 
@@ -215,7 +217,7 @@ test("a pass takes what the session had taken when its turn ended, not the next 
   const by = new Date().toISOString();
   await Bun.sleep(2);
   const store = open(dir);
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-100:70",
     to: "-100:7",
     from: "telegram",
@@ -223,7 +225,7 @@ test("a pass takes what the session had taken when its turn ended, not the next 
     body: "and add a dark mode",
     meta: { user_id: "1" },
   });
-  store.messages.take("telegram:-100:70", "s");
+  await store.messages.take("telegram:-100:70", "s");
   const seen: string[] = [];
   await observe(dir, "s", { ask: answering(seen), memo, by });
   expect(seen[0]).toContain("[telegram:-100:50]");
@@ -262,7 +264,7 @@ test("the profile is rewritten to the current truth, and one that misquotes the 
   expect(open(dir).profiles.current()).toBe(profile);
 
   const store = open(dir);
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-100:80",
     to: "-100:7",
     from: "telegram",
@@ -270,7 +272,7 @@ test("the profile is rewritten to the current truth, and one that misquotes the 
     body: "actually ship any day now",
     meta: { user_id: "1" },
   });
-  store.messages.take("telegram:-100:80", "s");
+  await store.messages.take("telegram:-100:80", "s");
 
   const answers = [
     '# Always\n- Ships "whenever" [telegram:-100:80]',
@@ -342,18 +344,18 @@ test("a time reads the way notes write it, on the owner’s clock", () => {
 test("a turn with no message of the owner's gets no pass, and its messages are done", async () => {
   await observe(dir, "s", { ask: answering([]), memo });
   const store = open(dir);
-  store.messages.deliver(
+  await store.messages.deliver(
     { key: "terminal:job", to: "s", from: "terminal", author: "hex", body: "Backup ran." },
     "s",
   );
   const asked: string[] = [];
   expect(await observe(dir, "s", { ask: answering(asked), memo })).toEqual([]);
   expect(asked).toEqual([]);
-  expect(store.messages.observe("s", new Date().toISOString())).toEqual([]);
+  expect(await store.messages.observe("s", new Date().toISOString())).toEqual([]);
 });
 
 test("a retry writes no note twice", async () => {
-  open(dir).messages.deliver(
+  await open(dir).messages.deliver(
     {
       key: "terminal:answer",
       to: "s",
@@ -376,7 +378,7 @@ test("a retry writes no note twice", async () => {
 });
 
 test("an app session's last words in its terminal reach the pass as what the owner doesn't see", async () => {
-  open(dir).messages.deliver(
+  await open(dir).messages.deliver(
     {
       key: "terminal:summed",
       to: "-100:7",
@@ -425,18 +427,18 @@ test("the Stop hook keeps a T3 turn's answer as hex's reply in T3, whatever prom
 test("turns wait in hex.db and one drainer works through them oldest first, while a lease is held the turn waits for its holder", async () => {
   const store = open(dir);
   const seen: string[] = [];
-  store.passes.wait({ session: "a", by: "" });
-  store.passes.wait({ session: "b", by: "" });
+  await store.passes.wait({ session: "a", by: "" });
+  await store.passes.wait({ session: "b", by: "" });
   await Promise.all([drain(dir, drainingInto(seen)), drain(dir, drainingInto(seen, "2"))]);
   expect(seen).toEqual(["a", "b"]);
   expect(store.passes.waiting()).toBeUndefined();
 
-  expect(store.leases.take("observe", "other", 60_000)).toBe(true);
-  store.passes.wait({ session: "c", by: "" });
+  expect(await store.leases.take("observe", "other", 60_000)).toBe(true);
+  await store.passes.wait({ session: "c", by: "" });
   await drain(dir, drainingInto(seen));
   expect(store.passes.waiting()?.pass).toEqual({ session: "c", by: "" });
-  store.leases.release("observe", "other");
-  expect(store.leases.take("observe", "dead", 0)).toBe(true);
+  await store.leases.release("observe", "other");
+  expect(await store.leases.take("observe", "dead", 0)).toBe(true);
   await Bun.sleep(2);
   await drain(dir, drainingInto(seen));
   expect(seen).toEqual(["a", "b", "c"]);
@@ -444,13 +446,13 @@ test("turns wait in hex.db and one drainer works through them oldest first, whil
 
 test("a holder renews its own lease, and a turn that throws leaves the queue to the next", async () => {
   const store = open(dir);
-  expect(store.leases.take("observe", "me", 0)).toBe(true);
-  expect(store.leases.take("observe", "me", 60_000)).toBe(true);
+  expect(await store.leases.take("observe", "me", 0)).toBe(true);
+  expect(await store.leases.take("observe", "me", 60_000)).toBe(true);
   await Bun.sleep(2);
-  expect(store.leases.take("observe", "other", 60_000)).toBe(false);
-  store.leases.release("observe", "me");
-  store.passes.wait({ session: "bad", by: "" });
-  store.passes.wait({ session: "good", by: "" });
+  expect(await store.leases.take("observe", "other", 60_000)).toBe(false);
+  await store.leases.release("observe", "me");
+  await store.passes.wait({ session: "bad", by: "" });
+  await store.passes.wait({ session: "good", by: "" });
   const seen: string[] = [];
   await drain(dir, (turn) =>
     turn.session === "bad" ? Promise.reject(new Error("boom")) : drainingInto(seen)(turn),

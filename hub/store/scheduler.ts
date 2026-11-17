@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import { z } from "zod";
 
-import type { Core, Write } from "./db.ts";
+import type { Core, Mode, Written, Write } from "./db.ts";
 import { MessageRows } from "./messages.ts";
 import type { Messages, Row } from "./messages.ts";
 
@@ -15,12 +15,12 @@ export const signalTo = (name: string) => `${SIGNAL}${name}`;
 export const signalOf = (address: string) =>
   address.startsWith(SIGNAL) ? address.slice(SIGNAL.length) : undefined;
 
-export class Scheduler {
+export class Scheduler<M extends Mode = "queued"> {
   private readonly db: Database;
-  private readonly write: Write;
-  private readonly messages: Messages;
+  private readonly write: Write<M>;
+  private readonly messages: Messages<"tx">;
 
-  constructor({ db, write }: Core, messages: Messages) {
+  constructor({ db, write }: Core<M>, messages: Messages<"tx">) {
     this.db = db;
     this.write = write;
     this.messages = messages;
@@ -31,7 +31,7 @@ export class Scheduler {
   }
 
   check(minute: number) {
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query(
           "insert into scheduler (one, checked) values (1, ?) on conflict (one) do update set checked = excluded.checked",
@@ -40,28 +40,38 @@ export class Scheduler {
     );
   }
 
-  fire(schedule: string, minute: number, to: string, body: string, late = false): boolean {
+  fire(
+    schedule: string,
+    minute: number,
+    to: string,
+    body: string,
+    late = false,
+  ): Written<M, boolean> {
     const slot = new Date(minute * 60_000).toISOString().slice(0, 16);
 
-    return this.messages.deliver({
-      key: `schedule:${schedule}@${slot}Z`,
-      to,
-      from: "schedule",
-      author: "prompt",
-      body,
-      meta: { user: "schedule", schedule, ...(late && { late: "true" }) },
-    });
+    return this.write(() =>
+      this.messages.deliver({
+        key: `schedule:${schedule}@${slot}Z`,
+        to,
+        from: "schedule",
+        author: "prompt",
+        body,
+        meta: { user: "schedule", schedule, ...(late && { late: "true" }) },
+      }),
+    );
   }
 
-  signal(name: string, why: string, id: string = crypto.randomUUID()): boolean {
-    return this.messages.deliver({
-      key: `${signalTo(name)}@${id}`,
-      to: signalTo(name),
-      from: "signal",
-      author: "prompt",
-      body: why,
-      meta: { user: "signal" },
-    });
+  signal(name: string, why: string, id: string = crypto.randomUUID()): Written<M, boolean> {
+    return this.write(() =>
+      this.messages.deliver({
+        key: `${signalTo(name)}@${id}`,
+        to: signalTo(name),
+        from: "signal",
+        author: "prompt",
+        body: why,
+        meta: { user: "signal" },
+      }),
+    );
   }
 
   signals(): Row[] {
@@ -90,16 +100,16 @@ export class Scheduler {
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // One run for every signal heard since the schedule last ran, each taken by it.
-  fireOn(schedule: string, heard: Row[], to: string, body: string): boolean {
-    const [first] = heard;
-
-    if (first === undefined) {
-      return false;
-    }
-
-    const key = `schedule:${schedule}@${first.key}`;
-
+  fireOn(schedule: string, heard: Row[], to: string, body: string): Written<M, boolean> {
     return this.write(() => {
+      const [first] = heard;
+
+      if (first === undefined) {
+        return false;
+      }
+
+      const key = `schedule:${schedule}@${first.key}`;
+
       const fired = this.messages.deliver({
         key,
         to,

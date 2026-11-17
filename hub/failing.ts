@@ -94,7 +94,7 @@ export function failedStarts({
     ) {
       failing.told = true;
       const body = `[hub] hex couldn't start the session of ${app} thread "${threads.get(thread)?.name ?? thread}" ${failing.count} times in a row: ${reason}. Its next message starts it again.`;
-      kept(
+      void kept.later(
         (store) =>
           store.messages.deliver({
             key: `hub:${app}:${thread}:failing@${randomUUID()}`,
@@ -128,8 +128,8 @@ export function failedStarts({
     const key = `hub:${thread}:lost:${session}`;
     const body = `[hub] Claude Code no longer has the conversation of session ${session}, which this thread was to continue, so you're a new session without it; say so when you reply.`;
 
-    if (
-      !kept((store) => {
+    void kept.later(
+      (store) =>
         store.messages.deliver({
           key,
           to: thread,
@@ -137,13 +137,9 @@ export function failedStarts({
           author: "prompt",
           body,
           meta: { user: "hub" },
-        });
-
-        return true;
-      }, false)
-    ) {
-      return false;
-    }
+        }),
+      false,
+    );
 
     waiting.passed(thread, key);
     process.stderr.write(

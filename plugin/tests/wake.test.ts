@@ -94,9 +94,9 @@ test("the file holds every part of memo's wake in order, as long as it runs", ()
   expect(body(wake())).toBe(`${LABEL + notes(0, 200) + notes(200, 200)}You are awake.\n`);
 });
 
-test("the profile comes first, ahead of memory", () => {
+test("the profile comes first, ahead of memory", async () => {
   memo(["#0 2026-10-06 First note.\nYou are awake.\n"]);
-  open(join(home, "state")).profiles.profiled("", "# Always\n- Ships on fridays\n");
+  await open(join(home, "state")).profiles.profiled("", "# Always\n- Ships on fridays\n");
   expect(body(wake({ MEMORY_DIR: join(home, "memory"), HEX_STORE: join(home, "state") }))).toBe(
     "My profile, the current truth about me, kept by hex's memory agent from my own words:\n\n# Always\n- Ships on fridays\n\nYour memory, oldest first:\n\n#0 2026-10-06 First note.\nYou are awake.\n",
   );
@@ -129,9 +129,9 @@ test("memory is fenced, so Claude Code reads no `@path` in it as an import", () 
   expect(text).toEndWith("You are awake.\n````\n");
 });
 
-test("a wake waits for the one holding hex.db's wake lease, and goes once it's let go or runs out", () => {
+test("a wake waits for the one holding hex.db's wake lease, and goes once it's let go or runs out", async () => {
   memo(["#0 2026-10-06 First note.\nYou are awake.\n"]);
-  open(join(home, "state")).leases.take("wake", "another wake", 500);
+  await open(join(home, "state")).leases.take("wake", "another wake", 500);
   const started = Date.now();
   expect(body(wake())).toBe(`${LABEL}#0 2026-10-06 First note.\nYou are awake.\n`);
   expect(Date.now() - started).toBeGreaterThanOrEqual(400);

@@ -68,9 +68,9 @@ function fired() {
     .map((row) => row.key);
 }
 
-function takeAll() {
+async function takeAll() {
   for (const row of open(dir).messages.untaken()) {
-    open(dir).messages.take(row.key, "session");
+    await open(dir).messages.take(row.key, "session");
   }
 }
 
@@ -89,7 +89,7 @@ test("a job fires at its minute on the owner's clock, once, beside the main thre
   ).toBeUndefined();
 });
 
-test("steps, ranges, lists and Sunday as 0 or 7 fire where cron does", () => {
+test("steps, ranges, lists and Sunday as 0 or 7 fire where cron does", async () => {
   jobs({
     leisure: { cron: "17 */3 * * *", prompt: "Leisure" },
     weekdays: { cron: "0 9 * * 1-5", prompt: "Morning" },
@@ -101,7 +101,7 @@ test("steps, ranges, lists and Sunday as 0 or 7 fire where cron does", () => {
   for (let minute = at(18, 0); minute < at(19, 0); minute++) {
     check(dir, hexDir, "general", minute);
     keys.push(...fired());
-    takeAll();
+    await takeAll();
   }
 
   expect(keys.filter((key) => key.startsWith("schedule:leisure@"))).toHaveLength(8);
@@ -110,7 +110,7 @@ test("steps, ranges, lists and Sunday as 0 or 7 fire where cron does", () => {
   expect(keys.some((key) => key.startsWith("schedule:weekdays@"))).toBe(false);
 });
 
-test("an at fires once at each time it lists, and never again after", () => {
+test("an at fires once at each time it lists, and never again after", async () => {
   jobs({
     treat: {
       at: ["2026-10-20 16:00", "2026-10-20T18:00"],
@@ -123,14 +123,14 @@ test("an at fires once at each time it lists, and never again after", () => {
   for (let minute = at(20, 15, 59); minute <= at(20, 18, 1); minute++) {
     check(dir, hexDir, "general", minute);
     keys.push(...fired());
-    takeAll();
+    await takeAll();
   }
 
   expect(keys).toEqual(["schedule:treat@2026-10-20T23:00Z", "schedule:treat@2026-10-21T01:00Z"]);
   expect(open(dir).messages.get(keys[0] ?? "")?.to).toBe("topic");
 });
 
-test("an at fires once when clocks go back, and as far past the jump as it was set when they skip it", () => {
+test("an at fires once when clocks go back, and as far past the jump as it was set when they skip it", async () => {
   jobs({
     back: { at: "2026-11-01 01:30", prompt: "Back" },
     ahead: { at: "2027-03-14 02:30", prompt: "Ahead" },
@@ -144,7 +144,7 @@ test("an at fires once when clocks go back, and as far past the jump as it was s
     for (let minute = from; minute <= to; minute++) {
       check(dir, hexDir, "general", minute);
       keys.push(...fired());
-      takeAll();
+      await takeAll();
     }
   }
 
@@ -180,7 +180,7 @@ test("a job fires every time it comes due, even while its last message waits to 
   ]);
 });
 
-test("a broken schedules.json fires nothing, says why once, and its jobs catch up once it loads", () => {
+test("a broken schedules.json fires nothing, says why once, and its jobs catch up once it loads", async () => {
   jobs({ heartbeat: { cron: "45 * * * *", prompt: "Hourly check" } });
   check(dir, hexDir, "general", at(18, 9));
   schedulesJson('{ "heartbeat": { "cron": "hourly", "prompt": "x" } }');
@@ -189,7 +189,7 @@ test("a broken schedules.json fires nothing, says why once, and its jobs catch u
   expect(rest).toEqual([]);
   expect(broken?.body).toContain('"hourly" is not a five-field cron expression');
   expect(broken?.to).toBe("beside:general");
-  takeAll();
+  await takeAll();
   jobs({ heartbeat: { cron: "45 * * * *", prompt: "Hourly check" } });
   check(dir, hexDir, "general", at(18, 9, 51));
   expect(fired()).toEqual(["schedule:heartbeat@2026-10-18T16:45Z"]);
@@ -318,15 +318,18 @@ test("a watch is a job with the name the owner knows it by", () => {
   ).toThrow("watch must be");
 });
 
-test("signals that come in a burst fire a job that runs on them once, beside the main thread, saying why", () => {
+test("signals that come in a burst fire a job that runs on them once, beside the main thread, saying why", async () => {
   jobs({ "catch-up": { on: ["job-failed", "pace"], cron: "4 7 * * *", prompt: "Catch up." } });
   checkWith(at(19, 8, 0));
 
   for (const unit of ["a", "b", "c"]) {
-    open(dir).scheduler.signal("job-failed", `[job] ${unit} ended: failed (exit 1).\nits output`);
+    await open(dir).scheduler.signal(
+      "job-failed",
+      `[job] ${unit} ended: failed (exit 1).\nits output`,
+    );
   }
 
-  open(dir).scheduler.signal("nobody-listens", "x");
+  await open(dir).scheduler.signal("nobody-listens", "x");
   checkWith(at(19, 8, 1));
 
   const [run, ...more] = open(dir).messages.untaken();
@@ -338,38 +341,38 @@ test("signals that come in a burst fire a job that runs on them once, beside the
   expect(open(dir).scheduler.signals()).toEqual([]);
 });
 
-test("signals that come while a run waits or works fold into one run after it", () => {
+test("signals that come while a run waits or works fold into one run after it", async () => {
   jobs({ "catch-up": { on: ["stalled"], prompt: "Catch up." } });
   checkWith(at(19, 8, 0));
-  open(dir).scheduler.signal("stalled", "one");
+  await open(dir).scheduler.signal("stalled", "one");
   checkWith(at(19, 8, 1));
-  open(dir).scheduler.signal("stalled", "two");
+  await open(dir).scheduler.signal("stalled", "two");
   checkWith(at(19, 8, 2));
   expect(runs()).toHaveLength(1);
 
   const [first] = open(dir).messages.untaken();
-  open(dir).messages.take(first?.key ?? "", "run-1");
-  open(dir).turns.turned("run-1", true);
-  open(dir).scheduler.signal("stalled", "three");
+  await open(dir).messages.take(first?.key ?? "", "run-1");
+  await open(dir).turns.turned("run-1", true);
+  await open(dir).scheduler.signal("stalled", "three");
 
   checkWith(at(19, 8, 3), working);
   expect(runs()).toEqual([]);
 
-  open(dir).turns.turned("run-1", false);
+  await open(dir).turns.turned("run-1", false);
   checkWith(at(19, 8, 4), working);
   const [next, ...others] = open(dir).messages.untaken();
   expect(others).toEqual([]);
   expect(next?.body).toBe("[catch-up] Catch up.\n\nWhy now:\n- two\n- three");
 });
 
-test("a run whose session died mid-turn doesn't hold signals back", () => {
+test("a run whose session died mid-turn doesn't hold signals back", async () => {
   jobs({ "catch-up": { on: ["stalled"], prompt: "Catch up." } });
   checkWith(at(19, 8, 0));
-  open(dir).scheduler.signal("stalled", "one");
+  await open(dir).scheduler.signal("stalled", "one");
   checkWith(at(19, 8, 1));
-  takeAll();
-  open(dir).turns.turned("session", true);
-  open(dir).scheduler.signal("stalled", "two");
+  await takeAll();
+  await open(dir).turns.turned("session", true);
+  await open(dir).scheduler.signal("stalled", "two");
   checkWith(at(19, 8, 2));
   expect(
     open(dir)
@@ -378,7 +381,7 @@ test("a run whose session died mid-turn doesn't hold signals back", () => {
   ).toEqual(["[catch-up] Catch up.\n\nWhy now:\n- two"]);
 });
 
-test("a session of hex's mid-turn that writes nothing for half an hour signals stalled once each quiet stretch", () => {
+test("a session of hex's mid-turn that writes nothing for half an hour signals stalled once each quiet stretch", async () => {
   const claude = join(dir, "claude");
   const before = process.env.CLAUDE_CONFIG_DIR;
   process.env.CLAUDE_CONFIG_DIR = claude;
@@ -414,7 +417,7 @@ test("a session of hex's mid-turn that writes nothing for half an hour signals s
     wrote(31);
     checkWith(minute + 1, sessions);
     checkWith(minute + 2, sessions);
-    takeAll();
+    await takeAll();
     checkWith(minute + 3, sessions);
     expect(fired()).toEqual([]);
 

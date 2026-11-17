@@ -92,12 +92,12 @@ void (async () => {
   if (existsSync(down)) {
     const since = new Date(Number(readFileSync(down, "utf-8")) * 1000);
     const from = Number.isNaN(since.getTime()) ? "" : ` from ${since.toLocaleString()}`;
-    tell("back", `hex is back, on ${hostname()}: it couldn't start${from} until now.`);
+    await tell("back", `hex is back, on ${hostname()}: it couldn't start${from} until now.`);
     rmSync(down);
   }
 
   if (existsSync(rollback)) {
-    tell("rollback", readFileSync(rollback, "utf-8").trim());
+    await tell("rollback", readFileSync(rollback, "utf-8").trim());
     rmSync(rollback);
   }
 })();

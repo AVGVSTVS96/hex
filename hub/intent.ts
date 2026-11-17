@@ -472,20 +472,18 @@ async function checkAs(
 
     const through = verdict.verdict === "revise" && round > SENDBACKS_BEFORE_IT_GOES_THROUGH;
 
-    if (verdict.verdict === "revise" && !through) {
-      store.seen.show(
-        session,
-        key,
-        JSON.stringify({
-          at: Date.now(),
-          rounds: round,
-          brief: text.slice(0, 8000),
-          notes: verdict.notes,
-        } satisfies Sent),
-      );
-    } else {
-      store.seen.unshow(session, key);
-    }
+    await (verdict.verdict === "revise" && !through
+      ? store.seen.show(
+          session,
+          key,
+          JSON.stringify({
+            at: Date.now(),
+            rounds: round,
+            brief: text.slice(0, 8000),
+            notes: verdict.notes,
+          } satisfies Sent),
+        )
+      : store.seen.unshow(session, key));
 
     return { kind, verdict, text, round, ...(through && { through }) };
   } catch (error) {

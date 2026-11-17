@@ -38,13 +38,15 @@ import { threadSessions } from "./sessions.ts";
 import { sessionStarts } from "./start.ts";
 import { sessionStops } from "./stops.ts";
 import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
-import type { Author, MessageId, NewRow, Row, Store } from "./store.ts";
+import type { Author, MessageId, NewRow, Row, Store, Tx } from "./store.ts";
 import { openThreads } from "./threads.ts";
 import { wentThrough, whenThrough } from "./through.ts";
 import { sessionTurns } from "./turns.ts";
 import { messagesWaiting, toMessageWithKeyFirstForTheHook } from "./waiting.ts";
 import type { Message, Waits } from "./waiting.ts";
 import { zoneOf } from "./zone.ts";
+
+type Along = (tx: Tx) => boolean;
 
 export { dispatch, tool } from "./mcp.ts";
 
@@ -977,7 +979,7 @@ export function startHub({
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A message is kept before anything else happens to it, so once this returns the app can be told it arrived: a crash from then on leaves it with hex, for whichever session serves the thread next. A key kept already is the app sending it again. along: the change to hex's records the message tells of, like the answer a tap gives, made in the same write so both land or neither does; when it changes nothing, or hex.db can't take it, there's nothing to tell. Whether the thread is told.
-  function deliver(thread: string, name: string, message: Message, along?: () => boolean): boolean {
+  function deliver(thread: string, name: string, message: Message, along?: Along) {
     const { author } = message;
 
     if (!author) {
@@ -987,12 +989,26 @@ export function startHub({
     const key = `${app}:${message.key ?? randomUUID()}`;
     const { content, meta } = message;
 
-    const added = kept(
+    const told = (added: boolean | undefined) => {
+      if (added === false) {
+        return false;
+      }
+
+      pass(
+        thread,
+        name,
+        added === true ? { content, author, meta: { key, ...meta } } : { content, meta },
+      );
+
+      return true;
+    };
+
+    const saved = kept.later<boolean | undefined>(
       (store) =>
         store.write(
-          () =>
-            (!along || along()) &&
-            store.messages.deliver({
+          (tx) =>
+            (!along || along(tx)) &&
+            tx.messages.deliver({
               key,
               to: thread,
               from: app,
@@ -1000,17 +1016,12 @@ export function startHub({
               body: content,
               meta,
             }),
+          told,
         ),
-      along ? false : undefined,
+      undefined,
     );
 
-    if (added === false) {
-      return false;
-    }
-
-    pass(thread, name, added ? { content, author, meta: { key, ...meta } } : { content, meta });
-
-    return true;
+    return saved.then((result) => result ?? told(along ? false : undefined));
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1028,7 +1039,7 @@ export function startHub({
       meta,
     };
 
-    kept(
+    void kept.later(
       (store) => store.messages.deliver(row, caller.getStore() ?? threads.current(thread) ?? "hub"),
       false,
     );
@@ -1085,16 +1096,32 @@ export function startHub({
       message.author === "owner" &&
       present(key) &&
       present(session) &&
-      kept((store) => store.messages.hold(key, session), false)
+      kept((store) => {
+        const row = store.messages.get(key);
+        const untaken = row !== null && row.taken === undefined;
+
+        if (untaken) {
+          void store.messages.hold(key, session);
+        }
+
+        return untaken;
+      }, false)
     );
   }
 
   function letHeldGo(thread: string) {
-    const rows = kept((store) => store.messages.letHeldGo(thread), []);
-
-    for (const row of rows) {
-      forward(thread, threads.of(thread).name, toMessageWithKeyFirstForTheHook(row));
-    }
+    void kept.later(
+      (store) =>
+        store.write(
+          (tx) => tx.messages.letHeldGo(thread),
+          (rows) => {
+            for (const row of rows) {
+              forward(thread, threads.of(thread).name, toMessageWithKeyFirstForTheHook(row));
+            }
+          },
+        ),
+      undefined,
+    );
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1156,7 +1183,7 @@ export function startHub({
     }
 
     if (clients.get(app)?.waits === true) {
-      kept((store) => store.messages.readdress(row.key, thread), false);
+      void kept.later((store) => store.messages.readdress(row.key, thread), false);
 
       return;
     }
@@ -1188,12 +1215,17 @@ export function startHub({
     );
 
     besides.delete(session);
-    besideEnded(thread, session, row.key, `exit ${code}`);
+    await besideEnded(thread, session, row.key, `exit ${code}`);
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A run beside a thread that saw its turn through is a turn that went through. One that didn't, as on an API error, waits for one to go through anywhere, as a thread's turn does, and its chat hears once while runs there wait; one that waited already is left, and its chat hears that.
-  function besideEnded(thread: string, session: string, key?: string, exit = "its session ended") {
+  async function besideEnded(
+    thread: string,
+    session: string,
+    key?: string,
+    exit = "its session ended",
+  ) {
     const said = lastWords(files.besideLog(session));
 
     if (closed) {
@@ -1204,7 +1236,7 @@ export function startHub({
       (row) => row.beside === besideOf(thread) && row.meta?.stalled !== undefined,
     );
 
-    const { given, left } = kept((store) => store.turns.besideEnded(session, key), {
+    const { given, left } = await kept.later((store) => store.turns.besideEnded(session, key), {
       given: [],
       left: [],
     });
@@ -1239,10 +1271,16 @@ export function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // One run that waits beside a thread, for each turn that goes through, so the runs an outage stopped don't all start at once.
   function releaseBeside() {
-    kept((store) => {
-      store.messages.supersede(besideAddresses());
-    }, undefined);
+    void kept.later(
+      (store) =>
+        store.write((tx) => {
+          tx.messages.supersede(besideAddresses());
+        }, releaseOne),
+      undefined,
+    );
+  }
 
+  function releaseOne() {
     const stalled = besideRows().filter((row) => row.meta?.stalled !== undefined);
 
     if (stalled.some((row) => [...besides.values()].includes(row.key))) {
@@ -1261,11 +1299,15 @@ export function startHub({
   function besideStart() {
     const alive = kept((store) => sessionsRunning(store), new Map<string, Session>());
 
-    kept((store) => {
-      for (const dead of store.turns.unfinishedBeside([...alive.keys()])) {
-        store.turns.besideEnded(dead, undefined, undefined, false);
-      }
-    }, undefined);
+    void kept.later(
+      (store) =>
+        store.write((tx) => {
+          for (const dead of tx.turns.unfinishedBeside([...alive.keys()])) {
+            tx.turns.besideEnded(dead, undefined, undefined, false);
+          }
+        }),
+      undefined,
+    );
 
     files.sweepBesideLogs((session) => alive.has(session));
 
@@ -1287,7 +1329,7 @@ export function startHub({
     besides.set(run.id, undefined);
     await claude.exited(run.pid);
     besides.delete(run.id);
-    besideEnded(thread, run.id);
+    await besideEnded(thread, run.id);
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1321,7 +1363,7 @@ export function startHub({
       }
 
       run.stalled = "resumed";
-      deliver(thread, threads.get(thread)?.name ?? thread, {
+      void deliver(thread, threads.get(thread)?.name ?? thread, {
         content:
           "[hub] Your last turn here failed on the API, and turns go through again now: carry on with it.",
         author: "prompt",
@@ -1340,7 +1382,7 @@ export function startHub({
     }
 
     for (const key of keys) {
-      kept((store) => store.messages.take(key, session), false);
+      void kept.later((store) => store.messages.take(key, session), false);
     }
   }
 
@@ -1589,7 +1631,7 @@ export function startHub({
       }
 
       case "inbound": {
-        inbound(request.thread, {
+        void inbound(request.thread, {
           content: request.content,
           meta: request.meta ?? {},
           ...(request.key !== undefined && { key: request.key }),
@@ -1688,9 +1730,7 @@ export function startHub({
     if (how === "interrupted") {
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
       // An interrupt runs no Stop hook, so the hub records the turn's end in hex's record of it, as of the press, settling what the session took: a turn begun since then is left running.
-      kept((store) => {
-        store.turns.handled(session, pressed);
-      }, undefined);
+      void kept.later((store) => store.turns.handled(session, pressed), undefined);
       turnEnded(thread, true);
 
       if (
@@ -1751,7 +1791,7 @@ export function startHub({
     renewal,
     keep,
     adrift: drift,
-    synced: () => kept((store) => store.synced(), Promise.resolve()),
+    synced: () => kept.later((store) => store.synced(), undefined),
     renew: renewAsked,
     session: threads.current,
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1861,7 +1901,11 @@ const showing = new Map<string, Promise<void>>();
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The owner's words for a thread, written in another client: the thread's app takes them as it does its own messages, then shows them where the thread lives, so its chat there holds everything said in it. A key sent again changes nothing. Whether the thread can take them.
-export function say(app: string, thread: string, message: Omit<Message, "author">): boolean {
+export async function say(
+  app: string,
+  thread: string,
+  message: Omit<Message, "author">,
+): Promise<boolean> {
   const home = taking(app, thread);
 
   if (!home) {
@@ -1870,7 +1914,7 @@ export function say(app: string, thread: string, message: Omit<Message, "author"
 
   const { there, name } = home;
 
-  if (there.hub.deliver(thread, name, { ...message, author: "owner" })) {
+  if (await there.hub.deliver(thread, name, { ...message, author: "owner" })) {
     const id = `${app}:${thread}`;
     const earlier = showing.get(id);
 
@@ -1914,7 +1958,7 @@ export async function begin(
     there.hub.open(opened.thread, name, first, cwd);
   } else {
     there.hub.register(opened.thread, name, cwd);
-    there.hub.deliver(opened.thread, name, first);
+    await there.hub.deliver(opened.thread, name, first);
   }
 
   return opened;

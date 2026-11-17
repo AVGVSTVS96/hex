@@ -109,7 +109,7 @@ export function sessionStarts({
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // The session's hooks keep what's typed in it as the owner's; this one is hex's.
     if (present(prompt)) {
-      kept(
+      void kept.later(
         (store) =>
           store.messages.deliver(
             {

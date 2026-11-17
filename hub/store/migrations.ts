@@ -15,13 +15,13 @@ import { AnswerJson, SettledJson } from "./questions.ts";
 import type { Questions } from "./questions.ts";
 import type { Relays } from "./relays.ts";
 
-type Migrating = {
+export type Migrating = {
   dir: string;
   db: Database;
-  messages: Messages;
-  questions: Questions;
-  pins: Pins;
-  relays: Relays;
+  messages: Messages<"tx">;
+  questions: Questions<"tx">;
+  pins: Pins<"tx">;
+  relays: Relays<"tx">;
 };
 
 const UnnotedPinRows = z.array(

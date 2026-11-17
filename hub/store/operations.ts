@@ -3,15 +3,15 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
 import { TextOrNull } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Mode, Written, Write } from "./db.ts";
 
 const OperationRow = z.object({ input: z.string(), result: TextOrNull });
 
-export class Operations {
+export class Operations<M extends Mode = "queued"> {
   private readonly db: Database;
-  private readonly write: Write;
+  private readonly write: Write<M>;
 
-  constructor({ db, write }: Core) {
+  constructor({ db, write }: Core<M>) {
     this.db = db;
     this.write = write;
   }
@@ -20,7 +20,7 @@ export class Operations {
     scope: string,
     id: string,
     input: string,
-  ): { fresh: boolean; input: string; result: string | null } {
+  ): Written<M, { fresh: boolean; input: string; result: string | null }> {
     return this.write(() => {
       const fresh =
         this.db
@@ -40,7 +40,7 @@ export class Operations {
   }
 
   finish(scope: string, id: string, result: string) {
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query("update operations set result = ? where scope = ? and id = ?")
         .run(result, scope, id),

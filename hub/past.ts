@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { asked, open } from "./store.ts";
-import type { Author, NewRow, Store } from "./store.ts";
+import type { Author, NewRow, Store, Tx } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
 const HEAD = /^## (.+?) · (\w+) · (?:(\d{4}-\d{2}-\d{2}) )?(\d{1,2}):(\d{2})\n/gmu;
@@ -21,7 +21,7 @@ function nextAfter(previous: string, minuteAt: string) {
     : minuteAt;
 }
 
-export function importLogs(store: Store, dir: string, zone: string): number {
+export async function importLogs(store: Store, dir: string, zone: string): Promise<number> {
   const files = [join(dir, "threads"), dir].flatMap((each) =>
     existsSync(each)
       ? readdirSync(each)
@@ -63,10 +63,10 @@ export function importLogs(store: Store, dir: string, zone: string): number {
   const turnsRepeatedByResumedOrForkedSessions = new Set<string>();
   let added = 0;
 
-  store.write(() => {
+  await store.write((tx) => {
     for (const file of files) {
       try {
-        added += take(file);
+        added += take(tx, file);
       } catch (error) {
         process.stderr.write(`hex couldn't read ${file} into hex.db: ${String(error)}\n`);
       }
@@ -75,7 +75,7 @@ export function importLogs(store: Store, dir: string, zone: string): number {
 
   return added;
 
-  function take(file: string): number {
+  function take(tx: Tx, file: string): number {
     const log = readFileSync(file, "utf-8");
     const session = /^# (\d{4}-\d{2}-\d{2}) · session (\S+)/u.exec(log);
 
@@ -170,7 +170,7 @@ export function importLogs(store: Store, dir: string, zone: string): number {
       ]);
     });
 
-    return store.messages.past(rows, id).length;
+    return tx.messages.past(rows, id).length;
   }
 }
 
@@ -181,7 +181,7 @@ if (import.meta.main) {
     throw new Error("past.ts takes the hex home to read log/ from");
   }
 
-  const added = importLogs(
+  const added = await importLogs(
     open(join(home, "state")),
     join(home, "log"),
     zoneOf(home) ?? Temporal.Now.timeZoneId(),

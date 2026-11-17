@@ -1249,13 +1249,13 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     },
     questions: {
       answer: (thread, key, label, via) => {
-        ledger.answered(thread, key, label, via);
+        void ledger.answered(thread, key, label, via);
       },
       settle: (thread, key, note) => {
         ledger.settled(thread, key, note);
       },
       reopen: (thread, key) => {
-        ledger.reopened(thread, key);
+        void ledger.reopened(thread, key);
       },
     },
     hexDir: process.env.HEX_DIR,
@@ -1419,7 +1419,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     }
 
     reactions.set(event.id, { thread, emoji: event.content, meta });
-    hub.deliver(thread, hub.name(thread) ?? (await nameOf(event.pubkey)), {
+    await hub.deliver(thread, hub.name(thread) ?? (await nameOf(event.pubkey)), {
       key: event.id,
       author: authorOf(event),
       content: `(reaction: ${event.content})`,
@@ -1440,7 +1440,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     }
 
     const meta = await about(event, offered.thread, await channelOf(offered.thread));
-    hub.deliver(offered.thread, hub.name(offered.thread) ?? meta.user ?? "", {
+    await hub.deliver(offered.thread, hub.name(offered.thread) ?? meta.user ?? "", {
       key: event.id,
       author: authorOf(event),
       content: offered.choices[index]?.label ?? "",
@@ -1470,7 +1470,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
       deletion.deleted_text = said.body;
     }
 
-    hub.deliver(
+    await hub.deliver(
       thread,
       hub.name(thread) ?? meta.user ?? "",
       reaction
@@ -1567,7 +1567,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
       meta,
     };
 
-    hub.deliver(thread, name, delivered);
+    await hub.deliver(thread, name, delivered);
   }
 
   let cursor = load(CURSOR_FILE, cursorSchema, { at: start, ids: [] });

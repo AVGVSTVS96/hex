@@ -496,7 +496,12 @@ function end(newest: string, room: number) {
   return `${head}…${newest.slice(from)}`;
 }
 
-function runTask(verb: string, id: string | undefined, key: string | undefined, more: string[]) {
+async function runTask(
+  verb: string,
+  id: string | undefined,
+  key: string | undefined,
+  more: string[],
+) {
   const thread = process.env.HEX_THREAD;
 
   switch (verb) {
@@ -510,7 +515,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
       }
 
       show([
-        store.tasks.create({
+        await store.tasks.create({
           title: flags.title ?? "",
           message: id,
           owner: flags.owner ?? thread ?? said.to,
@@ -529,7 +534,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         usage();
       }
 
-      show([store.tasks.addWords(id, key, flags.quote)]);
+      show([await store.tasks.addWords(id, key, flags.quote)]);
 
       return;
     }
@@ -539,7 +544,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         usage();
       }
 
-      show([store.tasks.requote(id, key, flags.quote)]);
+      show([await store.tasks.requote(id, key, flags.quote)]);
 
       return;
     }
@@ -550,7 +555,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
       }
 
       show([
-        store.tasks.edit(id, {
+        await store.tasks.edit(id, {
           status: "done",
           proof: flags.proof,
           doneIn: thread,
@@ -566,9 +571,9 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
       }
 
       show([
-        filled(flags.into)
+        await (filled(flags.into)
           ? store.tasks.merge(flags.into, id)
-          : store.tasks.edit(id, { status: "dropped" }),
+          : store.tasks.edit(id, { status: "dropped" })),
       ]);
 
       return;
@@ -579,7 +584,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         usage();
       }
 
-      show([store.tasks.edit(id, { status: "open" })]);
+      show([await store.tasks.edit(id, { status: "open" })]);
 
       return;
     }
@@ -590,7 +595,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
       }
 
       show([
-        store.tasks.edit(id, {
+        await store.tasks.edit(id, {
           title: flags.title,
           owner: flags.owner,
           project: flags.project,
@@ -606,7 +611,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         usage();
       }
 
-      show([store.tasks.addAgents(id, more, thread)]);
+      show([await store.tasks.addAgents(id, more, thread)]);
 
       return;
     }
@@ -679,7 +684,7 @@ function working() {
   ]);
 }
 
-function hold(words: string[]) {
+async function hold(words: string[]) {
   const zone = zoneOf(dirname(state));
 
   if (filled(flags.key) && !store.messages.get(flags.key)) {
@@ -699,7 +704,7 @@ function hold(words: string[]) {
       throw new Error(`no hold ${id}`);
     }
 
-    const freed = store.holds.unhold(
+    const freed = await store.holds.unhold(
       id,
       `${flags.why}${filled(flags.key) ? ` [${flags.key}]` : ""}`,
       threads.length > 0
@@ -726,7 +731,7 @@ function hold(words: string[]) {
 
   const by = store.threads.key([process.env.HEX_THREAD, served()].find(filled) ?? "terminal");
 
-  const placed = place(
+  const placed = await place(
     store,
     {
       threads: holdable(words),
@@ -744,7 +749,7 @@ function hold(words: string[]) {
 try {
   switch (command) {
     case "hold": {
-      hold(args);
+      await hold(args);
       break;
     }
 
@@ -773,7 +778,7 @@ try {
 
       const key = from === given ? `${from}:${crypto.randomUUID()}` : given;
       const thread = recipient(flags.to);
-      store.messages.deliver({
+      await store.messages.deliver({
         key,
         to: flags.beside === true ? besideOf(thread) : thread,
         from,
@@ -792,12 +797,12 @@ try {
         usage();
       }
 
-      store.scheduler.signal(name, words.join(" "), id.length > 0 ? id.join(":") : undefined);
+      await store.scheduler.signal(name, words.join(" "), id.length > 0 ? id.join(":") : undefined);
       break;
     }
 
     case "task": {
-      runTask(args[0] ?? "", args[1], args[2], args.slice(2));
+      await runTask(args[0] ?? "", args[1], args[2], args.slice(2));
       break;
     }
 
@@ -907,7 +912,7 @@ try {
         throw new Error(USAGE);
       }
 
-      store.threads.file(thread.thread, filled(flags.project) ? flags.project : undefined);
+      await store.threads.file(thread.thread, filled(flags.project) ? flags.project : undefined);
       break;
     }
 

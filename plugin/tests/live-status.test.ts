@@ -103,26 +103,32 @@ test("finds its hex folder from .hex/bin and lists unmerged branches, one-off jo
   expect(out).not.toContain("Terminal");
 });
 
-test("lists each thread active in the last day with its last message, skipping what only the terminal saw", () => {
+test("lists each thread active in the last day with its last message, skipping what only the terminal saw", async () => {
   const store = open(join(home, "state"));
-  store.threads.keep("telegram", {
+  await store.threads.keep("telegram", {
     "1": { name: "Garden", session: "aaaaaaaa-1" },
     "2": { name: "Stale", session: "bbbbbbbb-1" },
   });
-  store.threads.keep("discord", { "3": { name: "Kiln", session: "cccccccc-1" } });
+  await store.threads.keep("discord", { "3": { name: "Kiln", session: "cccccccc-1" } });
 
-  const said = (key: string, to: string, author: Author, body: string, minutesAgo: number) => {
-    store.messages.deliver({ key, to, from: key.split(":")[0] ?? "", author, body }, "x");
+  const said = async (
+    key: string,
+    to: string,
+    author: Author,
+    body: string,
+    minutesAgo: number,
+  ) => {
+    await store.messages.deliver({ key, to, from: key.split(":")[0] ?? "", author, body }, "x");
     store.db
       .query("update messages set at = ? where key = ?")
       .run(new Date(Date.now() - minutesAgo * 60_000).toISOString(), key);
   };
 
-  said("telegram:1", "1", "owner", "water the beds?", 90);
-  said("telegram:2", "1", "hex", "**Done.** Beds watered.\n## not a header", 89);
-  said("terminal:1", "1", "hex", "watered", 88);
-  said("telegram:3", "2", "owner", "old", 3000);
-  said("discord:4", "3", "owner", "fire it\nat noon", 5);
+  await said("telegram:1", "1", "owner", "water the beds?", 90);
+  await said("telegram:2", "1", "hex", "**Done.** Beds watered.\n## not a header", 89);
+  await said("terminal:1", "1", "hex", "watered", 88);
+  await said("telegram:3", "2", "owner", "old", 3000);
+  await said("discord:4", "3", "owner", "fire it\nat noon", 5);
   sessionsClaudeCodeRecordsAsLive([
     { kind: "bg", status: "idle", sessionId: "cccccccc-1", cwd: home },
   ]);

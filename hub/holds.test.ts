@@ -13,18 +13,18 @@ let dir: string;
 let store: Store;
 const inAnHour = () => new Date(Date.now() + 3_600_000).toISOString();
 
-beforeEach(() => {
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "holds-"));
   mkdirSync(join(dir, "telegram"));
   store = open(dir);
-  store.threads.keep("telegram", {
+  await store.threads.keep("telegram", {
     "-100:1": { name: "General" },
     "-100:2": { name: "Maps" },
     "-100:3": { name: "Plugins" },
     "-100:4": { name: "Quilts" },
     "-100:5": { name: "DM" },
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-100:70",
     to: "-100:1",
     from: "telegram",
@@ -41,19 +41,19 @@ afterEach(() => {
 const told = (thread: string) =>
   store.messages.untaken(thread).filter((row) => row.from === "hold");
 
-function takeAllAndFinishTurn(thread: string, session: string) {
+async function takeAllAndFinishTurn(thread: string, session: string) {
   for (const row of store.messages.untaken(thread)) {
-    store.messages.take(row.key, session);
+    await store.messages.take(row.key, session);
   }
 
-  store.turns.turned(session, true);
-  store.turns.turned(session, false);
+  await store.turns.turned(session, true);
+  await store.turns.turned(session, false);
 }
 
 const all = new Set(["-100:2", "-100:3", "-100:4"]);
 
-test("a hold tells each thread it holds that is at work, and every session sees it with the words it came from", () => {
-  const hold = place(
+test("a hold tells each thread it holds that is at work, and every session sees it with the words it came from", async () => {
+  const hold = await place(
     store,
     {
       threads: ["-100:1", "-100:2", "-100:3", "-100:4"],
@@ -79,8 +79,8 @@ test("a hold tells each thread it holds that is at work, and every session sees 
   }
 });
 
-test("a hold ends at its time, and the threads it freed wake two at a time, each next once one's turn ends, its later turns not counted as waking", () => {
-  place(
+test("a hold ends at its time, and the threads it freed wake two at a time, each next once one's turn ends, its later turns not counted as waking", async () => {
+  await place(
     store,
     {
       threads: ["-100:2", "-100:3", "-100:4", "-100:5"],
@@ -92,18 +92,18 @@ test("a hold ends at its time, and the threads it freed wake two at a time, each
   );
 
   for (const thread of ["-100:2", "-100:3", "-100:4"]) {
-    takeAllAndFinishTurn(thread, `s${thread}`);
+    await takeAllAndFinishTurn(thread, `s${thread}`);
   }
 
-  expect(store.holds.due(new Date(Date.now() + 1_800_000).toISOString())).toEqual([]);
-  expect(store.holds.due(new Date(Date.now() + 3_600_001).toISOString())).toEqual([
+  expect(await store.holds.due(new Date(Date.now() + 1_800_000).toISOString())).toEqual([]);
+  expect(await store.holds.due(new Date(Date.now() + 3_600_001).toISOString())).toEqual([
     "-100:2",
     "-100:3",
     "-100:4",
     "-100:5",
   ]);
   expect(store.holds.list()).toEqual([]);
-  wake(store);
+  await store.write((tx) => wake(tx));
   expect(told("-100:2")[0]?.body).toBe(
     "[hold h-1 ended] its time came. The hold on this thread (focus on priorities) is over: pick up where you stopped.",
   );
@@ -111,19 +111,19 @@ test("a hold ends at its time, and the threads it freed wake two at a time, each
   expect(told("-100:4")).toEqual([]);
 
   for (const row of store.messages.untaken("-100:2")) {
-    store.messages.take(row.key, "s-100:2");
+    await store.messages.take(row.key, "s-100:2");
   }
 
-  store.turns.turned("s-100:2", true);
-  wake(store);
+  await store.turns.turned("s-100:2", true);
+  await store.write((tx) => wake(tx));
   expect(told("-100:4")).toEqual([]);
-  store.turns.turned("s-100:2", false);
-  wake(store);
+  await store.turns.turned("s-100:2", false);
+  await store.write((tx) => wake(tx));
   expect(told("-100:4")).toHaveLength(1);
-  store.turns.turned("s-100:2", true);
-  takeAllAndFinishTurn("-100:4", "s-100:4");
-  expect(store.holds.waking(60_000).count).toBe(1);
-  wake(store);
+  await store.turns.turned("s-100:2", true);
+  await takeAllAndFinishTurn("-100:4", "s-100:4");
+  expect((await store.holds.waking(60_000)).count).toBe(1);
+  await store.write((tx) => wake(tx));
   expect(told("-100:2")).toEqual([]);
 
   const dmAtRestTookNothingWhileHeld = "-100:5";
@@ -132,48 +132,53 @@ test("a hold ends at its time, and the threads it freed wake two at a time, each
   expect(store.holds.freed()).toEqual([]);
 });
 
-test("a wake nobody takes stops counting once it has waited its patience, so the next thread still wakes", () => {
-  place(
+test("a wake nobody takes stops counting once it has waited its patience, so the next thread still wakes", async () => {
+  await place(
     store,
     { threads: ["-100:2", "-100:3", "-100:4"], by: "-100:1", why: "focus on priorities" },
     { working: all },
   );
 
   for (const thread of ["-100:2", "-100:3", "-100:4"]) {
-    takeAllAndFinishTurn(thread, `s${thread}`);
+    await takeAllAndFinishTurn(thread, `s${thread}`);
   }
 
-  store.holds.unhold("h-1", "go");
-  expect(wake(store)).toBeDefined();
+  await store.holds.unhold("h-1", "go");
+  expect(await store.write((tx) => wake(tx))).toBeDefined();
   expect(told("-100:4")).toEqual([]);
-  wake(store, new Date(Date.now() + 15 * 60_000 + 1000).toISOString());
+  await store.write((tx) => wake(tx, new Date(Date.now() + 15 * 60_000 + 1000).toISOString()));
   expect(told("-100:4")).toHaveLength(1);
 });
 
-test("the owner's word lifts a hold on some threads; one another hold still holds waits for that one", () => {
-  place(
+test("the owner's word lifts a hold on some threads; one another hold still holds waits for that one", async () => {
+  await place(
     store,
     { threads: ["-100:2", "-100:3"], by: "-100:1", why: "focus on priorities" },
     { working: all },
   );
-  place(
+  await place(
     store,
     { threads: ["-100:3"], by: "-100:5", why: "the build is out of room" },
     { working: all },
   );
   expect(
-    store.holds.unhold("h-1", "he said go on the side projects [telegram:-100:71]", ["-100:3"]),
+    await store.holds.unhold("h-1", "he said go on the side projects [telegram:-100:71]", [
+      "-100:3",
+    ]),
   ).toEqual(["-100:3"]);
-  takeAllAndFinishTurn("-100:3", "s3");
-  wake(store);
+  await takeAllAndFinishTurn("-100:3", "s3");
+  await store.write((tx) => wake(tx));
   expect(told("-100:3")).toEqual([]);
   expect(pending(dir).text).toContain("- h-1 holds Maps · freed Plugins");
-  store.holds.unhold("h-2", "the build finished");
-  wake(store);
+  await store.holds.unhold("h-2", "the build finished");
+  await store.write((tx) => wake(tx));
   expect(told("-100:3").map((row) => row.body)).toEqual([
     "[hold h-2 ended] the build finished. The hold on this thread (the build is out of room) is over: pick up where you stopped.",
   ]);
-  expect(() => store.holds.unhold("h-1", "go", ["-100:4"])).toThrow("h-1 doesn't hold -100:4");
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(store.holds.unhold("h-1", "go", ["-100:4"])).rejects.toThrow(
+    "h-1 doesn't hold -100:4",
+  );
 
   const unholdNow = (id: string) => () => store.holds.unhold(id, "go");
 
@@ -181,17 +186,17 @@ test("the owner's word lifts a hold on some threads; one another hold still hold
     expect(unholdNow(id)).toThrow("isn't a hold's id");
   }
 
-  expect(store.holds.unhold("h-2", "again")).toEqual([]);
+  expect(await store.holds.unhold("h-2", "again")).toEqual([]);
 });
 
-test("a thread told of a hold that lifts before it reads the notice still wakes", () => {
-  place(
+test("a thread told of a hold that lifts before it reads the notice still wakes", async () => {
+  await place(
     store,
     { threads: ["-100:2", "-100:4"], by: "-100:1", why: "focus on priorities" },
     { working: new Set(["-100:2"]) },
   );
-  store.holds.unhold("h-1", "go");
-  wake(store);
+  await store.holds.unhold("h-1", "go");
+  await store.write((tx) => wake(tx));
   expect(told("-100:2").map((row) => row.key)).toEqual([
     "hold:h-1@-100:2",
     "hold:h-1@-100:2:ended",
@@ -200,7 +205,7 @@ test("a thread told of a hold that lifts before it reads the notice still wakes"
 });
 
 test("the hub ends a hold the moment its time comes and wakes what it freed", async () => {
-  place(
+  await place(
     store,
     {
       threads: ["-100:2"],
@@ -210,7 +215,7 @@ test("the hub ends a hold the moment its time comes and wakes what it freed", as
     },
     { working: all },
   );
-  takeAllAndFinishTurn("-100:2", "s2");
+  await takeAllAndFinishTurn("-100:2", "s2");
   const stop = holding(dir);
 
   try {
@@ -221,16 +226,17 @@ test("the hub ends a hold the moment its time comes and wakes what it freed", as
   }
 });
 
-test("a time reads on the owner's clock unless it names its offset", () => {
+test("a time reads on the owner's clock unless it names its offset", async () => {
   expect(instant("2026-11-07 16:20", "America/Los_Angeles")).toBe("2026-11-08T00:20:00.000Z");
   expect(instant("2026-11-08T00:20:00Z")).toBe("2026-11-08T00:20:00.000Z");
   expect(instant("2026-11-07 16:20-08", "Europe/Paris")).toBe("2026-11-08T00:20:00.000Z");
   expect(() => instant("after the reset")).toThrow("isn't a time");
-  expect(() =>
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(
     place(
       store,
       { threads: ["-100:2"], by: "-100:1", why: "x", until: "2020-01-01T00:00:00.000Z" },
       { working: all },
     ),
-  ).toThrow("has passed");
+  ).rejects.toThrow("has passed");
 });

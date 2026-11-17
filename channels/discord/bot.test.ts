@@ -612,7 +612,7 @@ const realFetch = globalThis.fetch;
 beforeAll(async () => {
   writeFileSync(join(state, "access.json"), JSON.stringify({ allowFrom: [OWNER] }));
   writeFileSync(join(state, "cursor.json"), JSON.stringify({ id: snowflake(60) }));
-  open(state).threads.keep("discord", { "7777": { name: "deleted in Discord" } });
+  await open(state).threads.keep("discord", { "7777": { name: "deleted in Discord" } });
   Object.assign(process.env, {
     PATH: noClaude(),
     DISCORD_STATE_DIR: state,
@@ -967,7 +967,7 @@ test("a question keeps the message its pictures went in, and the pictures stay o
   const kept = open(state).messages.get(`discord:${posted.id}`)?.meta?.image_path ?? "";
   expect(kept.startsWith(state)).toBe(true);
   expect(readFileSync(kept, "utf-8")).toBe("png");
-  open(state).questions.unask("discord", here.id, posted.id);
+  await open(state).questions.unask("discord", here.id, posted.id);
 });
 
 test("react takes off only the bot's own reaction, and edit_message replaces the files instead of adding to them", async () => {

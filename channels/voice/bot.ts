@@ -54,7 +54,7 @@ const hub = startHub({
 serve(
   {
     deliver: (content, meta) => {
-      hub.deliver(THREAD, THREAD, {
+      void hub.deliver(THREAD, THREAD, {
         content,
         meta,
         author: filled(meta.callee)

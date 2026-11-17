@@ -58,26 +58,28 @@ function matching(pattern: RegExp): string {
   return expect.stringMatching(pattern);
 }
 
-test("a message is kept once, word for word, and a resend under its key changes nothing", () => {
+test("a message is kept once, word for word, and a resend under its key changes nothing", async () => {
   const store = new Store(dir);
-  expect(store.messages.deliver(message)).toBe(true);
-  expect(store.messages.deliver({ ...message, body: "something else" })).toBe(false);
+  expect(await store.messages.deliver(message)).toBe(true);
+  expect(await store.messages.deliver({ ...message, body: "something else" })).toBe(false);
   const kept = store.messages.get(message.key);
   expect(kept).toMatchObject({ ...message });
   expect(kept?.at).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/u);
   expect(kept?.taken).toBeUndefined();
 });
 
-test("a key has to start with its sender, so the keys hex makes stay its own", () => {
+test("a key has to start with its sender, so the keys hex makes stay its own", async () => {
   const store = new Store(dir);
-  expect(() =>
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(
     store.messages.deliver({ ...message, key: "schedule:heartbeat@2026-10-18T21:45Z" }),
-  ).toThrow();
-  expect(() => store.messages.deliver({ ...message, key: "42" })).toThrow();
+  ).rejects.toThrow();
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(store.messages.deliver({ ...message, key: "42" })).rejects.toThrow();
   expect(store.messages.untaken()).toEqual([]);
 });
 
-test("a message reads as its newest edit, made in any topic of its chat, even when only the edit was kept", () => {
+test("a message reads as its newest edit, made in any topic of its chat, even when only the edit was kept", async () => {
   const store = new Store(dir);
 
   const sent = {
@@ -88,28 +90,28 @@ test("a message reads as its newest edit, made in any topic of its chat, even wh
     body: "Deploy at 5",
   } satisfies NewRow;
 
-  store.messages.deliver(sent);
+  await store.messages.deliver(sent);
   expect(store.messages.latest(sent.key)?.body).toBe("Deploy at 5");
-  store.messages.deliver({
+  await store.messages.deliver({
     ...sent,
     key: "telegram:edit-1",
     body: "Deploy at 6",
     meta: { edited: "true", message_id: "42" },
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     ...sent,
     key: "telegram:edit-2",
     body: "Deploy at 7",
     meta: { edited: "true", message_id: "42" },
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     ...sent,
     key: "telegram:edit-3",
     to: "-200:3",
     body: "another chat",
     meta: { edited: "true", message_id: "42" },
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     ...sent,
     key: "discord:edit-4",
     from: "discord",
@@ -117,7 +119,7 @@ test("a message reads as its newest edit, made in any topic of its chat, even wh
     meta: { edited: "true", message_id: "42" },
   });
   expect(store.messages.latest(sent.key)?.body).toBe("Deploy at 7");
-  store.messages.deliver({
+  await store.messages.deliver({
     ...sent,
     key: "telegram:edit-5",
     to: "-100:9",
@@ -130,7 +132,7 @@ test("a message reads as its newest edit, made in any topic of its chat, even wh
     body: "Deploy at 8, edited from another topic",
   });
   expect(store.messages.latest("telegram:-100:43")).toBeNull();
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "buzz:e2",
     to: "thread",
     from: "buzz",
@@ -141,7 +143,7 @@ test("a message reads as its newest edit, made in any topic of its chat, even wh
   expect(store.messages.latest("buzz:e1")?.body).toBe("tagged on edit");
 });
 
-test("a message a topic's session sent into another chat reads as its newest edit, kept by its id with its chat", () => {
+test("a message a topic's session sent into another chat reads as its newest edit, kept by its id with its chat", async () => {
   const store = new Store(dir);
 
   const sent = {
@@ -152,14 +154,14 @@ test("a message a topic's session sent into another chat reads as its newest edi
     body: "Tiles",
   } satisfies NewRow;
 
-  store.messages.deliver(sent);
-  store.messages.deliver({
+  await store.messages.deliver(sent);
+  await store.messages.deliver({
     ...sent,
     key: "telegram:edit-6",
     body: "Bigger tiles",
     meta: { edited: "true", message_id: "telegram:2000:55" },
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     ...sent,
     key: "telegram:edit-7",
     body: "the group's own message 55",
@@ -168,14 +170,14 @@ test("a message a topic's session sent into another chat reads as its newest edi
   expect(store.messages.latest(sent.key)?.body).toBe("Bigger tiles");
 });
 
-test("the first session to take a message has it, and it leaves what waits", () => {
+test("the first session to take a message has it, and it leaves what waits", async () => {
   const store = new Store(dir);
-  store.messages.deliver(message);
-  store.messages.deliver({ ...message, key: "telegram:-100:43", body: "and some chips" });
-  store.messages.deliver({ ...message, key: "telegram:-100:44", to: "-100:9" });
-  expect(store.messages.take(message.key, "session-a")).toBe(true);
-  expect(store.messages.take(message.key, "session-b")).toBe(false);
-  expect(store.messages.take("telegram:-100:99", "session-a")).toBe(false);
+  await store.messages.deliver(message);
+  await store.messages.deliver({ ...message, key: "telegram:-100:43", body: "and some chips" });
+  await store.messages.deliver({ ...message, key: "telegram:-100:44", to: "-100:9" });
+  expect(await store.messages.take(message.key, "session-a")).toBe(true);
+  expect(await store.messages.take(message.key, "session-b")).toBe(false);
+  expect(await store.messages.take("telegram:-100:99", "session-a")).toBe(false);
   expect(store.messages.get(message.key)?.taken?.by).toBe("session-a");
   expect(store.messages.untaken("-100:7").map((row) => row.body)).toEqual(["and some chips"]);
   expect(store.messages.untaken().map((row) => row.key)).toEqual([
@@ -184,26 +186,26 @@ test("the first session to take a message has it, and it leaves what waits", () 
   ]);
 });
 
-test("some threads' untaken messages, and a mark that moves only when a thread's messages do", () => {
+test("some threads' untaken messages, and a mark that moves only when a thread's messages do", async () => {
   const store = new Store(dir);
-  store.messages.deliver(message);
-  store.messages.deliver({ ...message, key: "telegram:-100:43", to: "-100:8" });
-  store.messages.deliver({ ...message, key: "telegram:-100:44", to: "-100:9" });
+  await store.messages.deliver(message);
+  await store.messages.deliver({ ...message, key: "telegram:-100:43", to: "-100:8" });
+  await store.messages.deliver({ ...message, key: "telegram:-100:44", to: "-100:9" });
   expect(store.messages.untaken(["-100:9", "-100:7"]).map((row) => row.key)).toEqual([
     message.key,
     "telegram:-100:44",
   ]);
   const mark = store.messages.mark("-100:7");
-  store.messages.take("telegram:-100:43", "session-a");
+  await store.messages.take("telegram:-100:43", "session-a");
   expect(store.messages.mark("-100:7")).toBe(mark);
-  store.messages.take(message.key, "session-a");
+  await store.messages.take(message.key, "session-a");
   const taken = store.messages.mark("-100:7");
   expect(taken).not.toBe(mark);
-  store.messages.deliver({ ...message, key: "telegram:-100:45" });
+  await store.messages.deliver({ ...message, key: "telegram:-100:45" });
   const kept = store.messages.mark("-100:7");
   expect(kept).not.toBe(taken);
   expect(
-    store.messages.past(
+    await store.messages.past(
       [[{ ...message, key: "telegram:-100:46" }, "2020-01-01T00:00:00.000Z"]],
       "session-a",
     ),
@@ -211,19 +213,21 @@ test("some threads' untaken messages, and a mark that moves only when a thread's
   expect(store.messages.mark("-100:7")).not.toBe(kept);
 });
 
-test("a schedule's slot fires once, and its next slot fires whether or not the last was taken", () => {
+test("a schedule's slot fires once, and its next slot fires whether or not the last was taken", async () => {
   const store = new Store(dir);
   const minute = Date.UTC(2026, 9, 18, 21, 45) / 60_000;
-  expect(store.scheduler.fire("heartbeat", minute, "general", "[heartbeat] Hourly check")).toBe(
+  expect(
+    await store.scheduler.fire("heartbeat", minute, "general", "[heartbeat] Hourly check"),
+  ).toBe(true);
+  expect(
+    await store.scheduler.fire("heartbeat", minute, "general", "[heartbeat] Hourly check"),
+  ).toBe(false);
+  expect(
+    await store.scheduler.fire("heartbeat", minute + 60, "general", "[heartbeat] Hourly check"),
+  ).toBe(true);
+  expect(await store.scheduler.fire("call", minute, "general", "[call] Ring if needed", true)).toBe(
     true,
   );
-  expect(store.scheduler.fire("heartbeat", minute, "general", "[heartbeat] Hourly check")).toBe(
-    false,
-  );
-  expect(
-    store.scheduler.fire("heartbeat", minute + 60, "general", "[heartbeat] Hourly check"),
-  ).toBe(true);
-  expect(store.scheduler.fire("call", minute, "general", "[call] Ring if needed", true)).toBe(true);
   expect(store.messages.get("schedule:heartbeat@2026-10-18T21:45Z")).toMatchObject({
     to: "general",
     from: "schedule",
@@ -232,11 +236,11 @@ test("a schedule's slot fires once, and its next slot fires whether or not the l
   expect(store.messages.get("schedule:call@2026-10-18T21:45Z")?.meta?.late).toBe("true");
 });
 
-test("the scheduler keeps the last minute it checked", () => {
+test("the scheduler keeps the last minute it checked", async () => {
   const store = new Store(dir);
   expect(store.scheduler.checked()).toBeUndefined();
-  store.scheduler.check(100);
-  store.scheduler.check(101);
+  await store.scheduler.check(100);
+  await store.scheduler.check(101);
   expect(new Store(dir).scheduler.checked()).toBe(101);
 });
 
@@ -244,7 +248,7 @@ test("a change committed in another process rings the bell, and a write that cha
   const store = open(dir);
   expect(open(dir)).toBe(store);
   let rang = 0;
-  store.threads.keep("telegram", { general: { name: "General" } });
+  await store.threads.keep("telegram", { general: { name: "General" } });
 
   const stop = store.watch(() => {
     rang++;
@@ -272,7 +276,7 @@ test("a change committed in another process rings the bell, and a write that cha
     meta: { user: "job" },
   });
   const bell = readFileSync(join(dir, "hex.bell"), "utf-8");
-  expect(store.messages.take("job:nothing:here", "session-a")).toBe(false);
+  expect(await store.messages.take("job:nothing:here", "session-a")).toBe(false);
   expect(readFileSync(join(dir, "hex.bell"), "utf-8")).toBe(bell);
   stop();
 });
@@ -292,7 +296,7 @@ test("a listener runs at the first ring, then once for each change, however many
   await until(() => rang > 0);
   await Bun.sleep(100);
   expect(rang).toBe(1);
-  store.messages.deliver(message);
+  await store.messages.deliver(message);
   await until(() => rang > 1);
   await Bun.sleep(100);
   expect(rang).toBe(2);
@@ -321,7 +325,7 @@ test("hex watch prints a line once it listens and one for each change to hex.db,
         body: "one",
       });
 
-    change();
+    await change();
     expect(await line()).toMatch(/^\d{4}-\d\d-\d\dT[\d:.]+Z\n/u);
     await lines.cancel();
     await until(() => watch.exitCode !== null || void change());
@@ -339,7 +343,7 @@ test("a change right after the one the bell just rang for is still heard", async
     seen.push(store.messages.get("job:quick:2")?.body);
 
     if (seen.length === 1) {
-      store.messages.deliver({
+      void store.messages.deliver({
         key: "job:quick:2",
         to: "general",
         from: "job",
@@ -349,7 +353,7 @@ test("a change right after the one the bell just rang for is still heard", async
     }
   });
 
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "job:quick:1",
     to: "general",
     from: "job",
@@ -377,7 +381,7 @@ test("hex deliver says how to call it when something is missing", async () => {
 });
 
 test("hex deliver reaches a thread by its id, and a sender alone gets a key of its own", async () => {
-  open(dir).threads.keep("discord", { "1561": { name: "Repair" } });
+  await open(dir).threads.keep("discord", { "1561": { name: "Repair" } });
 
   const cli = Bun.spawn([
     "bun",
@@ -460,12 +464,12 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
     "-100:4716",
     join(dir, "elsewhere"),
   );
-  open(dir).threads.keep("telegram", {
+  await open(dir).threads.keep("telegram", {
     "-100:4801": { name: "Watchdog" },
     "-100:4802": { name: "website", session: "a1f3c6d2-0000-4000-8000-000000000000" },
   });
-  open(dir).turns.turned("d4365c34-312f-4a52-9704-36fcf657e5b9", true);
-  open(dir).threads.keep("telegram", {
+  await open(dir).turns.turned("d4365c34-312f-4a52-9704-36fcf657e5b9", true);
+  await open(dir).threads.keep("telegram", {
     "-100:7": { name: "General", session: "b7e2c5a9-11f6-4698-9b9e-c80b1d5aebdf" },
     "-100:4803": { name: "hex notes" },
     "-100:103": { name: "Video clips" },
@@ -540,12 +544,14 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
 });
 
 test("hex deliver finds a thread by its name too, keeps one for a closed thread till it opens, and refuses an address no thread has", async () => {
-  open(dir).threads.keep("t3", {
+  await open(dir).threads.keep("t3", {
     "0f3a9c1e-0000-4000-8000-000000000000": { name: "Old T3 thread" },
   });
-  open(dir).threads.keep("t3", { "5b0e7d2a-0000-4000-8000-000000000000": { name: "t3: notes" } });
-  open(dir).threads.keep("telegram", { "-100:1": { name: "hex" } });
-  open(dir).threads.keep("telegram", {
+  await open(dir).threads.keep("t3", {
+    "5b0e7d2a-0000-4000-8000-000000000000": { name: "t3: notes" },
+  });
+  await open(dir).threads.keep("telegram", { "-100:1": { name: "hex" } });
+  await open(dir).threads.keep("telegram", {
     "-100:4801": { name: "Watchdog" },
     "-100:2": { name: "hex" },
     watchdog: { name: "Old notes" },
@@ -596,10 +602,10 @@ const ask = {
   body: "Fix the login page. Also the logo looks blurry on retina.",
 };
 
-test("a task from before titles gets its first words as its title", () => {
+test("a task from before titles gets its first words as its title", async () => {
   const store = new Store(dir);
-  store.messages.deliver({ ...ask, body: "Fix the login page.\nIt 500s on submit." });
-  store.tasks.create({ title: "x", message: ask.key, owner: "-100:7" });
+  await store.messages.deliver({ ...ask, body: "Fix the login page.\nIt 500s on submit." });
+  await store.tasks.create({ title: "x", message: ask.key, owner: "-100:7" });
   store.db.run("update tasks set title = null");
   store.db.run("drop index said; drop table profiles");
   store.db.run("alter table messages drop column author");
@@ -613,62 +619,69 @@ test("a task from before titles gets its first words as its title", () => {
   expect(new Store(dir).tasks.get("t-1")?.title).toBe("Fix the login page. It 500s on submit.");
 });
 
-test("a task has a clean title of its own, and its words still come from the message", () => {
+test("a task has a clean title of its own, and its words still come from the message", async () => {
   const store = new Store(dir);
-  store.messages.deliver(ask);
+  await store.messages.deliver(ask);
 
-  const task = store.tasks.create({
+  const task = await store.tasks.create({
     title: "  Sharpen the logo on retina ",
     message: ask.key,
     owner: "-100:7",
   });
 
-  expect(task).toMatchObject({ title: "Sharpen the logo on retina", words: [{ text: ask.body }] });
+  expect(task).toMatchObject({
+    title: "Sharpen the logo on retina",
+    words: [{ text: ask.body }],
+  });
   expect(() => store.tasks.create({ title: " ", message: ask.key, owner: "-100:7" })).toThrow(
     "needs a title",
   );
-  expect(store.tasks.edit(task.id, { title: "Make the logo crisp" }).title).toBe(
+  expect((await store.tasks.edit(task.id, { title: "Make the logo crisp" })).title).toBe(
     "Make the logo crisp",
   );
   expect(() => store.tasks.edit(task.id, { title: " \n" })).toThrow("can't be empty");
-  expect(store.tasks.edit(task.id, { title: "Make the logo\n  crisp " }).title).toBe(
+  expect((await store.tasks.edit(task.id, { title: "Make the logo\n  crisp " })).title).toBe(
     "Make the logo crisp",
   );
-  expect(store.tasks.edit(task.id, { status: "done", proof: "abc123" }).title).toBe(
+  expect((await store.tasks.edit(task.id, { status: "done", proof: "abc123" })).title).toBe(
     "Make the logo crisp",
   );
-  expect(store.tasks.edit(task.id, { status: "open" }).proof).toBeUndefined();
+  expect((await store.tasks.edit(task.id, { status: "open" })).proof).toBeUndefined();
 });
 
-test("a task holds the owner's words as they sent them, quoted whole or in part, and never retyped", () => {
+test("a task holds the owner's words as they sent them, quoted whole or in part, and never retyped", async () => {
   const store = new Store(dir);
-  store.messages.deliver(ask);
+  await store.messages.deliver(ask);
   const whole = store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
-  expect(whole).toMatchObject({
+  expect(await whole).toMatchObject({
     id: "t-1",
     owner: "-100:7",
     status: "open",
     words: [{ message: ask.key, text: ask.body, who: "owner" }],
   });
   expect(
-    store.tasks.create({
-      title: "Fix it",
-      message: ask.key,
-      quote: "the logo looks blurry on retina",
-      owner: "-100:7",
-    }).words[0]?.text,
+    (
+      await store.tasks.create({
+        title: "Fix it",
+        message: ask.key,
+        quote: "the logo looks blurry on retina",
+        owner: "-100:7",
+      })
+    ).words[0]?.text,
   ).toBe("the logo looks blurry on retina");
-  expect(() =>
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(
     store.tasks.create({
       title: "Fix it",
       message: ask.key,
       quote: "the logo is blurry",
       owner: "-100:7",
     }),
-  ).toThrow("isn't in telegram:-100:50 as written");
-  expect(() =>
+  ).rejects.toThrow("isn't in telegram:-100:50 as written");
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(
     store.tasks.create({ title: "Fix it", message: "telegram:-100:404", owner: "-100:7" }),
-  ).toThrow("no message");
+  ).rejects.toThrow("no message");
   expect(() =>
     store.db.run(
       "insert into words (task, message, text) values (1, 'telegram:-100:50', 'fix it all')",
@@ -678,9 +691,10 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
     "only ever cut down",
   );
   expect(() => store.db.run("update messages set body = 'Fix it'")).toThrow("keeps its words");
-  expect(() =>
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(
     store.tasks.create({ title: "Fix it", message: ask.key, quote: "", owner: "-100:7" }),
-  ).toThrow("needs words");
+  ).rejects.toThrow("needs words");
   store.db.run(
     "insert or replace into messages (key, \"to\", \"from\", author, body, at) values ('telegram:-100:50', '-100:7', 'telegram', 'owner', 'Fix it', '2026-10-19T00:00:00.000Z')",
   );
@@ -699,16 +713,23 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
   expect(store.tasks.get("t-1")?.words[0]?.text).toBe(ask.body);
 });
 
-test("a task can be cut down to the words that ask, still quoted as written", () => {
+test("a task can be cut down to the words that ask, still quoted as written", async () => {
   const store = new Store(dir);
-  store.messages.deliver(ask);
-  store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
+  await store.messages.deliver(ask);
+  await store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
   expect(
-    store.tasks.requote("t-1", ask.key, "Fix the login page.").words.map((words) => words.text),
+    (await store.tasks.requote("t-1", ask.key, "Fix the login page.")).words.map(
+      (words) => words.text,
+    ),
   ).toEqual(["Fix the login page."]);
-  expect(() => store.tasks.requote("t-1", ask.key, "fix it all")).toThrow("holds no whole message");
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(store.tasks.requote("t-1", ask.key, "fix it all")).rejects.toThrow(
+    "holds no whole message",
+  );
   expect(
-    store.tasks.requote("t-1", ask.key, "Fix the login page.").words.map((words) => words.text),
+    (await store.tasks.requote("t-1", ask.key, "Fix the login page.")).words.map(
+      (words) => words.text,
+    ),
   ).toEqual(["Fix the login page."]);
   expect(store.tasks.get("t-1")?.words.map((words) => words.text)).toEqual(["Fix the login page."]);
   expect(() => store.db.run("update words set text = 'Fix it all' where task = 1")).toThrow(
@@ -717,48 +738,55 @@ test("a task can be cut down to the words that ask, still quoted as written", ()
   expect(() => store.db.run("delete from words")).toThrow("never taken away");
 });
 
-test("cutting a whole message down keeps the other asks quoted from it", () => {
+test("cutting a whole message down keeps the other asks quoted from it", async () => {
   const store = new Store(dir);
-  store.messages.deliver(ask);
-  store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
-  store.tasks.addWords("t-1", ask.key, "the logo looks blurry on retina");
-  store.tasks.requote("t-1", ask.key, "Fix the login page.");
+  await store.messages.deliver(ask);
+  await store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
+  await store.tasks.addWords("t-1", ask.key, "the logo looks blurry on retina");
+  await store.tasks.requote("t-1", ask.key, "Fix the login page.");
   expect(store.tasks.get("t-1")?.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
     "the logo looks blurry on retina",
   ]);
 });
 
-test("a task already holding the ask folds its whole copy of the message into it", () => {
+test("a task already holding the ask folds its whole copy of the message into it", async () => {
   const store = new Store(dir);
-  store.messages.deliver(ask);
-  store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
-  store.tasks.addWords("t-1", ask.key, "Fix the login page.");
+  await store.messages.deliver(ask);
+  await store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
+  await store.tasks.addWords("t-1", ask.key, "Fix the login page.");
   expect(
-    store.tasks.requote("t-1", ask.key, "Fix the login page.").words.map((words) => words.text),
+    (await store.tasks.requote("t-1", ask.key, "Fix the login page.")).words.map(
+      (words) => words.text,
+    ),
   ).toEqual(["Fix the login page."]);
   expect(
-    store.tasks.requote("t-1", ask.key, "Fix the login page.").words.map((words) => words.text),
+    (await store.tasks.requote("t-1", ask.key, "Fix the login page.")).words.map(
+      (words) => words.text,
+    ),
   ).toEqual(["Fix the login page."]);
   expect(() => store.db.run("update words set rowid = 99 where task = 1")).toThrow(
     "only ever cut down",
   );
 });
 
-test("cutting takes the whole message and leaves quotes picked on purpose alone", () => {
+test("cutting takes the whole message and leaves quotes picked on purpose alone", async () => {
   const store = new Store(dir);
-  store.messages.deliver(ask);
-  store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
-  store.messages.deliver({ ...ask, key: "telegram:-100:51", body: "Also the docs." });
-  store.tasks.addWords("t-1", "telegram:-100:51");
-  store.tasks.addWords("t-1", ask.key, "Fix the login page.");
-  store.tasks.requote("t-1", ask.key, "Fix the login page.");
+  await store.messages.deliver(ask);
+  await store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
+  await store.messages.deliver({ ...ask, key: "telegram:-100:51", body: "Also the docs." });
+  await store.tasks.addWords("t-1", "telegram:-100:51");
+  await store.tasks.addWords("t-1", ask.key, "Fix the login page.");
+  await store.tasks.requote("t-1", ask.key, "Fix the login page.");
   expect(store.tasks.get("t-1")?.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
     "Also the docs.",
   ]);
-  store.tasks.addWords("t-1", ask.key, "the logo looks blurry on retina");
-  expect(() => store.tasks.requote("t-1", ask.key, "blurry")).toThrow("holds no whole message");
+  await store.tasks.addWords("t-1", ask.key, "the logo looks blurry on retina");
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(store.tasks.requote("t-1", ask.key, "blurry")).rejects.toThrow(
+    "holds no whole message",
+  );
   expect(store.tasks.get("t-1")?.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
     "Also the docs.",
@@ -769,13 +797,13 @@ test("cutting takes the whole message and leaves quotes picked on purpose alone"
   );
 });
 
-test("a task from a T3 Code prompt holds what was asked, not T3's instructions around it", () => {
+test("a task from a T3 Code prompt holds what was asked, not T3's instructions around it", async () => {
   const store = new Store(dir);
 
   const body =
     "<t3_code_instructions>\n## T3 Code interaction mode: Default\n</t3_code_instructions>\n\n<user_request>\nship it\n</user_request>\n\n<runtime_info>opus</runtime_info>";
 
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "t3:1",
     to: "thread-1",
     from: "t3",
@@ -784,18 +812,22 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
     meta: { ts: "2026-10-20T00:00:00.000Z" },
   });
   expect(
-    store.tasks.create({ title: "Fix it", message: "t3:1", owner: "thread-1" }).words[0]?.text,
+    (await store.tasks.create({ title: "Fix it", message: "t3:1", owner: "thread-1" })).words[0]
+      ?.text,
   ).toBe("ship it");
-  expect(() => store.tasks.addWords("t-1", "t3:1", body)).toThrow("isn't in");
-  expect(store.tasks.addWords("t-1", "t3:1").words.map((words) => words.text)).toEqual(["ship it"]);
-  expect(store.tasks.requote("t-1", "t3:1", "ship").words.map((words) => words.text)).toEqual([
-    "ship",
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(store.tasks.addWords("t-1", "t3:1", body)).rejects.toThrow("isn't in");
+  expect((await store.tasks.addWords("t-1", "t3:1")).words.map((words) => words.text)).toEqual([
+    "ship it",
   ]);
-  expect(store.tasks.requote("t-1", "t3:1", "ship").words.map((words) => words.text)).toEqual([
-    "ship",
-  ]);
+  expect(
+    (await store.tasks.requote("t-1", "t3:1", "ship")).words.map((words) => words.text),
+  ).toEqual(["ship"]);
+  expect(
+    (await store.tasks.requote("t-1", "t3:1", "ship")).words.map((words) => words.text),
+  ).toEqual(["ship"]);
   const shot = `${body}\n\n[image: /inbox/1.png]`;
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "t3:2",
     to: "thread-1",
     from: "t3",
@@ -804,15 +836,14 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
     meta: { ts: "2026-10-20T00:00:00.000Z" },
   });
   expect(
-    store.tasks
-      .create({ title: "Fix it", message: "t3:2", owner: "thread-1" })
-      .words.map((words) => words.text),
+    (await store.tasks.create({ title: "Fix it", message: "t3:2", owner: "thread-1" })).words.map(
+      (words) => words.text,
+    ),
   ).toEqual(["ship it", "[image: /inbox/1.png]"]);
-  expect(store.tasks.requote("t-2", "t3:2", "ship").words.map((words) => words.text)).toEqual([
-    "ship",
-    "[image: /inbox/1.png]",
-  ]);
-  store.tasks.addWords("t-2", "t3:2");
+  expect(
+    (await store.tasks.requote("t-2", "t3:2", "ship")).words.map((words) => words.text),
+  ).toEqual(["ship", "[image: /inbox/1.png]"]);
+  await store.tasks.addWords("t-2", "t3:2");
   expect(store.tasks.get("t-2")?.words.map((words) => words.text)).toEqual([
     "ship",
     "[image: /inbox/1.png]",
@@ -821,7 +852,7 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
   const attached =
     "<t3_code_instructions>\nx\n</t3_code_instructions>\n\n<user_request>\nship it\n</user_request>\n\n[image: /inbox/2.png]";
 
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "t3:5",
     to: "thread-1",
     from: "t3",
@@ -830,15 +861,15 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
     meta: { ts: "2026-10-20T00:00:00.000Z" },
   });
   expect(
-    store.tasks
-      .create({ title: "Fix it", message: "t3:5", owner: "thread-1" })
-      .words.map((words) => words.text),
+    (await store.tasks.create({ title: "Fix it", message: "t3:5", owner: "thread-1" })).words.map(
+      (words) => words.text,
+    ),
   ).toEqual(["ship it", "[image: /inbox/2.png]"]);
 
   const tagged =
     "<user_request>\nmake the header say\n<title>Hello</title>\n</user_request>\n\n<runtime_info>opus</runtime_info>";
 
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "t3:4",
     to: "thread-1",
     from: "t3",
@@ -847,9 +878,10 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
     meta: { ts: "2026-10-20T00:00:00.000Z" },
   });
   expect(
-    store.tasks.create({ title: "Fix it", message: "t3:4", owner: "thread-1" }).words[0]?.text,
+    (await store.tasks.create({ title: "Fix it", message: "t3:4", owner: "thread-1" })).words[0]
+      ?.text,
   ).toBe("make the header say\n<title>Hello</title>");
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "t3:3",
     to: "thread-1",
     from: "t3",
@@ -858,148 +890,159 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
     meta: { ts: "2026-10-20T00:00:00.000Z" },
   });
   expect(
-    store.tasks.create({ title: "Fix it", message: "t3:3", owner: "thread-1" }).words[0]?.text,
+    (await store.tasks.create({ title: "Fix it", message: "t3:3", owner: "thread-1" })).words[0]
+      ?.text,
   ).toBe("and the docs");
-  store.messages.deliver({
+  await store.messages.deliver({
     ...ask,
     key: "telegram:-100:51",
     body: "paste: <user_request>x</user_request>",
   });
   expect(
-    store.tasks.create({ title: "Fix it", message: "telegram:-100:51", owner: "-100:7" }).words[0]
-      ?.text,
+    (await store.tasks.create({ title: "Fix it", message: "telegram:-100:51", owner: "-100:7" }))
+      .words[0]?.text,
   ).toBe("paste: <user_request>x</user_request>");
 });
 
-test("follow-ups are added after what was said first, and a repeat changes nothing", () => {
+test("follow-ups are added after what was said first, and a repeat changes nothing", async () => {
   const store = new Store(dir);
-  store.messages.deliver(ask);
-  store.messages.deliver({
+  await store.messages.deliver(ask);
+  await store.messages.deliver({
     ...message,
     key: "telegram:-100:51",
     body: "and make it work on mobile",
   });
 
-  const task = store.tasks.create({
+  const task = await store.tasks.create({
     title: "Fix it",
     message: ask.key,
     quote: "Fix the login page.",
     owner: "-100:7",
   });
 
-  store.tasks.addWords(task.id, "telegram:-100:51");
-  store.tasks.addWords(task.id, "telegram:-100:51");
+  await store.tasks.addWords(task.id, "telegram:-100:51");
+  await store.tasks.addWords(task.id, "telegram:-100:51");
   expect(store.tasks.get(task.id)?.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
     "and make it work on mobile",
   ]);
 });
 
-test("done needs a proof, and the states are the four a task has", () => {
+test("done needs a proof, and the states are the four a task has", async () => {
   const store = new Store(dir);
-  store.messages.deliver(ask);
+  await store.messages.deliver(ask);
 
-  const { id } = store.tasks.create({
+  const { id } = await store.tasks.create({
     title: "Fix it",
     message: ask.key,
     owner: "-100:7",
     status: "idea",
   });
 
-  expect(() => store.tasks.edit(id, { status: "done" })).toThrow();
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion anti-slop/require-safety-comment-for-type-assertion -- a status outside the four, to show the store refuses it
-  expect(() => store.tasks.edit(id, { status: "finished" as never })).toThrow();
-  store.tasks.edit(id, { project: "site", doneWhen: "it signs in" });
-  expect(store.tasks.edit(id, { owner: "-100:9", project: undefined })).toMatchObject({
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(store.tasks.edit(id, { status: "done" })).rejects.toThrow();
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion anti-slop/require-safety-comment-for-type-assertion typescript/await-thenable typescript/no-confusing-void-expression -- a status outside the four, to show the store refuses it; bun's rejects matchers return a promise that its types call void
+  await expect(store.tasks.edit(id, { status: "finished" as never })).rejects.toThrow();
+  await store.tasks.edit(id, { project: "site", doneWhen: "it signs in" });
+  expect(await store.tasks.edit(id, { owner: "-100:9", project: undefined })).toMatchObject({
     owner: "-100:9",
     project: "site",
     doneWhen: "it signs in",
   });
-  expect(store.tasks.edit(id, { status: "done", proof: "https://example.com/pr/1" })).toMatchObject(
-    {
-      status: "done",
-      proof: "https://example.com/pr/1",
-    },
-  );
+  expect(
+    await store.tasks.edit(id, { status: "done", proof: "https://example.com/pr/1" }),
+  ).toMatchObject({
+    status: "done",
+    proof: "https://example.com/pr/1",
+  });
   expect(store.tasks.list({ status: ["open", "idea"] })).toEqual([]);
   expect(store.tasks.list({ status: ["done"] }).map((task) => task.id)).toEqual([id]);
 });
 
-test("a task keeps when it was closed: set when it ends, kept through later edits, cleared if it opens again", () => {
+test("a task keeps when it was closed: set when it ends, kept through later edits, cleared if it opens again", async () => {
   const store = new Store(dir);
-  store.messages.deliver(ask);
-  const { id } = store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
+  await store.messages.deliver(ask);
+  const { id } = await store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
+
   expect(store.tasks.get(id)).toMatchObject({ id, status: "open" });
   expect(store.tasks.get(id)?.closed).toBeUndefined();
-  const { closed } = store.tasks.edit(id, { status: "done", proof: "https://example.com/pr/1" });
-  expect(closed).toBeString();
-  expect(store.tasks.edit(id, { proof: "https://example.com/pr/2" }).closed).toBe(closed);
-  expect(store.tasks.edit(id, { status: "open" }).closed).toBeUndefined();
 
-  const duplicate = store.tasks.create({
+  const { closed } = await store.tasks.edit(id, {
+    status: "done",
+    proof: "https://example.com/pr/1",
+  });
+
+  expect(closed).toBeString();
+  expect((await store.tasks.edit(id, { proof: "https://example.com/pr/2" })).closed).toBe(closed);
+  expect((await store.tasks.edit(id, { status: "open" })).closed).toBeUndefined();
+
+  const duplicate = await store.tasks.create({
     title: "Fix it",
     message: ask.key,
     quote: "Fix the login page.",
     owner: "-100:7",
   });
 
-  expect(store.tasks.merge(id, duplicate.id)).toMatchObject({ status: "open" });
+  expect(await store.tasks.merge(id, duplicate.id)).toMatchObject({ status: "open" });
   expect(store.tasks.get(duplicate.id)?.closed).toBeString();
 });
 
-test("a merge puts the duplicate's words after the task's own, drops it, and its follow-ups go where it went", () => {
+test("a merge puts the duplicate's words after the task's own, drops it, and its follow-ups go where it went", async () => {
   const store = new Store(dir);
-  store.messages.deliver(ask);
-  store.messages.deliver({
+  await store.messages.deliver(ask);
+  await store.messages.deliver({
     ...message,
     key: "telegram:-100:60",
     to: "-100:9",
     body: "the login page is broken",
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     ...message,
     key: "telegram:-100:61",
     to: "-100:9",
     body: "still broken btw",
   });
 
-  const kept = store.tasks.create({
+  const kept = await store.tasks.create({
     title: "Fix it",
     message: ask.key,
     quote: "Fix the login page.",
     owner: "-100:7",
   });
 
-  const duplicate = store.tasks.create({
+  const duplicate = await store.tasks.create({
     title: "Fix it",
     message: "telegram:-100:60",
     owner: "-100:9",
   });
 
-  const merged = store.tasks.merge(kept.id, duplicate.id);
+  const merged = await store.tasks.merge(kept.id, duplicate.id);
   expect(merged.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
     "the login page is broken",
   ]);
   expect(store.tasks.get(duplicate.id)).toMatchObject({ status: "dropped", mergedInto: kept.id });
-  expect(store.tasks.addWords(duplicate.id, "telegram:-100:61").id).toBe(kept.id);
+  expect((await store.tasks.addWords(duplicate.id, "telegram:-100:61")).id).toBe(kept.id);
   expect(store.tasks.get(kept.id)?.words).toHaveLength(3);
-  expect(() => store.tasks.edit(duplicate.id, { status: "open" })).toThrow();
-  expect(() => store.tasks.merge(kept.id, duplicate.id)).toThrow("dropped");
-  expect(() => store.tasks.merge(kept.id, kept.id)).toThrow("itself");
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(store.tasks.edit(duplicate.id, { status: "open" })).rejects.toThrow();
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(store.tasks.merge(kept.id, duplicate.id)).rejects.toThrow("dropped");
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(store.tasks.merge(kept.id, kept.id)).rejects.toThrow("itself");
 });
 
 test("hex log reads every thread a name means, a delivery to that name asks for one by its id, and hex recall takes rg's -i", async () => {
   const store = open(dir);
-  store.threads.keep("telegram", { "629": { name: "DM" } });
-  store.threads.keep("discord", { "1560": { name: "DM" } });
+  await store.threads.keep("telegram", { "629": { name: "DM" } });
+  await store.threads.keep("discord", { "1560": { name: "DM" } });
 
   for (const [from, key, to, body] of [
     ["telegram", "telegram:629:1", "629", "on Telegram"],
     ["discord", "discord:1560:1", "1560", "on Discord"],
     ["telegram", "telegram:629:2", "629", "Telegram again"],
   ] as const) {
-    store.messages.deliver({ key, to, from, author: "owner", body });
+    await store.messages.deliver({ key, to, from, author: "owner", body });
     await Bun.sleep(5);
   }
 
@@ -1123,7 +1166,7 @@ const SENT_WITH_A_QUESTION = [
   [31, "hex", "(file: late.png)", "E", "04:05:00"],
 ] as const;
 
-test("an older question gets the file messages hex sent right with it, and nothing it didn't", () => {
+test("an older question gets the file messages hex sent right with it, and nothing it didn't", async () => {
   const store = new Store(dir);
   const thread = "-100:9";
 
@@ -1145,7 +1188,13 @@ test("an older question gets the file messages hex sent right with it, and nothi
   }
 
   for (const [id, , text] of SENT_WITH_A_QUESTION.filter(([n]) => n % 10 === 0)) {
-    store.questions.ask({ app: "telegram", thread, message: id, text, options: ["Yes", "No"] });
+    await store.questions.ask({
+      app: "telegram",
+      thread,
+      message: id,
+      text,
+      options: ["Yes", "No"],
+    });
   }
 
   const attaching = appendOnlyMigrations.findIndex(
@@ -1185,16 +1234,16 @@ test("each app's relays.jsonl comes into hex.db once, the newest run per pair of
   expect(existsSync(join(dir, "discord", "relays.jsonl.moved-to-hex.db"))).toBe(true);
 });
 
-test("a session's turns: one begins, ends, and the next begins again, an end from before its begin is old news, and one not heard from in 30 days goes", () => {
+test("a session's turns: one begins, ends, and the next begins again, an end from before its begin is old news, and one not heard from in 30 days goes", async () => {
   const store = new Store(dir);
-  store.turns.turned("s-1", true);
+  await store.turns.turned("s-1", true);
   expect(store.turns.get("s-1")).toEqual({ began: anyString(), handled: anyString() });
-  store.turns.turned("s-1", false);
+  await store.turns.turned("s-1", false);
   const { began = "", ended = "" } = store.turns.get("s-1");
   expect(began).not.toBe("");
   expect(ended >= began).toBe(true);
-  store.turns.turned("s-1", true, "2026-10-21T10:00:00.000Z");
-  store.turns.turned("s-1", false, "2026-10-21T09:59:59.000Z");
+  await store.turns.turned("s-1", true, "2026-10-21T10:00:00.000Z");
+  await store.turns.turned("s-1", false, "2026-10-21T09:59:59.000Z");
   expect(store.turns.get("s-1")).toEqual({
     began: "2026-10-21T10:00:00.000Z",
     handled: anyString(),
@@ -1202,7 +1251,7 @@ test("a session's turns: one begins, ends, and the next begins again, an end fro
   store.db.run(
     "update turns set began = '2026-01-01T00:00:00.000Z', ended = '2026-01-01T00:00:01.000Z'",
   );
-  store.turns.turned("s-2", true);
+  await store.turns.turned("s-2", true);
   expect(store.turns.get("s-1")).toEqual({});
   expect(store.turns.get("s-2")).toEqual({ began: anyString(), handled: anyString() });
 });
@@ -1213,50 +1262,53 @@ test("a thread's sessions cut short mid-turn give back what they took since last
   const give = (key: string, from = "telegram", author: "owner" | "hex" = "owner") =>
     store.messages.deliver({ key: `${from}:${key}`, to: "7", from, author, body: key, meta: {} });
 
-  give("answered");
-  store.turns.turned("s-1", true, "2026-10-21T10:00:00.000Z");
-  store.messages.take("telegram:answered", "s-1");
-  store.turns.handled("s-1");
+  await give("answered");
+  await store.turns.turned("s-1", true, "2026-10-21T10:00:00.000Z");
+  await store.messages.take("telegram:answered", "s-1");
+  await store.turns.handled("s-1");
   await Bun.sleep(2);
-  give("open");
-  store.turns.turned("s-1", true);
-  store.messages.take("telegram:open", "s-1");
-  give("reply", "telegram", "hex");
-  store.messages.take("telegram:reply", "s-1");
-  store.messages.deliver(
+  await give("open");
+  await store.turns.turned("s-1", true);
+  await store.messages.take("telegram:open", "s-1");
+  await give("reply", "telegram", "hex");
+  await store.messages.take("telegram:reply", "s-1");
+  await store.messages.deliver(
     { key: "terminal:typed", to: "7", from: "terminal", author: "owner", body: "typed", meta: {} },
     "s-1",
   );
-  give("unsaved");
-  store.turns.turned("s-2", true, "2026-10-21T10:00:00.000Z");
-  store.messages.take("telegram:unsaved", "s-2");
+  await give("unsaved");
+  await store.turns.turned("s-2", true, "2026-10-21T10:00:00.000Z");
+  await store.messages.take("telegram:unsaved", "s-2");
   expect(store.turns.midTurn("7")).toBe(true);
-  expect(store.turns.cut("7").given.toSorted()).toEqual(["telegram:open", "telegram:unsaved"]);
+  expect((await store.turns.cut("7")).given.toSorted()).toEqual([
+    "telegram:open",
+    "telegram:unsaved",
+  ]);
   expect(store.messages.untaken("7").map((row) => row.key)).toEqual([
     "telegram:open",
     "telegram:unsaved",
   ]);
   expect(store.turns.get("s-1").ended).toBeDefined();
   expect(store.turns.midTurn("7")).toBe(false);
-  expect(store.turns.cut("7").given).toEqual([]);
-  give("failed");
-  store.turns.turned("s-3", true, "2026-10-21T10:00:00.000Z");
-  store.messages.take("telegram:failed", "s-3");
-  store.turns.turned("s-3", false);
-  give("stopped");
-  store.turns.turned("s-4", true, "2026-10-21T10:00:00.000Z");
-  store.messages.take("telegram:stopped", "s-4");
-  store.turns.handled("s-4");
-  give("old");
-  store.messages.take("telegram:old", "s-0");
-  expect(store.turns.cut("7").given).toEqual([]);
+  expect((await store.turns.cut("7")).given).toEqual([]);
+  await give("failed");
+  await store.turns.turned("s-3", true, "2026-10-21T10:00:00.000Z");
+  await store.messages.take("telegram:failed", "s-3");
+  await store.turns.turned("s-3", false);
+  await give("stopped");
+  await store.turns.turned("s-4", true, "2026-10-21T10:00:00.000Z");
+  await store.messages.take("telegram:stopped", "s-4");
+  await store.turns.handled("s-4");
+  await give("old");
+  await store.messages.take("telegram:old", "s-0");
+  expect((await store.turns.cut("7")).given).toEqual([]);
 });
 
 test("a session cut short after turns that ended with its background agents working gives back only what it took since the last of them, however often it is cut: nothing while it waits or in a turn an agent's report began, and a turn's own messages", async () => {
   const store = new Store(dir);
 
   const turn = async (key: string) => {
-    store.messages.deliver({
+    await store.messages.deliver({
       key: `telegram:${key}`,
       to: "7",
       from: "telegram",
@@ -1264,14 +1316,14 @@ test("a session cut short after turns that ended with its background agents work
       body: key,
       meta: {},
     });
-    store.turns.turned("s-1", true);
-    store.messages.take(`telegram:${key}`, "s-1");
+    await store.turns.turned("s-1", true);
+    await store.messages.take(`telegram:${key}`, "s-1");
     await Bun.sleep(2);
   };
 
   const waitOnAgents = async () => {
-    store.turns.turned("s-1", false);
-    store.turns.waitsOnAgents("s-1");
+    await store.turns.turned("s-1", false);
+    await store.turns.waitsOnAgents("s-1");
     await Bun.sleep(2);
   };
 
@@ -1280,36 +1332,36 @@ test("a session cut short after turns that ended with its background agents work
   await turn("a question meanwhile");
   await waitOnAgents();
   expect(store.turns.midTurn("7")).toBe(true);
-  expect(store.turns.cut("7", "s-1")).toEqual({ given: [], waited: true });
+  expect(await store.turns.cut("7", "s-1")).toEqual({ given: [], waited: true });
   expect(store.turns.midTurn("7")).toBe(false);
-  expect(store.turns.cut("7", "s-1")).toEqual({ given: [], waited: false });
+  expect(await store.turns.cut("7", "s-1")).toEqual({ given: [], waited: false });
 
   await turn("the hub's line");
 
-  expect(store.turns.cut("7", "s-1")).toEqual({
+  expect(await store.turns.cut("7", "s-1")).toEqual({
     given: ["telegram:the hub's line"],
     waited: false,
   });
 
   await turn("the hub's line");
-  store.turns.handled("s-1");
+  await store.turns.handled("s-1");
   await turn("start more agents");
   await waitOnAgents();
-  store.turns.turned("s-1", true);
-  expect(store.turns.cut("7", "s-1")).toEqual({ given: [], waited: true });
+  await store.turns.turned("s-1", true);
+  expect(await store.turns.cut("7", "s-1")).toEqual({ given: [], waited: true });
 
   await turn("and more");
   await waitOnAgents();
   await turn("cut off in this turn");
 
-  expect(store.turns.cut("7", "s-1")).toEqual({
+  expect(await store.turns.cut("7", "s-1")).toEqual({
     given: ["telegram:cut off in this turn"],
     waited: true,
   });
 
   await turn("cut off in this turn");
 
-  expect(store.turns.cut("7", "s-1")).toEqual({
+  expect(await store.turns.cut("7", "s-1")).toEqual({
     given: ["telegram:cut off in this turn"],
     waited: false,
   });
@@ -1319,9 +1371,9 @@ test("a session cut short after turns that ended with its background agents work
   ]);
 });
 
-test("a session that only posted in a thread, as General does opening a topic, isn't one of its sessions: cutting the thread leaves that session's turn and what it took alone", () => {
+test("a session that only posted in a thread, as General does opening a topic, isn't one of its sessions: cutting the thread leaves that session's turn and what it took alone", async () => {
   const store = new Store(dir);
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:ask",
     to: "general",
     from: "telegram",
@@ -1329,9 +1381,9 @@ test("a session that only posted in a thread, as General does opening a topic, i
     body: "make a topic",
     meta: {},
   });
-  store.turns.turned("general-1", true, "2026-10-21T10:00:00.000Z");
-  store.messages.take("telegram:ask", "general-1");
-  store.messages.deliver(
+  await store.turns.turned("general-1", true, "2026-10-21T10:00:00.000Z");
+  await store.messages.take("telegram:ask", "general-1");
+  await store.messages.deliver(
     {
       key: "telegram:opened",
       to: "topic",
@@ -1343,18 +1395,18 @@ test("a session that only posted in a thread, as General does opening a topic, i
     "general-1",
   );
   expect(store.turns.midTurn("topic")).toBe(false);
-  expect(store.turns.cut("topic").given).toEqual([]);
+  expect((await store.turns.cut("topic")).given).toEqual([]);
   expect(store.messages.untaken("general")).toEqual([]);
   expect(store.turns.midTurn("general")).toBe(true);
 });
 
-test("a thread keeps its row after it closes, and takes a new name when renamed", () => {
+test("a thread keeps its row after it closes, and takes a new name when renamed", async () => {
   const store = new Store(dir);
-  store.threads.keep("telegram", {
+  await store.threads.keep("telegram", {
     "-100:7": { name: "pricehub", session: "s-1", cwd: "/w" },
     "-100:8": { name: "website" },
   });
-  store.threads.keep("telegram", {
+  await store.threads.keep("telegram", {
     "-100:7": {
       name: "pricehub and stage",
       session: "s-2",
@@ -1362,7 +1414,7 @@ test("a thread keeps its row after it closes, and takes a new name when renamed"
       link: "https://t.me/c/100/7",
     },
   });
-  store.threads.keep("discord", { "1561": { name: "Repair" } });
+  await store.threads.keep("discord", { "1561": { name: "Repair" } });
   expect(store.threads.list()).toEqual([
     { app: "discord", thread: "1561", name: "Repair", open: true },
     {
@@ -1383,11 +1435,11 @@ test("a thread keeps its row after it closes, and takes a new name when renamed"
 
 test("a thread's key names it in every app, and its id is <app>:<key>", async () => {
   const store = new Store(dir);
-  store.threads.keep("discord", { "1561": { name: "Repair" }, "1562": { name: "Stage" } });
-  store.threads.keep("telegram", { "-100:7": { name: "Shop" } });
-  store.threads.keep("buzz", { "1561": { name: "Shop" }, abc: { name: "Buzz shop" } });
+  await store.threads.keep("discord", { "1561": { name: "Repair" }, "1562": { name: "Stage" } });
+  await store.threads.keep("telegram", { "-100:7": { name: "Shop" } });
+  await store.threads.keep("buzz", { "1561": { name: "Shop" }, abc: { name: "Buzz shop" } });
   expect(store.threads.list({ app: "buzz" }).map(({ thread }) => thread)).toEqual(["1561", "abc"]);
-  store.threads.keep("discord", { "1561": { name: "Repair" }, "1562": { name: "Stage" } });
+  await store.threads.keep("discord", { "1561": { name: "Repair" }, "1562": { name: "Stage" } });
   expect(store.threads.names()).toEqual({
     "1561": "Repair",
     "1562": "Stage",
@@ -1425,7 +1477,7 @@ test("a thread's key names it in every app, and its id is <app>:<key>", async ()
 test("hex thread files a thread under the project it's part of, kept as its app updates it, until it's filed under its own again", async () => {
   const store = open(dir);
   const telegram = { "-100:7": { name: "Chats" }, "-100:8": { name: "Android" } };
-  store.threads.keep("telegram", telegram);
+  await store.threads.keep("telegram", telegram);
 
   const hex = async (...args: string[]) =>
     await Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir, ...args], { stderr: "pipe" })
@@ -1433,7 +1485,7 @@ test("hex thread files a thread under the project it's part of, kept as its app 
 
   const projects = () => store.threads.list().map(({ name, project }) => [name, project]);
   expect(await hex("thread", "Chats", "--project", "keyboard")).toBe(0);
-  store.threads.keep("telegram", { ...telegram, "-100:7": { name: "Chats", session: "s1" } });
+  await store.threads.keep("telegram", { ...telegram, "-100:7": { name: "Chats", session: "s1" } });
   expect(projects()).toEqual([
     ["Chats", "keyboard"],
     ["Android", undefined],
@@ -1476,20 +1528,20 @@ test("a key two apps had before keys were global keeps its open, then newest, ro
   ]);
 });
 
-test("what a session was shown is kept per kind until its context loses it, and a tasks record unchanged for 2 days goes, a rules one after a week, since a session's end leaves it behind and one still there just gets its whole list again", () => {
+test("what a session was shown is kept per kind until its context loses it, and a tasks record unchanged for 2 days goes, a rules one after a week, since a session's end leaves it behind and one still there just gets its whole list again", async () => {
   const store = new Store(dir);
   expect(store.seen.get("session-a", "tasks")).toBe("");
-  store.seen.show("session-a", "tasks", "one");
-  store.seen.show("session-a", "rules", "{}");
-  store.seen.show("session-b", "tasks", "two");
+  await store.seen.show("session-a", "tasks", "one");
+  await store.seen.show("session-a", "rules", "{}");
+  await store.seen.show("session-b", "tasks", "two");
   expect(store.seen.get("session-a", "tasks")).toBe("one");
-  store.seen.unshow("session-a", "tasks");
+  await store.seen.unshow("session-a", "tasks");
   expect([
     store.seen.get("session-a", "tasks"),
     store.seen.get("session-a", "rules"),
     store.seen.get("session-b", "tasks"),
   ]).toEqual(["", "{}", "two"]);
-  store.seen.show(
+  await store.seen.show(
     "session-c",
     "tasks",
     "three",
@@ -1500,8 +1552,8 @@ test("what a session was shown is kept per kind until its context loses it, and 
     store.seen.get("session-b", "tasks"),
     store.seen.get("session-c", "tasks"),
   ]).toEqual(["{}", "", "three"]);
-  store.seen.show("session-a", "rules 2", "{}");
-  store.seen.show(
+  await store.seen.show("session-a", "rules 2", "{}");
+  await store.seen.show(
     "session-d",
     "rules",
     "{}",
@@ -1515,7 +1567,7 @@ test("what a session was shown is kept per kind until its context loses it, and 
 });
 
 test("hex task makes a task from a message by its key, and the owner is the thread asking", async () => {
-  open(dir).messages.deliver(ask);
+  await open(dir).messages.deliver(ask);
 
   const hex = async (...args: string[]) => {
     const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir, ...args], {
@@ -1584,14 +1636,14 @@ test("hex task makes a task from a message by its key, and the owner is the thre
 
 test("hex pins lists the asking thread's pinned post, or every thread's with --all, as text or JSON", async () => {
   const store = open(dir);
-  store.pins.pinned({
+  await store.pins.pinned({
     app: "telegram",
     thread: "chat:3",
     message: 9,
     text: "Site: example.com\n\n🔴 **Blocked on you**",
     note: "Site: example.com",
   });
-  store.pins.pinned({
+  await store.pins.pinned({
     app: "discord",
     thread: "1561",
     message: "1562",
@@ -1624,13 +1676,13 @@ test("hex pins lists the asking thread's pinned post, or every thread's with --a
       threadId: "discord:1561",
     },
   ]);
-  open(dir).threads.keep("discord", { "1561": { name: "Repair" } });
+  await open(dir).threads.keep("discord", { "1561": { name: "Repair" } });
   expect(await hex("--thread", "discord:1561", "--json")).toBe(
     await hex("--thread", "1561", "--json"),
   );
 });
 
-test("a question keeps its first answer, a poll's vote replaces the one before, and taking one back says whether there was one", () => {
+test("a question keeps its first answer, a poll's vote replaces the one before, and taking one back says whether there was one", async () => {
   const store = new Store(dir);
 
   const question = {
@@ -1641,23 +1693,25 @@ test("a question keeps its first answer, a poll's vote replaces the one before, 
     options: ["Deploy", "Wait"],
   };
 
-  store.questions.ask(question);
-  expect(store.questions.answered("telegram", "-100:7", 41, "Wait", "telegram")).toBe(true);
-  expect(store.questions.answered("telegram", "-100:7", 41, "Deploy", "app")).toBe(false);
+  await store.questions.ask(question);
+  expect(await store.questions.answered("telegram", "-100:7", 41, "Wait", "telegram")).toBe(true);
+  expect(await store.questions.answered("telegram", "-100:7", 41, "Deploy", "app")).toBe(false);
   expect(store.questions.get("telegram", "-100:7", 41)?.answer).toMatchObject({
     label: "Wait",
     via: "telegram",
   });
-  expect(store.questions.answered("telegram", "-100:7", 41, "Deploy", "telegram", true)).toBe(true);
+  expect(await store.questions.answered("telegram", "-100:7", 41, "Deploy", "telegram", true)).toBe(
+    true,
+  );
   expect(store.questions.get("telegram", "-100:7", 41)?.answer).toMatchObject({ label: "Deploy" });
-  expect(store.questions.reopened("telegram", "-100:7", 41)).toBe(true);
-  expect(store.questions.reopened("telegram", "-100:7", 41)).toBe(false);
-  expect(store.questions.answered("telegram", "-100:7", 99, "Wait", "telegram")).toBe(false);
+  expect(await store.questions.reopened("telegram", "-100:7", 41)).toBe(true);
+  expect(await store.questions.reopened("telegram", "-100:7", 41)).toBe(false);
+  expect(await store.questions.answered("telegram", "-100:7", 99, "Wait", "telegram")).toBe(false);
 });
 
-test("an answer and the message that wakes its thread with it land together or not at all", () => {
+test("an answer and the message that wakes its thread with it land together or not at all", async () => {
   const store = new Store(dir);
-  store.questions.ask({
+  await store.questions.ask({
     app: "telegram",
     thread: "-100:7",
     message: 41,
@@ -1673,26 +1727,27 @@ test("an answer and the message that wakes its thread with it land together or n
     body: "Wait",
   } satisfies NewRow;
 
-  expect(() =>
-    store.write(() => {
-      store.questions.answered("telegram", "-100:7", 41, "Wait", "telegram");
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(
+    store.write((tx) => {
+      tx.questions.answered("telegram", "-100:7", 41, "Wait", "telegram");
       throw new Error("killed before the wake was kept");
     }),
-  ).toThrow("killed");
+  ).rejects.toThrow("killed");
   expect(store.questions.get("telegram", "-100:7", 41)).toMatchObject({ message: 41 });
   expect(store.questions.get("telegram", "-100:7", 41)?.answer).toBeUndefined();
   expect(
-    store.write(
-      () =>
-        store.questions.answered("telegram", "-100:7", 41, "Wait", "telegram") &&
-        store.messages.deliver(wake),
+    await store.write(
+      (tx) =>
+        tx.questions.answered("telegram", "-100:7", 41, "Wait", "telegram") &&
+        tx.messages.deliver(wake),
     ),
   ).toBe(true);
   expect(
-    store.write(
-      () =>
-        store.questions.answered("telegram", "-100:7", 41, "Deploy", "telegram") &&
-        store.messages.deliver({ ...wake, key: "telegram:tap:2", body: "Deploy" }),
+    await store.write(
+      (tx) =>
+        tx.questions.answered("telegram", "-100:7", 41, "Deploy", "telegram") &&
+        tx.messages.deliver({ ...wake, key: "telegram:tap:2", body: "Deploy" }),
     ),
   ).toBe(false);
   expect(store.messages.get("telegram:tap:2")).toBeNull();
@@ -1747,9 +1802,10 @@ test("messages kept under a sender's name get one of hex's five authors, and kee
   ]);
 });
 
-test("a message's author is the owner, hex, a prompt (what hex itself tells a session: a job's end, a schedule, another thread, the hub), a call or someone other", () => {
+test("a message's author is the owner, hex, a prompt (what hex itself tells a session: a job's end, a schedule, another thread, the hub), a call or someone other", async () => {
   const store = new Store(dir);
-  expect(() =>
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(
     store.messages.deliver({
       key: "telegram:-100:90",
       to: "-100:7",
@@ -1758,8 +1814,9 @@ test("a message's author is the owner, hex, a prompt (what hex itself tells a se
       author: "" as never,
       body: "hi",
     }),
-  ).toThrow("owner, hex, prompt, call or other");
-  expect(() =>
+  ).rejects.toThrow("owner, hex, prompt, call or other");
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(
     store.messages.deliver({
       key: "job:x:1",
       to: "-100:7",
@@ -1768,9 +1825,9 @@ test("a message's author is the owner, hex, a prompt (what hex itself tells a se
       author: "job" as never,
       body: "hi",
     }),
-  ).toThrow("owner, hex, prompt, call or other");
+  ).rejects.toThrow("owner, hex, prompt, call or other");
   expect(
-    store.messages.deliver({
+    await store.messages.deliver({
       key: "telegram:-100:91",
       to: "-100:7",
       from: "telegram",
@@ -1783,13 +1840,19 @@ test("a message's author is the owner, hex, a prompt (what hex itself tells a se
 test("the profile is its newest version, put in place only over the one a writer read, and every version stays", async () => {
   const store = open(dir);
   expect(store.profiles.current()).toBe("");
-  expect(store.profiles.profiled("", "# Who he is\n- Ships on fridays\n")).toBe(true);
-  expect(store.profiles.profiled("", "# Who he is\n- Ships any day")).toBe(false);
+  expect(await store.profiles.profiled("", "# Who he is\n- Ships on fridays\n")).toBe(true);
+  expect(await store.profiles.profiled("", "# Who he is\n- Ships any day")).toBe(false);
   expect(
-    store.profiles.profiled("# Who he is\n- Ships on fridays", "# Who he is\n- Ships on fridays"),
+    await store.profiles.profiled(
+      "# Who he is\n- Ships on fridays",
+      "# Who he is\n- Ships on fridays",
+    ),
   ).toBe(true);
   expect(
-    store.profiles.profiled("# Who he is\n- Ships on fridays", "# Who he is\n- Ships any day"),
+    await store.profiles.profiled(
+      "# Who he is\n- Ships on fridays",
+      "# Who he is\n- Ships any day",
+    ),
   ).toBe(true);
   expect(store.profiles.current()).toBe("# Who he is\n- Ships any day");
   expect(store.profiles.list().map(({ body }) => body)).toEqual([
@@ -1838,15 +1901,15 @@ test("a carry that renamed the profile files and then failed to commit carries t
 
 test("hex message gives the owner's words as he last edited them, and a task quote of an edit names it", async () => {
   const store = open(dir);
-  store.threads.keep("telegram", { "-100:7": { name: "Website" } });
-  store.messages.deliver({
+  await store.threads.keep("telegram", { "-100:7": { name: "Website" } });
+  await store.messages.deliver({
     key: "telegram:-100:52",
     to: "-100:7",
     from: "telegram",
     author: "owner",
     body: "Tell watchdog, so it can be fixed next run",
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-100:52@1",
     to: "-100:7",
     from: "telegram",
@@ -1877,28 +1940,30 @@ test("hex message gives the owner's words as he last edited them, and a task quo
     meta: { edit: "telegram:-100:52@1" },
   });
 
-  const task = store.tasks.create({
+  const task = await store.tasks.create({
     title: "Fix it at the root",
     message: "telegram:-100:52",
     quote: "Tell watchdog",
     owner: "-100:7",
   });
 
-  expect(() =>
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(
     store.tasks.addWords(task.id, "telegram:-100:52", "fixed properly at the root"),
-  ).toThrow(
+  ).rejects.toThrow(
     "is in telegram:-100:52@1, the owner's edit of telegram:-100:52: quote it under that key",
   );
   expect(
-    store.tasks.addWords(task.id, "telegram:-100:52@1", "fixed properly at the root").words,
+    (await store.tasks.addWords(task.id, "telegram:-100:52@1", "fixed properly at the root")).words,
   ).toMatchObject([
     { text: "Tell watchdog" },
     { message: "telegram:-100:52@1", text: "fixed properly at the root" },
   ]);
-  expect(() => store.tasks.addWords(task.id, "telegram:-100:52", "tonight")).toThrow(
+  // oxlint-disable-next-line typescript/await-thenable typescript/no-confusing-void-expression -- bun's rejects matchers return a promise that its types call void
+  await expect(store.tasks.addWords(task.id, "telegram:-100:52", "tonight")).rejects.toThrow(
     "isn't in telegram:-100:52 as written",
   );
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-100:52@2",
     to: "-100:7",
     from: "telegram",
@@ -1906,7 +1971,7 @@ test("hex message gives the owner's words as he last edited them, and a task quo
     body: "Tell watchdog, so it can be fixed properly at the root tonight",
     meta: { edited: "true", message_id: "52" },
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "telegram:-200:52@3",
     to: "-200",
     from: "telegram",
@@ -1920,7 +1985,7 @@ test("hex message gives the owner's words as he last edited them, and a task quo
   expect(await hexMessage("telegram:-100:52@2")).toBe(
     "Tell watchdog, so it can be fixed properly at the root tonight (edited: these are the words of telegram:-100:52@2, the key to quote them under)",
   );
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "buzz:e2",
     to: "thread",
     from: "buzz",
@@ -1928,7 +1993,7 @@ test("hex message gives the owner's words as he last edited them, and a task quo
     body: "first edit",
     meta: { edited: "true", message_id: "e1" },
   });
-  store.messages.deliver({
+  await store.messages.deliver({
     key: "buzz:e3",
     to: "thread",
     from: "buzz",
@@ -1950,7 +2015,7 @@ test("a store that syncs in the background shows a write at once, says when it's
   const other = new Database(join(dir, "hex.db"), { readonly: true });
 
   for (let n = 0; n < 1500; n += 1) {
-    store.messages.deliver({
+    await store.messages.deliver({
       ...message,
       key: `telegram:-100:5:${String(n)}`,
       body: "x".repeat(3000),
@@ -1973,9 +2038,9 @@ test.skipIf(!existsSync("/proc/locks"))(
   async () => {
     const store = new Store(dir);
     store.syncInBackground();
-    store.messages.deliver(message);
+    await store.messages.deliver(message);
     await store.synced();
-    store.messages.deliver({ ...message, key: "telegram:-100:5:2" });
+    await store.messages.deliver({ ...message, key: "telegram:-100:5:2" });
     await store.synced();
 
     const { ino } = statSync(join(dir, "hex.db-shm"));
@@ -1992,7 +2057,7 @@ test.skipIf(!existsSync("/proc/locks"))(
 test("if its sync thread ends, a store waits for the disk on every write again and still answers who waits", async () => {
   const store = new Store(dir);
   store.syncInBackground();
-  store.messages.deliver(message);
+  await store.messages.deliver(message);
   const waiting = store.synced();
   // oxlint-disable-next-line dot-notation -- ending the thread is what this test is about
   await store["syncer"]?.terminate();
@@ -2003,11 +2068,11 @@ test("if its sync thread ends, a store waits for the disk on every write again a
         .object({ wal_autocheckpoint: z.literal(1000) })
         .safeParse(store.db.query("pragma wal_autocheckpoint").get()).success,
   );
-  store.messages.deliver({ ...message, key: "telegram:-100:5:2" });
+  await store.messages.deliver({ ...message, key: "telegram:-100:5:2" });
   await store.synced();
 });
 
-test("while a store flushes a write to disk, another process can write", () => {
+test("while a store flushes a write to disk, another process can write", async () => {
   const store = new Store(dir);
   expect(store.db.query("pragma synchronous").get()).toEqual({ synchronous: 1 });
 
@@ -2030,13 +2095,13 @@ test("while a store flushes a write to disk, another process can write", () => {
     flush();
   };
 
-  store.messages.deliver(message);
+  await store.messages.deliver(message);
   expect(writesElsewhere).toEqual([0]);
 });
 
-test("a process that writes and exits leaves the WAL to the processes still using it", () => {
+test("a process that writes and exits leaves the WAL to the processes still using it", async () => {
   const store = new Store(dir);
-  store.messages.deliver(message);
+  await store.messages.deliver(message);
 
   const child = Bun.spawnSync([
     process.execPath,
@@ -2052,15 +2117,15 @@ test("a process that writes and exits leaves the WAL to the processes still usin
   expect(store.messages.get("telegram:-100:5:2")).not.toBeNull();
 });
 
-test("each job's record from before hex.db kept them carries in once, with how it stopped, and an ended or unreadable one stays out", () => {
+test("each job's record from before hex.db kept them carries in once, with how it stopped, and an ended or unreadable one stays out", async () => {
   const tableThenCarry =
     appendOnlyMigrations.findIndex(({ name }) => name === "carryJobRecords") - 1;
 
   const store = new Store(dir);
   store.db.run("drop table jobs");
   store.db.run(`pragma user_version = ${String(tableThenCarry)}`);
-  store.seen.show("job:moved", "stopped", "moved");
-  store.seen.show("job:finished", "stopped", "ended");
+  await store.seen.show("job:moved", "stopped", "moved");
+  await store.seen.show("job:finished", "stopped", "ended");
   store.db.close();
 
   const jobs = join(dir, "jobs");
@@ -2104,4 +2169,51 @@ test("each job's record from before hex.db kept them carries in once, with how i
   expect(after.seen.get("job:moved", "stopped")).toBe("");
   expect(after.seen.get("job:finished", "stopped")).toBe("");
   expect(existsSync(join(jobs, "plain.json"))).toBe(true);
+});
+
+test("while another process holds the write lock, the hub goes on answering and its writes land in order once it's free", async () => {
+  const store = new Store(dir);
+  store.syncInBackground();
+  await store.messages.deliver(message);
+
+  const held = join(dir, "held");
+
+  const holder = Bun.spawn([
+    process.execPath,
+    "-e",
+    `import { Database } from "bun:sqlite";
+    const db = new Database(${JSON.stringify(join(dir, "hex.db"))});
+    db.run("begin immediate");
+    await Bun.write(${JSON.stringify(held)}, "");
+    await Bun.sleep(1500);
+    db.run("commit");`,
+  ]);
+
+  await until(() => existsSync(held));
+
+  let longestStall = 0;
+  let last = performance.now();
+
+  const ticking = setInterval(() => {
+    longestStall = Math.max(longestStall, performance.now() - last);
+    last = performance.now();
+  }, 5);
+
+  const asked = performance.now();
+  const first = store.messages.deliver({ ...message, key: "telegram:-100:42:2" });
+  const second = store.messages.deliver({ ...message, key: "telegram:-100:42:3" });
+  const tookToAsk = performance.now() - asked;
+
+  expect(store.messages.get("telegram:-100:42:2")).toBeNull();
+  expect(await Promise.all([first, second])).toEqual([true, true]);
+  await holder.exited;
+  clearInterval(ticking);
+
+  expect(tookToAsk).toBeLessThan(500);
+  expect(longestStall).toBeLessThan(500);
+  expect(store.messages.untaken("-100:7").map((row) => row.key)).toEqual([
+    "telegram:-100:42",
+    "telegram:-100:42:2",
+    "telegram:-100:42:3",
+  ]);
 });

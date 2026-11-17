@@ -103,10 +103,10 @@ async function start() {
   await until(() => existsSync(join(dir, "state", "acp.sock")));
 }
 
-async function restart(down = () => {}) {
+async function restart(down = (): void | Promise<void> => {}) {
   bot.kill();
   await bot.exited;
-  down();
+  await down();
   rmSync(join(dir, "state", "acp.sock"), { force: true });
   await start();
 }
@@ -774,8 +774,8 @@ test("a turn rejoined after a hub restart follows the session running for its th
     throw new Error("hex didn't keep the thread");
   }
 
-  await restart(() => {
-    hexdb(join(dir, "hex", "state")).threads.keep("t3", {
+  await restart(async () => {
+    await hexdb(join(dir, "hex", "state")).threads.keep("t3", {
       [sessionId]: { ...row, session: "f0e1d2c3-0000-4000-8000-000000000000" },
     });
   });
@@ -1061,8 +1061,8 @@ test("a thread T3 deleted or never recorded closes in hex once T3 has had time t
   const gone = "deleted-0000-4000-8000-000000000000";
   const never = "never-00-0000-4000-8000-000000000000";
   const live = "live-000-0000-4000-8000-000000000000";
-  await restart(() => {
-    hexdb(join(dir, "hex", "state")).threads.keep("t3", {
+  await restart(async () => {
+    await hexdb(join(dir, "hex", "state")).threads.keep("t3", {
       [gone]: { name: "project" },
       [never]: { name: "project" },
       [live]: { name: "project" },
@@ -1093,8 +1093,8 @@ test("a thread T3 deleted or never recorded closes in hex once T3 has had time t
 
 test("a thread hex just kept stays open while T3 has yet to record it", async () => {
   const live = "live-000-0000-4000-8000-000000000000";
-  await restart(() => {
-    hexdb(join(dir, "hex", "state")).threads.keep("t3", { [live]: { name: "project" } });
+  await restart(async () => {
+    await hexdb(join(dir, "hex", "state")).threads.keep("t3", { [live]: { name: "project" } });
     recorded([[live, "docs: one line per file"]]);
   });
   const { agent } = await t3();
@@ -1109,8 +1109,8 @@ test("a thread hex just kept stays open while T3 has yet to record it", async ()
 
 test("a thread T3 recorded once and has no record of now stays open, since the records may be another install's", async () => {
   const linked = "linked-0-0000-4000-8000-000000000000";
-  await restart(() => {
-    hexdb(join(dir, "hex", "state")).threads.keep("t3", {
+  await restart(async () => {
+    await hexdb(join(dir, "hex", "state")).threads.keep("t3", {
       [linked]: { name: "project", link: "t3code://threads/env-0/thread%3Aold" },
     });
     recorded([["someone-else", "not hex"]]);

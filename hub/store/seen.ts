@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
 import { now } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Mode, Write } from "./db.ts";
 
 const RecordRow = z.object({ record: z.string() }).nullable();
 
@@ -13,11 +13,11 @@ const TASKS_RECORD_KEPT_UNCHANGED = 2 * 24 * 60 * 60 * 1000;
 
 const RULES_RECORD_OF_A_SESSION_THAT_ENDED_WITHOUT_SESSION_END = 7 * 24 * 60 * 60 * 1000;
 
-export class Seen {
+export class Seen<M extends Mode = "queued"> {
   private readonly db: Database;
-  private readonly write: Write;
+  private readonly write: Write<M>;
 
-  constructor({ db, write }: Core) {
+  constructor({ db, write }: Core<M>) {
     this.db = db;
     this.write = write;
   }
@@ -39,7 +39,7 @@ export class Seen {
   }
 
   show(session: string, kind: string, record: string, at = now()) {
-    this.write(() => {
+    return this.write(() => {
       this.db
         .query(
           "insert into seen (session, kind, record, at) values (?, ?, ?, ?) on conflict (session, kind) do update set record = excluded.record, at = excluded.at",
@@ -59,7 +59,7 @@ export class Seen {
   }
 
   unshowAll(session: string, kind: string) {
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query("delete from seen where session = ? and (kind = ? or kind glob ?)")
         .run(session, kind, `${kind} *`),
@@ -67,7 +67,7 @@ export class Seen {
   }
 
   unshow(session: string, kind: string) {
-    this.write(() =>
+    return this.write(() =>
       this.db.query("delete from seen where session = ? and kind = ?").run(session, kind),
     );
   }

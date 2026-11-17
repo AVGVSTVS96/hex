@@ -57,8 +57,8 @@ function emptyState() {
   return at;
 }
 
-function said(key: string, to: string, body: string, at = state) {
-  open(at).messages.deliver({ key, to, from: "telegram", author: "owner", body });
+async function said(key: string, to: string, body: string, at = state) {
+  await open(at).messages.deliver({ key, to, from: "telegram", author: "owner", body });
 }
 
 function closedAgo(id: string, days: number) {
@@ -78,21 +78,21 @@ function finished(id: number, at: string): Finished {
   return { id: `t-${id}`, title: `Task ${id}`, topic: "hex", app: "telegram", proof: "", at };
 }
 
-test("a task closed days ago is done in the feed, opening its task, with its proof's words as the body and its links apart", () => {
-  open(state).threads.keep("telegram", {
+test("a task closed days ago is done in the feed, opening its task, with its proof's words as the body and its links apart", async () => {
+  await open(state).threads.keep("telegram", {
     "-1001234567890:102": { name: "phoneapp", link: "https://t.me/c/1234567890/102" },
   });
-  said("telegram:-1001234567890:9002", "-1001234567890:102", "fix the done tab");
-  said("telegram:-1001234567890:9003", "-1001234567890:102", "the tab is fixed");
+  await said("telegram:-1001234567890:9002", "-1001234567890:102", "fix the done tab");
+  await said("telegram:-1001234567890:9003", "-1001234567890:102", "the tab is fixed");
 
-  const tab = open(state).tasks.create({
+  const tab = await open(state).tasks.create({
     title: "Done tab",
     message: "telegram:-1001234567890:9002",
     owner: "-1001234567890:102",
     project: "Phone app",
   });
 
-  open(state).tasks.edit(tab.id, {
+  await open(state).tasks.edit(tab.id, {
     status: "done",
     proof:
       "https://github.com/x/y/pull/1 · telegram:-1001234567890:9003 (**live** on the phone, build 9)",
@@ -117,11 +117,11 @@ test("a task closed days ago is done in the feed, opening its task, with its pro
   });
 });
 
-test("an idea check that found news is found in the feed, its first sentence the title, and a check that found nothing makes no entry", () => {
+test("an idea check that found news is found in the feed, its first sentence the title, and a check that found nothing makes no entry", async () => {
   const at = emptyState();
-  said("telegram:-1001234567890:9100", "-1001234567890:102", "a cloth with MagSafe", at);
+  await said("telegram:-1001234567890:9100", "-1001234567890:102", "a cloth with MagSafe", at);
 
-  const idea = open(at).tasks.create({
+  const idea = await open(at).tasks.create({
     title: "A MagSafe polishing cloth",
     message: "telegram:-1001234567890:9100",
     owner: "-1001234567890:102",
@@ -256,7 +256,7 @@ test("before gives the stretch older than it, and older is 0 once there's nothin
 
 test("the feed's version grows when an entry comes, and only then", async () => {
   const at = emptyState();
-  said("telegram:-1001234567890:9200", "-1001234567890:102", "ship it", at);
+  await said("telegram:-1001234567890:9200", "-1001234567890:102", "ship it", at);
 
   const feed = feedOf(
     {
@@ -281,13 +281,13 @@ test("the feed's version grows when an entry comes, and only then", async () => 
 
   const after = feed.version;
 
-  const task = open(at).tasks.create({
+  const task = await open(at).tasks.create({
     title: "Ship",
     message: "telegram:-1001234567890:9200",
     owner: "-1001234567890:102",
   });
 
-  open(at).tasks.edit(task.id, { status: "done", proof: "shipped" });
+  await open(at).tasks.edit(task.id, { status: "done", proof: "shipped" });
   feed.check();
   expect(feed.version).toBeGreaterThan(after);
   expect(feed.entries().map((entry) => entry.opens)).toEqual([task.id, "t-9"]);

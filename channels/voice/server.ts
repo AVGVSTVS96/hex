@@ -3730,14 +3730,14 @@ async function ideaRoutes(request: Request, url: URL) {
     if (verb === "seen") {
       ideas.seen(id);
     } else if (verb === "start") {
-      ideas.status(id, "open");
+      await ideas.status(id, "open");
       await toThread(`Start on my idea ${id}, “${idea.title}”: it's a task now, so work on it.`);
     } else if (verb === "keep") {
-      if (ideas.status(id, "idea") === "open") {
+      if ((await ideas.status(id, "idea")) === "open") {
         await toThread(`Never mind starting ${id}, “${idea.title}”: keep it as an idea for now.`);
       }
     } else if (verb === "drop") {
-      ideas.status(id, "dropped");
+      await ideas.status(id, "dropped");
     } else if (verb === "stop") {
       ideas.stop(id);
     } else if (verb === "look") {
@@ -3777,11 +3777,11 @@ async function goalRoutes(request: Request, url: URL) {
   if (filled(watched) && filled(act) && request.method === "POST") {
     const name = decodeURIComponent(watched);
 
-    return await done(() => {
+    return await done(async () => {
       if (act === "stop") {
         goals.stopWatching(name);
       } else {
-        goals.undo(name);
+        await goals.undo(name);
       }
     });
   }
@@ -3795,8 +3795,11 @@ async function goalRoutes(request: Request, url: URL) {
   return await done(async () => {
     const run = goals.runOf(id);
 
-    const changed =
-      verb === "drop" ? goals.drop(id) : verb === "reopen" ? goals.reopen(id) : goals.undo(id);
+    const changed = await (verb === "drop"
+      ? goals.drop(id)
+      : verb === "reopen"
+        ? goals.reopen(id)
+        : goals.undo(id));
 
     const where = run === undefined ? undefined : board.find(run);
 

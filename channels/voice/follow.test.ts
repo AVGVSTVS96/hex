@@ -26,7 +26,7 @@ async function engineResumingACallTask({ callStillLive = false } = {}) {
     mkdirSync(dir, { recursive: true });
   }
 
-  open(state).threads.keep("telegram", {
+  await open(state).threads.keep("telegram", {
     "-100123": { name: "General", session: SESSION },
     "-100123:7": { name: "Other", session: OTHER },
   });

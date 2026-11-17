@@ -43,7 +43,7 @@ const Cards = z.object({
 async function lineCall({
   openaiNeverStarts = false,
   openaiRefuses = false,
-  readyHexStateBeforeTheEngine = (_hex: string) => {},
+  readyHexStateBeforeTheEngine = (_hex: string): void | Promise<void> => {},
   readyVoiceStateBeforeTheEngine = (_state: string) => {},
 } = {}) {
   const home = mkdtempSync(join(tmpdir(), "line-"));
@@ -131,7 +131,7 @@ async function lineCall({
 
   const hex = join(home, "hex", "state");
   mkdirSync(join(hex, "discord"), { recursive: true });
-  readyHexStateBeforeTheEngine(hex);
+  await readyHexStateBeforeTheEngine(hex);
 
   const engineWithAHubThatTakesEverything = `import { serve, take, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
 import { clients } from ${JSON.stringify(join(import.meta.dir, "..", "..", "hub", "hub.ts"))}
@@ -321,11 +321,13 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
   let hub: ReturnType<typeof createServer> | undefined;
 
   await using call = await lineCall({
-    readyHexStateBeforeTheEngine: (hex) => {
+    readyHexStateBeforeTheEngine: async (hex) => {
       mkdirSync(join(hex, "telegram"));
       const store = open(hex);
-      store.threads.keep("telegram", { [thread]: { name: "desk", link: "https://t.me/c/1234/5" } });
-      store.questions.ask({
+      await store.threads.keep("telegram", {
+        [thread]: { name: "desk", link: "https://t.me/c/1234/5" },
+      });
+      await store.questions.ask({
         app: "telegram",
         thread,
         message: 1,
@@ -333,7 +335,7 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
         options: ["Yes", "No"],
         at: "2026-11-01T00:00:00.000Z",
       });
-      store.questions.ask({
+      await store.questions.ask({
         app: "telegram",
         thread,
         message: 2,
@@ -466,9 +468,9 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
 
 test("on a call, running answers from every thread hex has at work, not only what the call started", async () => {
   await using call = await lineCall({
-    readyHexStateBeforeTheEngine: (hex) => {
+    readyHexStateBeforeTheEngine: async (hex) => {
       mkdirSync(join(hex, "telegram"));
-      open(hex).threads.keep("telegram", {
+      await open(hex).threads.keep("telegram", {
         "-1001234:7": { name: "desk", session: "77777777-desk" },
       });
       const sessions = join(hex, "..", "..", ".claude", "sessions");
@@ -504,22 +506,24 @@ test("the feed lists what hex finished, and Discuss on an entry during a call ha
   let task = "";
 
   await using call = await lineCall({
-    readyHexStateBeforeTheEngine: (hex) => {
+    readyHexStateBeforeTheEngine: async (hex) => {
       const store = open(hex);
-      store.messages.deliver({
+      await store.messages.deliver({
         key: "telegram:-1001234:9",
         to: "-1001234:7",
         from: "telegram",
         author: "owner",
         body: "fix the done tab",
       });
-      task = store.tasks.create({
-        title: "Done tab",
-        message: "telegram:-1001234:9",
-        owner: "-1001234:7",
-        project: "Phone app",
-      }).id;
-      store.tasks.edit(task, { status: "done", proof: "https://github.com/x/y/pull/1" });
+      task = (
+        await store.tasks.create({
+          title: "Done tab",
+          message: "telegram:-1001234:9",
+          owner: "-1001234:7",
+          project: "Phone app",
+        })
+      ).id;
+      await store.tasks.edit(task, { status: "done", proof: "https://github.com/x/y/pull/1" });
     },
   });
 

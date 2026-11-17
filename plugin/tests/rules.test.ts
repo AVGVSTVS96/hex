@@ -412,13 +412,13 @@ test("a session started before an update to its hooks hears so once, and its own
   expect(hook("UserPromptSubmit")).toBe("");
 });
 
-test("a hub thread's session hears its hub renews it, and nothing goes on its screen", () => {
+test("a hub thread's session hears its hub renews it, and nothing goes on its screen", async () => {
   updates(
     2000,
     [1000, "plugin/skills/echo/SKILL.md", "Restate the ask."],
     [3000, "bin/session", "exec claude"],
   );
-  open(join(home, "state")).threads.keep("telegram", {
+  await open(join(home, "state")).threads.keep("telegram", {
     "-100:7": { name: "Desk", session: SESSION },
   });
   const out = hook("UserPromptSubmit");
@@ -471,14 +471,14 @@ test("a launcher change tells the owner to quit and resume through bin/session, 
   );
 });
 
-test("a session told two days ago still hears nothing more of the same update", () => {
+test("a session told two days ago still hears nothing more of the same update", async () => {
   updates(
     2000,
     [1000, "plugin/hooks/hooks.json", '{"hooks":{}}'],
     [3000, "plugin/hooks/hooks.json", '{"hooks":{"Stop":[]}}'],
   );
   hook("UserPromptSubmit");
-  open(join(home, "state")).seen.show(
+  await open(join(home, "state")).seen.show(
     "another",
     "tasks",
     "x",

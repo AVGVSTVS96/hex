@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
 import { TextOrNull } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Mode, Write } from "./db.ts";
 
 export type LaunchStamp = string;
 
@@ -71,17 +71,17 @@ const ThreadRows = z.array(
     ),
 );
 
-export class Threads {
+export class Threads<M extends Mode = "queued"> {
   private readonly db: Database;
-  private readonly write: Write;
+  private readonly write: Write<M>;
 
-  constructor({ db, write }: Core) {
+  constructor({ db, write }: Core<M>) {
     this.db = db;
     this.write = write;
   }
 
   keep(app: string, openNow: Record<string, Kept>) {
-    this.write(() => {
+    return this.write(() => {
       this.db
         .query(
           "update threads set open = 0 where app = ? and open = 1 and thread not in (select value from json_each(?))",
@@ -117,7 +117,7 @@ export class Threads {
   }
 
   file(thread: string, project: string | undefined) {
-    this.write(() => {
+    return this.write(() => {
       this.db.query("update threads set project = ? where thread = ?").run(project ?? null, thread);
     });
   }

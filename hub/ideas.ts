@@ -107,7 +107,7 @@ export async function research(
     record.ended = task?.status ?? "gone";
 
     const body = `[${name}] ${id} is ${record.ended}, so its check in schedules.json has nothing left to look into: take the job out.`;
-    store.messages.deliver({
+    await store.messages.deliver({
       key: `schedule:${name}:${id}-${record.ended}`,
       to,
       from: "schedule",
@@ -135,7 +135,7 @@ export async function research(
       Object.assign(record, await ask(record.input));
 
       if (record.news === true) {
-        store.scheduler.fire(
+        await store.scheduler.fire(
           name,
           minute,
           to,
@@ -150,7 +150,7 @@ export async function research(
       const secondFailureInARow = failed(last) && !failed(before);
 
       if (secondFailureInARow) {
-        store.scheduler.fire(
+        await store.scheduler.fire(
           name,
           minute,
           to,

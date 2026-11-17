@@ -6,7 +6,7 @@ import { Worker } from "node:worker_threads";
 
 import { z } from "zod";
 
-import type { Core } from "./store/db.ts";
+import type { Core, Mode } from "./store/db.ts";
 import { Holds } from "./store/holds.ts";
 import { Jobs } from "./store/jobs.ts";
 import { Leases } from "./store/leases.ts";
@@ -62,6 +62,52 @@ process.once("exit", () => {
   }
 });
 
+type Domains<M extends Mode> = {
+  messages: Messages<M>;
+  tasks: Tasks<M>;
+  questions: Questions<M>;
+  threads: Threads<M>;
+  pins: Pins<M>;
+  holds: Holds<M>;
+  jobs: Jobs<M>;
+  turns: Turns<M>;
+  profiles: Profiles<M>;
+  seen: Seen<M>;
+  relays: Relays<M>;
+  leases: Leases<M>;
+  passes: Passes<M>;
+  scheduler: Scheduler<M>;
+  operations: Operations<M>;
+};
+
+export type Tx = Domains<"tx"> & { db: Database; dir: string };
+
+function domains<M extends Mode>(
+  core: Core<M>,
+  messages: Messages<M>,
+  inside: Messages<"tx">,
+): Domains<M> {
+  return {
+    messages,
+    tasks: new Tasks(core, inside),
+    questions: new Questions(core),
+    threads: new Threads(core),
+    pins: new Pins(core),
+    holds: new Holds(core, inside),
+    jobs: new Jobs(core),
+    turns: new Turns(core),
+    profiles: new Profiles(core),
+    seen: new Seen(core),
+    relays: new Relays(core),
+    leases: new Leases(core),
+    passes: new Passes(core),
+    scheduler: new Scheduler(core, inside),
+    operations: new Operations(core),
+  };
+}
+
+const PATIENCE_MS = 30_000;
+
 export class Store {
   readonly dir: string;
   readonly db: Database;
@@ -80,8 +126,14 @@ export class Store {
   readonly passes: Passes;
   readonly scheduler: Scheduler;
   readonly operations: Operations;
+  private readonly tx: Tx;
   private readonly bell: string;
   private writing = false;
+  private waitsForTheLock = true;
+  private readonly queue: (() => boolean)[] = [];
+  private retry: ReturnType<typeof setTimeout> | undefined;
+  private following = 0;
+  private front = 1;
   private readonly listeners = new Set<() => void>();
   private watcher: FSWatcher | undefined;
   private heard = "";
@@ -97,31 +149,52 @@ export class Store {
     appendFileSync(this.bell, "");
     this.db = new Database(join(dir, "hex.db"), { create: true, strict: true });
     openDatabases.add(this.db);
-    this.db.run("pragma busy_timeout = 30000");
+    this.db.run(`pragma busy_timeout = ${PATIENCE_MS}`);
     retryWhileBusy(() => this.db.run("pragma journal_mode = wal"));
     // synchronous = full flushes the WAL inside the commit, under the write lock every other process waits on: https://www.sqlite.org/pragma.html#pragma_synchronous
     this.db.run("pragma synchronous = normal");
     this.db.run("pragma foreign_keys = on");
 
-    const core: Core = { db: this.db, write: (fn) => this.write(fn) };
-    this.messages = new Messages(core);
-    this.tasks = new Tasks(core, this.messages);
-    this.questions = new Questions(core);
-    this.threads = new Threads(core);
-    this.pins = new Pins(core);
-    this.holds = new Holds(core, this.messages);
-    this.jobs = new Jobs(core);
-    this.turns = new Turns(core);
-    this.profiles = new Profiles(core);
-    this.seen = new Seen(core);
-    this.relays = new Relays(core);
-    this.leases = new Leases(core);
-    this.passes = new Passes(core);
-    this.scheduler = new Scheduler(core, this.messages);
-    this.operations = new Operations(core);
+    const inside: Core<"tx"> = {
+      db: this.db,
+      write: (fn) => {
+        if (!this.writing) {
+          throw new Error("hex.db: a write through a transaction's tx runs inside store.write");
+        }
+
+        return fn();
+      },
+    };
+
+    const queued: Core<"queued"> = { db: this.db, write: (fn) => this.write(fn) };
+    const insideMessages = new Messages(inside);
+
+    this.tx = {
+      db: this.db,
+      dir,
+      ...domains(inside, insideMessages, insideMessages),
+    };
+
+    ({
+      messages: this.messages,
+      tasks: this.tasks,
+      questions: this.questions,
+      threads: this.threads,
+      pins: this.pins,
+      holds: this.holds,
+      jobs: this.jobs,
+      turns: this.turns,
+      profiles: this.profiles,
+      seen: this.seen,
+      relays: this.relays,
+      leases: this.leases,
+      passes: this.passes,
+      scheduler: this.scheduler,
+      operations: this.operations,
+    } = domains(queued, new Messages(queued), insideMessages));
 
     while (this.version() < appendOnlyMigrations.length) {
-      this.write(() => {
+      this.transact(() => {
         const version = this.version();
         const step = appendOnlyMigrations[version];
 
@@ -129,28 +202,88 @@ export class Store {
           return;
         }
 
-        step(this);
+        step(this.tx);
         this.db.run(`pragma user_version = ${version + 1}`);
       });
     }
   }
 
-  write<T>(fn: () => T): T {
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Writes commit one at a time, in the order they were asked for, and then: what follows from one, run as soon as it commits and before the next write. The hub's never wait for another process's write lock, which would stop its whole event loop for as long as that process holds it: a write that finds the lock taken waits its turn here and tries again, while the hub goes on with everything else. A write asked for in a then lands before any asked for elsewhere since, as it would if its write had never waited.
+  write<T>(fn: (tx: Tx) => T): Promise<T>;
+  write<T, U>(fn: (tx: Tx) => T, then: (value: T) => U): Promise<U>;
+  write<T, U>(fn: (tx: Tx) => T, then?: (value: T) => U): Promise<T | U> {
     if (this.writing) {
-      return fn();
+      throw new Error("hex.db: a write inside a write goes through its tx");
     }
 
-    const before = this.changes();
+    return new Promise<T | U>((resolve, reject) => {
+      const attempt = () => {
+        try {
+          const done = this.transact(() => fn(this.tx));
 
-    const result = retryWhileBusy(() => {
-      this.writing = true;
+          if (done === undefined) {
+            return false;
+          }
 
-      try {
-        return this.db.transaction(fn).immediate();
-      } finally {
-        this.writing = false;
+          this.following += 1;
+
+          try {
+            resolve(then === undefined ? done.value : then(done.value));
+          } finally {
+            this.following -= 1;
+          }
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+
+        return true;
+      };
+
+      if (this.following === 0) {
+        this.queue.push(attempt);
+        this.drain();
+      } else if (this.front > 1 || !attempt()) {
+        this.queue.splice(this.front++, 0, attempt);
       }
     });
+  }
+
+  private drain() {
+    if (this.retry !== undefined) {
+      return;
+    }
+
+    for (let first = this.queue[0]; first !== undefined; first = this.queue[0]) {
+      if (!first()) {
+        this.retry = setTimeout(() => {
+          this.retry = undefined;
+          this.drain();
+        }, 5);
+
+        return;
+      }
+
+      this.queue.shift();
+      this.front = 1;
+    }
+  }
+
+  private transact<T>(fn: () => T): { value: T } | undefined {
+    const before = this.changes();
+    let value: T;
+
+    try {
+      value = this.waitsForTheLock
+        ? retryWhileBusy(() => this.inTransaction(fn))
+        : this.tryOnce(fn);
+    } catch (error) {
+      if (!this.waitsForTheLock && Busy.parse(error)) {
+        return undefined;
+      }
+
+      throw error;
+    }
 
     if (this.changes() !== before) {
       this.committed += 1;
@@ -163,14 +296,37 @@ export class Store {
       appendFileSync(this.bell, ".");
     }
 
-    return result;
+    return { value };
   }
 
+  private tryOnce<T>(fn: () => T): T {
+    this.db.run("pragma busy_timeout = 0");
+
+    try {
+      return this.inTransaction(fn);
+    } finally {
+      this.db.run(`pragma busy_timeout = ${PATIENCE_MS}`);
+    }
+  }
+
+  private inTransaction<T>(fn: () => T): T {
+    this.writing = true;
+
+    try {
+      return this.db.transaction(fn).immediate();
+    } finally {
+      this.writing = false;
+    }
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // The hub's: its writes reach the disk from a thread of their own, and never wait for the write lock.
   syncInBackground() {
     if (this.syncer !== undefined) {
       return;
     }
 
+    this.waitsForTheLock = false;
     this.db.run("pragma wal_autocheckpoint = 0");
     this.startSyncer();
   }
@@ -349,10 +505,10 @@ export function syncInBackground() {
   }
 }
 
-const SqliteFailure = z.object({
-  code: z.string().optional(),
-  message: z.string().optional(),
-});
+const Busy = z
+  .object({ code: z.string().optional(), message: z.string().optional() })
+  .transform(({ code, message }) => String(code ?? message).includes("SQLITE_BUSY"))
+  .catch(false);
 
 // SQLITE_BUSY can come back despite busy_timeout, to avoid a deadlock: https://www.sqlite.org/c3ref/busy_handler.html
 // Running a busy write again is safe, since Bun rolls back a transaction that throws: https://bun.com/docs/runtime/sqlite#transactions
@@ -361,9 +517,7 @@ function retryWhileBusy<T>(fn: () => T): T {
     try {
       return fn();
     } catch (error) {
-      const failure = SqliteFailure.safeParse(error).data;
-
-      if (!String(failure?.code ?? failure?.message).includes("SQLITE_BUSY") || attempt === 5) {
+      if (!Busy.parse(error) || attempt === 5) {
         throw error;
       }
 

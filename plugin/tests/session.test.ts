@@ -143,7 +143,7 @@ async function launch(
   if (cwd !== undefined && cwd !== "") {
     hub.open(thread, thread, "hi", cwd);
   } else {
-    hub.deliver(thread, thread, { content: "hi", author: "owner", meta: {} });
+    await hub.deliver(thread, thread, { content: "hi", author: "owner", meta: {} });
   }
 
   await until(() => existsSync(join(home, "launched")));

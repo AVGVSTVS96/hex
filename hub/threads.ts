@@ -77,14 +77,16 @@ export function openThreads({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // hex.db keeps a closed thread's row, with its name, for whatever reads one. The app gives each thread's link as it knows it now; one it can't give keeps the last it gave.
   function save() {
-    kept((store) => {
-      store.threads.keep(
-        app,
-        Object.fromEntries(
-          [...saved].map(([thread, known]) => [thread, { ...known, ...linkOf(thread) }]),
+    void kept.later(
+      (store) =>
+        store.threads.keep(
+          app,
+          Object.fromEntries(
+            [...saved].map(([thread, known]) => [thread, { ...known, ...linkOf(thread) }]),
+          ),
         ),
-      );
-    }, undefined);
+      undefined,
+    );
   }
 
   function linkOf(thread: string) {

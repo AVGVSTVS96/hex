@@ -107,7 +107,7 @@ export class Chats {
     keyTheAppNamedSoARetryDeliversOnce: string,
     media: Item[] = [],
   ) {
-    const taken = say(where.app, where.thread, {
+    const taken = await say(where.app, where.thread, {
       content: caption(text, media),
       key: keyTheAppNamedSoARetryDeliversOnce,
       meta: { user: "hex app", ts: new Date().toISOString(), ...mediaMeta(media) },

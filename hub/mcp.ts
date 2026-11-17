@@ -216,36 +216,42 @@ export function endpoint(
     const scope = `${channel}:${thread}`;
     const key = JSON.stringify([scope, id]);
     const value = [toolName, args];
-    const kept = store.operations.begin(scope, id, JSON.stringify(value));
 
-    if (!isDeepStrictEqual(JSON.parse(kept.input), value)) {
-      return failure(`${toolName} didn't run: identity ${id} already identifies a different call`);
-    }
+    return await store.write(
+      (tx) => tx.operations.begin(scope, id, JSON.stringify(value)),
+      async (kept): Promise<Result> => {
+        if (!isDeepStrictEqual(JSON.parse(kept.input), value)) {
+          return failure(
+            `${toolName} didn't run: identity ${id} already identifies a different call`,
+          );
+        }
 
-    if (!kept.fresh) {
-      if (kept.result !== null) {
-        return Kept.parse(JSON.parse(kept.result));
-      }
+        if (!kept.fresh) {
+          if (kept.result !== null) {
+            return Kept.parse(JSON.parse(kept.result));
+          }
 
-      return await (active.get(key) ??
-        failure(
-          `${toolName} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`,
-        ));
-    }
+          return await (active.get(key) ??
+            failure(
+              `${toolName} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`,
+            ));
+        }
 
-    const answer = call(thread, toolName, args, beside)
-      .then((answered) => {
-        store.operations.finish(scope, id, JSON.stringify(answered));
+        const answer = call(thread, toolName, args, beside)
+          .then((answered) => {
+            void store.operations.finish(scope, id, JSON.stringify(answered));
 
-        return answered;
-      })
-      .finally(() => {
-        active.delete(key);
-      });
+            return answered;
+          })
+          .finally(() => {
+            active.delete(key);
+          });
 
-    active.set(key, answer);
+        active.set(key, answer);
 
-    return await answer;
+        return await answer;
+      },
+    );
   }
 
   async function call(

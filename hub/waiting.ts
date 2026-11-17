@@ -81,11 +81,19 @@ export function messagesWaiting({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A session that died mid-turn ran no Stop hook, so its turn ends in hex's record of it here, and what it took without answering waits for the thread's next session. One that had started background agents lost any still working, so the hub's own line waits for the next session too, and starts it when nothing else does. Only for a thread none of whose sessions runs.
   function cut(thread: string, session: string | undefined) {
-    const { given, waited } = kept((store) => store.turns.cut(thread, session), {
-      given: [],
-      waited: false,
-    });
+    void kept.later(
+      (store) =>
+        store.write(
+          (tx) => tx.turns.cut(thread, session),
+          (left) => {
+            cutShort(thread, left);
+          },
+        ),
+      undefined,
+    );
+  }
 
+  function cutShort(thread: string, { given, waited }: { given: string[]; waited: boolean }) {
     if (waited) {
       agentsEnded(thread);
     }
@@ -110,7 +118,7 @@ export function messagesWaiting({
       `hub: ${thread}'s session was cut short with background agents started, so the thread's next session is told\n`,
     );
 
-    kept(
+    void kept.later(
       (store) =>
         store.messages.deliver({
           key: `hub:${thread}:agents-ended@${randomUUID()}`,
@@ -162,7 +170,7 @@ export function messagesWaiting({
 
   function connected(thread: string, line: Line) {
     const box = waiting.of(thread);
-    kept((store) => store.messages.letHeldGo(thread), []);
+    void kept.later((store) => store.messages.letHeldGo(thread), []);
     const given = forNext(thread);
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show

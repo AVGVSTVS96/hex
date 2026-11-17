@@ -21,11 +21,11 @@ let dir: string;
 let path: string | undefined;
 let named: string | undefined;
 
-beforeEach(() => {
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "backup-"));
   path = process.env.PATH;
   named = process.env.HEX_COMPUTER;
-  open(dir).messages.deliver({
+  await open(dir).messages.deliver({
     key: "telegram:-100:42",
     to: "-100:7",
     from: "telegram",

@@ -73,17 +73,17 @@ test("bin/quiet waits while a session hex started is mid-turn, and not on other 
     JSON.stringify({ pid: 2 ** 22 + 1, sessionId: "gone", kind: "bg", status: "busy" }),
   );
   status("4.json", "agents", "bg", "busy");
-  store.turns.turned("agents", true);
-  store.turns.turned("agents", false);
-  store.turns.turned("ours", true);
-  store.turns.turned("unheard", true);
-  store.turns.turned("unheard", false);
+  await store.turns.turned("agents", true);
+  await store.turns.turned("agents", false);
+  await store.turns.turned("ours", true);
+  await store.turns.turned("unheard", true);
+  await store.turns.turned("unheard", false);
   status("5.json", "unheard", "bg", "busy", Date.now() + 1000);
   const quiet = startQuiet();
   await until(() => quiet.said());
   await Bun.sleep(500);
   expect(quiet.exitCode).toBeNull();
-  store.turns.turned("ours", false);
+  await store.turns.turned("ours", false);
   await Bun.sleep(500);
   expect(quiet.exitCode).toBeNull();
   status("5.json", "unheard", "bg", "idle", Date.now());
@@ -104,7 +104,7 @@ test("bin/quiet leaves out the turn of each session that asked for an update, no
       status: "busy",
     }),
   );
-  store.turns.turned("asker", true);
+  await store.turns.turned("asker", true);
   await Bun.sleep(5);
   writeFileSync(
     join(sessions, "2.json"),
@@ -116,7 +116,7 @@ test("bin/quiet leaves out the turn of each session that asked for an update, no
       status: "busy",
     }),
   );
-  store.turns.turned("later", true);
+  await store.turns.turned("later", true);
   const first = startQuiet();
   await until(() => first.said());
   expect(first.exitCode).toBeNull();
@@ -128,7 +128,7 @@ test("bin/quiet leaves out the turn of each session that asked for an update, no
   expect(await first.exited).toBe(0);
   expect(await first.saidAll()).toBe("waiting on: asker, later\n");
   await Bun.sleep(5);
-  store.turns.turned("asker", true);
+  await store.turns.turned("asker", true);
   const next = startQuiet();
   await until(() => next.said());
   expect(next.said()).toBe("waiting on: asker\n");
@@ -151,11 +151,11 @@ test("bin/quiet waits on a session running beside a thread, though it runs outsi
       statusUpdatedAt: Date.now() - 1000,
     }),
   );
-  store.turns.turned("beside-1", true);
+  await store.turns.turned("beside-1", true);
   const quiet = startQuiet();
   await until(() => quiet.said());
   expect(quiet.said()).toBe("waiting on: hex/heartbeat\n");
-  store.turns.turned("beside-1", false);
+  await store.turns.turned("beside-1", false);
   expect(await quiet.exited).toBe(0);
   beside.kill();
 });

@@ -3,23 +3,23 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
 import { now } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Mode, Write } from "./db.ts";
 
 const RelayRows = z.array(
   z.object({ from: z.string(), thread: z.string(), run: z.string(), at: z.string() }),
 );
 
-export class Relays {
+export class Relays<M extends Mode = "queued"> {
   private readonly db: Database;
-  private readonly write: Write;
+  private readonly write: Write<M>;
 
-  constructor({ db, write }: Core) {
+  constructor({ db, write }: Core<M>) {
     this.db = db;
     this.write = write;
   }
 
   relayed(from: string, thread: string, run: string, at = now()) {
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query(
           'insert into relays ("from", thread, run, at) values (?, ?, ?, ?) on conflict ("from", thread) do update set run = excluded.run, at = excluded.at where excluded.at >= relays.at',

@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
 import { fromJson, now, TextOrNull } from "./db.ts";
-import type { Core, MessageId, Write } from "./db.ts";
+import type { Core, Mode, Written, MessageId, Write } from "./db.ts";
 
 export const AuthorColumn = z.enum(["owner", "hex", "prompt", "call", "other"]);
 
@@ -70,16 +70,20 @@ const TakerRow = z.object({ taken_by: z.string(), taken_at: z.string() }).nullab
 const LastRow = z.object({ last: z.number().nullable() });
 const UntakenRow = z.object({ untaken: z.number() });
 
-export class Messages {
+export class Messages<M extends Mode = "queued"> {
   private readonly db: Database;
-  private readonly write: Write;
+  private readonly write: Write<M>;
 
-  constructor({ db, write }: Core) {
+  constructor({ db, write }: Core<M>) {
     this.db = db;
     this.write = write;
   }
 
-  deliver({ key, to, from, author, body, meta }: NewRow, by?: string): boolean {
+  deliver(row: NewRow, by?: string): Written<M, boolean> {
+    return this.write(() => this.insert(row, by));
+  }
+
+  private insert({ key, to, from, author, body, meta }: NewRow, by?: string): boolean {
     if (!isAuthor(author)) {
       throw new Error(
         `${key}'s author is ${JSON.stringify(author) ?? "missing"}: a message's author is owner, hex, prompt, call or other`,
@@ -89,34 +93,33 @@ export class Messages {
     const at = now();
     const takenBy = by !== undefined && by !== "" ? by : undefined;
 
-    return this.write(
-      () =>
-        this.db
-          .query(
-            'insert into messages (key, "to", "from", author, body, meta, at, taken_by, taken_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict (key) do nothing',
-          )
-          .run(
-            key,
-            to,
-            from,
-            author,
-            body,
-            meta === undefined ? null : JSON.stringify(meta),
-            at,
-            by ?? null,
-            takenBy === undefined ? null : at,
-          ).changes > 0,
+    return (
+      this.db
+        .query(
+          'insert into messages (key, "to", "from", author, body, meta, at, taken_by, taken_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict (key) do nothing',
+        )
+        .run(
+          key,
+          to,
+          from,
+          author,
+          body,
+          meta === undefined ? null : JSON.stringify(meta),
+          at,
+          by ?? null,
+          takenBy === undefined ? null : at,
+        ).changes > 0
     );
   }
 
-  past(rows: [NewRow, string][], by: string): string[] {
+  past(rows: [NewRow, string][], by: string): Written<M, string[]> {
     return this.write(() => {
       const at = this.db.query(
         "update messages set at = ?2, taken_at = ?2, observed_at = ?2 where key = ?1",
       );
 
       return rows.flatMap(([row, when]) => {
-        if (!this.deliver(row, by)) {
+        if (!this.insert(row, by)) {
           return [];
         }
 
@@ -127,7 +130,7 @@ export class Messages {
     });
   }
 
-  take(key: string, by: string): boolean {
+  take(key: string, by: string): Written<M, boolean> {
     return this.write(
       () =>
         this.db
@@ -140,7 +143,7 @@ export class Messages {
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A message held for a session's turn waits for that session's next tool call, which takes it (takeHeld), or for the turn's end, which lets it go (letHeldGo).
-  hold(key: string, session: string): boolean {
+  hold(key: string, session: string): Written<M, boolean> {
     return this.write(
       () =>
         this.db
@@ -149,7 +152,7 @@ export class Messages {
     );
   }
 
-  takeHeld(thread: string, session: string): Row[] {
+  takeHeld(thread: string, session: string): Written<M, Row[]> {
     const at = now();
 
     return this.write(() => {
@@ -169,7 +172,7 @@ export class Messages {
     });
   }
 
-  letHeldGo(thread: string): Row[] {
+  letHeldGo(thread: string): Written<M, Row[]> {
     const held = 'from messages where "to" = ? and held_for is not null and taken_at is null';
 
     return this.write(() => {
@@ -279,7 +282,7 @@ export class Messages {
     return row === null ? undefined : { by: row.taken_by, at: row.taken_at };
   }
 
-  observe(session: string, by: string, thread?: string, lease = 10 * 60_000): Row[] {
+  observe(session: string, by: string, thread?: string, lease = 10 * 60_000): Written<M, Row[]> {
     return this.write(() => {
       const rows = MessageRows.parse(
         this.db
@@ -299,7 +302,8 @@ export class Messages {
 
   observed(keys: string[], done = true) {
     const set = done ? `observed_at = '${now()}'` : "observing_at = null";
-    this.write(() =>
+
+    return this.write(() =>
       this.db
         .query(`update messages set ${set} where key in (select value from json_each(?))`)
         .run(JSON.stringify(keys)),
@@ -333,7 +337,7 @@ export class Messages {
     return MessageRows.parse(rows);
   }
 
-  readdress(key: string, to: string): boolean {
+  readdress(key: string, to: string): Written<M, boolean> {
     return this.write(
       () =>
         this.db
@@ -382,7 +386,7 @@ export class Messages {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A timed job catches up only its newest slot, so a stalled run of it beside a thread is left to a newer one, taken by the hub.
   supersede(addresses: string[], at = now()) {
-    this.write(() => {
+    return this.write(() => {
       this.db
         .query(
           `update messages set taken_by = 'hub', taken_at = ?2 where key in (

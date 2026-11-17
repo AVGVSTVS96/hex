@@ -46,9 +46,7 @@ export function sessionStops({
           return;
         }
 
-        kept((store) => {
-          store.turns.handled(session);
-        }, undefined);
+        void kept.later((store) => store.turns.handled(session), undefined);
         void claude.stop(session);
 
         return agent && claude.exited(agent.pid);

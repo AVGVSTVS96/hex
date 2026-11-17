@@ -80,7 +80,7 @@ export async function observe(
     rows.length > 0 ? recall(rows.map((row) => `\\[${escape(row.key)}\\]`).join("|")) : "";
 
   const store = open(state);
-  const taken = store.messages.observe(session, by, thread, LEASE_OUTLASTS_EVERY_TRY);
+  const taken = await store.messages.observe(session, by, thread, LEASE_OUTLASTS_EVERY_TRY);
   const rows = owners(taken);
   const written: string[] = [];
 
@@ -172,7 +172,7 @@ export async function observe(
         reasons = bad.join("\n");
         wrong = bad.length > 0 ? retry(bad, answer.profile) : "";
 
-        if (wrong !== "" || !store.profiles.profiled(profileBefore, answer.profile)) {
+        if (wrong !== "" || !(await store.profiles.profiled(profileBefore, answer.profile))) {
           continue;
         }
 
@@ -189,14 +189,14 @@ export async function observe(
 
     const lostOnlyToOtherPasses = wanted && wrong === "" && written.length === 0;
 
-    store.messages.observed(
+    await store.messages.observed(
       taken.map((row) => row.key),
       !lostOnlyToOtherPasses,
     );
 
     return written;
   } catch (error) {
-    store.messages.observed(
+    await store.messages.observed(
       taken.map((row) => row.key),
       written.length > 0,
     );
@@ -304,8 +304,12 @@ async function remember(input: string): Promise<Answer> {
 }
 
 // OptMem leaves due compressions to whoever writes a note, and only this agent writes notes: https://github.com/VictorTaelin/OptMem/blob/1fb164cf39028047781f72ac3bb1e5a691c1dcb0/README.md#while-working-register-memories-mandatory
-export async function nap(memo = MEMO, compress = summarize, stillHoldsLease = () => true) {
-  while (stillHoldsLease()) {
+export async function nap(
+  memo = MEMO,
+  compress = summarize,
+  stillHoldsLease: () => boolean | Promise<boolean> = () => true,
+) {
+  while (await stillHoldsLease()) {
     const asked = Bun.spawnSync([memo, "nap"], {
       stdout: "pipe",
       stderr: "ignore",
@@ -384,7 +388,7 @@ export function refresh() {
   });
 }
 
-async function pass(state: string, turn: Pass, stillHoldsLease: () => boolean) {
+async function pass(state: string, turn: Pass, stillHoldsLease: () => Promise<boolean>) {
   await observe(state, turn.session, turn);
 
   try {
@@ -396,14 +400,16 @@ async function pass(state: string, turn: Pass, stillHoldsLease: () => boolean) {
 
 export async function drain(
   state: string,
-  run: (turn: Pass, stillHoldsLease: () => boolean) => Promise<void> = (turn, stillHoldsLease) =>
-    pass(state, turn, stillHoldsLease),
+  run: (turn: Pass, stillHoldsLease: () => Promise<boolean>) => Promise<void> = (
+    turn,
+    stillHoldsLease,
+  ) => pass(state, turn, stillHoldsLease),
 ) {
   const store = open(state);
   const holder = crypto.randomUUID();
   const holdsLease = () => store.leases.take("observe", holder, LEASE_OUTLASTS_EVERY_TRY);
 
-  while (store.passes.waiting() && holdsLease()) {
+  while (store.passes.waiting() && (await holdsLease())) {
     try {
       for (let next; (next = store.passes.waiting());) {
         try {
@@ -412,14 +418,14 @@ export async function drain(
           logIndented(`hex couldn't look over a turn for memories: ${String(error)}`);
         }
 
-        store.passes.passed(next.n);
+        await store.passes.passed(next.n);
 
-        if (!holdsLease()) {
+        if (!(await holdsLease())) {
           return;
         }
       }
     } finally {
-      store.leases.release("observe", holder);
+      await store.leases.release("observe", holder);
     }
   }
 }
@@ -429,8 +435,7 @@ export function queue(state: string, turn: Pass) {
     return;
   }
 
-  try {
-    open(state).passes.wait(turn);
+  const start = () => {
     const observeLog = openSync(join(state, "observe.log"), "a");
 
     try {
@@ -447,9 +452,15 @@ export function queue(state: string, turn: Pass) {
     } finally {
       closeSync(observeLog);
     }
-  } catch (error) {
-    process.stderr.write(`hex couldn't queue a turn for memories: ${String(error)}\n`);
-  }
+  };
+
+  void (async () => {
+    try {
+      await open(state).write((tx) => tx.passes.wait(turn), start);
+    } catch (error) {
+      process.stderr.write(`hex couldn't queue a turn for memories: ${String(error)}\n`);
+    }
+  })();
 }
 
 export function ended(state: string, session: string, last?: string) {
@@ -461,7 +472,7 @@ export function ended(state: string, session: string, last?: string) {
 
   try {
     if (given(answer)) {
-      open(state).messages.deliver(
+      void open(state).messages.deliver(
         {
           key: `${from}:${crypto.randomUUID()}`,
           to: given(HEX_BESIDE) ? HEX_BESIDE : (HEX_THREAD ?? session),

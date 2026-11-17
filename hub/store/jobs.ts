@@ -3,7 +3,7 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
 import { fromJson, now } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Mode, Write } from "./db.ts";
 
 export const JobSpecJson = z.object({
   owner: z.string(),
@@ -42,17 +42,17 @@ const SELECT = "select unit, machine, run, spec, stopped, stopped_at from jobs";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The jobs hex answers for, each by the run it last started and the machine that runs it. A row goes once its run ends; one that stopped without ending says why, for the next resume to carry it on.
-export class Jobs {
+export class Jobs<M extends Mode = "queued"> {
   private readonly db: Database;
-  private readonly write: Write;
+  private readonly write: Write<M>;
 
-  constructor({ db, write }: Core) {
+  constructor({ db, write }: Core<M>) {
     this.db = db;
     this.write = write;
   }
 
   started(unit: string, machine: string, run: string, spec: JobSpec) {
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query(
           "insert into jobs (unit, machine, run, spec) values (?, ?, ?, ?) on conflict (unit) do update set machine = excluded.machine, run = excluded.run, spec = excluded.spec, stopped = null, stopped_at = null",
@@ -72,7 +72,7 @@ export class Jobs {
   }
 
   ended(unit: string, machine: string, run: string) {
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query("delete from jobs where unit = ? and machine = ? and (? = '' or run = ?)")
         .run(unit, machine, run, run),
@@ -80,7 +80,7 @@ export class Jobs {
   }
 
   stopped(unit: string, machine: string, run: string, why: StopReason, at = now()) {
-    this.write(() =>
+    return this.write(() =>
       this.db
         .query(
           "update jobs set stopped = ?, stopped_at = ? where unit = ? and machine = ? and (? = '' or run = ?)",

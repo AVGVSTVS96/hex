@@ -48,7 +48,7 @@ env.XDG_STATE_HOME = join(home, "xdg");
 
 const session = { HEX_CHANNEL: "plugin:t3@hex", HEX_THREAD: "stray-key" };
 
-beforeAll(() => {
+beforeAll(async () => {
   for (const file of [
     "bin/job",
     "bin/hex",
@@ -77,7 +77,7 @@ beforeAll(() => {
     telegram: { "-100123:101": { name: "orchard" } },
     discord: { "555": { name: "urgent fix" } },
   })) {
-    open(join(home, "state")).threads.keep(app, threads);
+    await open(join(home, "state")).threads.keep(app, threads);
   }
 
   mkdirSync(join(home, "fake"));
@@ -676,7 +676,7 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
   rmSync(join(home, "active.txt"));
 });
 
-test("jobs hex stopped to move to another machine carry on where it lands, a claude job resuming a conversation and a prompt piped in included, told as a move", () => {
+test("jobs hex stopped to move to another machine carry on where it lands, a claude job resuming a conversation and a prompt piped in included, told as a move", async () => {
   noJobs();
   const config = join(home, "claude");
   mkdirSync(join(config, "projects/-pick"), { recursive: true });
@@ -691,7 +691,7 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
   end("over", finishedByItself);
 
   if (over !== undefined) {
-    jobsOn().started(over.unit, over.machine, over.run, over.spec);
+    await jobsOn().started(over.unit, over.machine, over.run, over.spec);
   }
 
   run(["piped", "claude", "-p", "--model", "opus"], session, home, "Build the Usage tab.\n");
@@ -778,25 +778,28 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
   expect(told("%[job] checks stopped%").at(-1)).toContain("started over 3 times in the last hour");
 });
 
-test("a job that can't come back as it was is told to its owner, and one that can't start again holds up no other job", () => {
+test("a job that can't come back as it was is told to its owner, and one that can't start again holds up no other job", async () => {
   noJobs();
   const config = join(home, "claude");
   mkdirSync(join(config, "projects/-older"), { recursive: true });
   writeFileSync(join(config, "projects/-older/o-1.jsonl"), "{}\n");
   run(["latest", "claude", "-p", "--continue", "go on"], session);
 
-  const kept = (unit: string, command: string[], more = {}, machine = here) => {
-    jobsOn().started(unit, machine, "2026-11-15T10:00:00.000Z", { ...spec(command), ...more });
+  const kept = async (unit: string, command: string[], more = {}, machine = here) => {
+    await jobsOn().started(unit, machine, "2026-11-15T10:00:00.000Z", {
+      ...spec(command),
+      ...more,
+    });
   };
 
-  kept("olden", ["claude", "-p", "--resume", "o-1", "first words"]);
-  kept("forked", ["claude", "-p", "--resume", "o-1", "--fork-session", "x"]);
-  kept("twice", ["make", "all"], {
+  await kept("olden", ["claude", "-p", "--resume", "o-1", "first words"]);
+  await kept("forked", ["claude", "-p", "--resume", "o-1", "--fork-session", "x"]);
+  await kept("twice", ["make", "all"], {
     startedOver: [1, 2, 3].map((minutes) => new Date(Date.now() - minutes * 60_000).toISOString()),
   });
-  kept("gone", ["claude", "-p", "--resume", "g-1", "x"]);
-  kept("refused", ["make", "all"]);
-  kept("away", ["make", "all"], {}, "elsewhere");
+  await kept("gone", ["claude", "-p", "--resume", "g-1", "x"]);
+  await kept("refused", ["make", "all"]);
+  await kept("away", ["make", "all"], {}, "elsewhere");
 
   const started = resume(config, "elsewhere");
 
@@ -848,12 +851,12 @@ const toldOn = (store: string, like: string) =>
         .flat(),
     );
 
-test("on a machine hex moved away from, a job's end and hex's commands go to the machine hex runs on", () => {
+test("on a machine hex moved away from, a job's end and hex's commands go to the machine hex runs on", async () => {
   mkdirSync(join(home, "xdg/hex"), { recursive: true });
   run(["leftover", "make", "all"], session);
   writeFileSync(marker, "twin-x\n");
   rmSync(join(home, "ssh.log"), { force: true });
-  open(join(home, "twin")).threads.keep("t3", { "stray-key": { name: "hex" } });
+  await open(join(home, "twin")).threads.keep("t3", { "stray-key": { name: "hex" } });
   end("leftover", finishedByItself);
 
   const there: unknown[] = toldOn("twin", "%[job] leftover ended%");
@@ -964,7 +967,7 @@ test("hex runs, and updates, on the machine it was moved to, not on the one it l
   rmSync(marker);
 });
 
-test("hex starting here leaves a job still running on the machine it left there, drops one that ended there, and starts one whose machine doesn't answer", () => {
+test("hex starting here leaves a job still running on the machine it left there, drops one that ended there, and starts one whose machine doesn't answer", async () => {
   noJobs();
   const config = join(home, "claude");
   const runStarted = "2026-11-15T10:00:00.000Z";
@@ -975,7 +978,7 @@ test("hex starting here leaves a job still running on the machine it left there,
     ["lost", "dead-x"],
     ["cut", "twin-x"],
   ] as const) {
-    jobsOn().started(unit, machine, runStarted, spec(["make", unit]));
+    await jobsOn().started(unit, machine, runStarted, spec(["make", unit]));
   }
 
   mkdirSync(join(home, "xdg-twin/hex/jobs"), { recursive: true });
@@ -997,7 +1000,7 @@ test("hex starting here leaves a job still running on the machine it left there,
   expect(jobsOn().get("lost")?.machine).toBe("dead-x");
   expect(told("%[job] lost stopped%")).toEqual([]);
 
-  jobsOn().ended("cut", here, "");
+  await jobsOn().ended("cut", here, "");
 
   const started = resume(config, "dead-x");
 
@@ -1017,14 +1020,14 @@ test("hex starting here leaves a job still running on the machine it left there,
   ]);
 });
 
-test("a job that ended isn't started again from a stale copy of its record, nor started while it runs on the other machine, and one started from the machine hex left keeps its piped prompt", () => {
+test("a job that ended isn't started again from a stale copy of its record, nor started while it runs on the other machine, and one started from the machine hex left keeps its piped prompt", async () => {
   noJobs();
   run(["done2", "make", "all"], session);
   const copy = jobsOn().get("done2");
   end("done2", finishedByItself);
 
   if (copy !== undefined) {
-    jobsOn().started(copy.unit, copy.machine, copy.run, copy.spec);
+    await jobsOn().started(copy.unit, copy.machine, copy.run, copy.spec);
   }
 
   expect(resume(join(home, "claude")).has("done2")).toBe(false);
@@ -1034,12 +1037,12 @@ test("a job that ended isn't started again from a stale copy of its record, nor 
   end("done2", finishedByItself);
 
   if (copy !== undefined) {
-    jobsOn().started(copy.unit, copy.machine, copy.run, copy.spec);
+    await jobsOn().started(copy.unit, copy.machine, copy.run, copy.spec);
   }
 
   expect(resume(join(home, "claude")).has("done2")).toBe(false);
 
-  jobsOn().started("elsewhere2", "twin-x", "2026-11-15T10:00:00.000Z", spec(["make"]));
+  await jobsOn().started("elsewhere2", "twin-x", "2026-11-15T10:00:00.000Z", spec(["make"]));
   writeFileSync(join(home, "twin-active.txt"), "elsewhere2\n");
 
   const twice = Bun.spawnSync(["bun", job, "elsewhere2", "make", "all"], {
@@ -1107,10 +1110,10 @@ test("a job record that syncs in late from before hex.db kept them starts nothin
   expect(told("%[job] late %")).toEqual([]);
 });
 
-test("a job its machine's shutdown stopped after hex left it is marked so in the hex.db where hex runs, not in its own", () => {
+test("a job its machine's shutdown stopped after hex left it is marked so in the hex.db where hex runs, not in its own", async () => {
   noJobs();
   const runStarted = "2026-11-15T10:00:00.000Z";
-  jobsOn("twin").started("left", here, runStarted, spec(["make", "all"]));
+  await jobsOn("twin").started("left", here, runStarted, spec(["make", "all"]));
   mkdirSync(join(home, "xdg/hex"), { recursive: true });
   writeFileSync(marker, "twin-x\n");
   writeFileSync(join(home, "system.txt"), "stopping\n");
@@ -1124,7 +1127,7 @@ test("a job its machine's shutdown stopped after hex left it is marked so in the
   expect(ending.exitCode).toBe(0);
   expect(jobsOn("twin").get("left")?.stopped?.why).toBe("shutdown");
   expect(open(join(home, "state")).seen.get("job:left", "stopped")).toBe("");
-  jobsOn("twin").ended("left", here, runStarted);
+  await jobsOn("twin").ended("left", here, runStarted);
 });
 
 test("a marker that names this machine means hex runs here", () => {
@@ -1146,17 +1149,17 @@ test("a marker that names this machine means hex runs here", () => {
   expect(hub.stderr.toString()).toContain("can't start");
 });
 
-test("a job its machine knows nothing of isn't started again while that machine is up, and a gone machine that answers is gone no more", () => {
+test("a job its machine knows nothing of isn't started again while that machine is up, and a gone machine that answers is gone no more", async () => {
   noJobs();
   const config = join(home, "claude");
   const runStarted = "2026-11-15T10:00:00.000Z";
   writeFileSync(join(home, "twin-active.txt"), "busy\n");
 
   for (const unit of ["dropped", "busy"]) {
-    jobsOn().started(unit, "twin-x", runStarted, spec(["make", unit]));
+    await jobsOn().started(unit, "twin-x", runStarted, spec(["make", unit]));
   }
 
-  jobsOn().started("crashed", here, runStarted, spec(["make", "crashed"]));
+  await jobsOn().started("crashed", here, runStarted, spec(["make", "crashed"]));
   mkdirSync(join(home, "xdg/hex/jobs"), { recursive: true });
   writeFileSync(
     join(home, "xdg/hex/jobs/crashed"),
@@ -1170,7 +1173,7 @@ test("a job its machine knows nothing of isn't started again while that machine 
     containing("[job] dropped stopped on twin-x without a word of how, and twin-x is up"),
   ]);
 
-  jobsOn().ended("crashed", here, "");
+  await jobsOn().ended("crashed", here, "");
 
   expect([...resume(config, "twin-x").keys()]).toEqual([]);
   expect(jobsOn().get("busy")?.machine).toBe("twin-x");
@@ -1178,11 +1181,11 @@ test("a job its machine knows nothing of isn't started again while that machine 
   rmSync(join(home, "twin-active.txt"));
 });
 
-test("only one resume carries jobs on at a time, and one that was killed holds up none after it", () => {
+test("only one resume carries jobs on at a time, and one that was killed holds up none after it", async () => {
   noJobs();
   rmSync(join(home, "xdg/hex"), { recursive: true, force: true });
   expect(resume(join(home, "claude")).size).toBe(0);
-  jobsOn().started("waiting", here, "2026-11-15T10:00:00.000Z", spec(["make", "all"]));
+  await jobsOn().started("waiting", here, "2026-11-15T10:00:00.000Z", spec(["make", "all"]));
   mkdirSync(join(home, "xdg/hex"), { recursive: true });
   writeFileSync(join(home, "xdg/hex/resuming"), String(process.pid));
 

@@ -3,17 +3,17 @@ import type { Database } from "bun:sqlite";
 import { z } from "zod";
 
 import { now } from "./db.ts";
-import type { Core, Write } from "./db.ts";
+import type { Core, Mode, Written, Write } from "./db.ts";
 
 const ProfileRows = z.array(z.object({ at: z.string(), body: z.string() }));
 
 const BodyRow = z.object({ body: z.string() }).nullable();
 
-export class Profiles {
+export class Profiles<M extends Mode = "queued"> {
   private readonly db: Database;
-  private readonly write: Write;
+  private readonly write: Write<M>;
 
-  constructor({ db, write }: Core) {
+  constructor({ db, write }: Core<M>) {
     this.db = db;
     this.write = write;
   }
@@ -29,7 +29,7 @@ export class Profiles {
     return ProfileRows.parse(this.db.query("select at, body from profiles order by n desc").all());
   }
 
-  profiled(before: string, body: string, at = now()): boolean {
+  profiled(before: string, body: string, at = now()): Written<M, boolean> {
     return this.write(() => {
       if (this.current() !== before.trim()) {
         return false;
