@@ -26,14 +26,6 @@ The agent that gets it is as capable as you, loads my rules itself, and gets a l
 
 Answer ok when it does, or when it only reports or answers and hands over no work; wording, order and a stray wrong detail are the session's call. Answer revise when the brief drops or changes part of my ask, steers the how, or goes against my rules or a decision in memory: a note per problem, a line or two each, quoting my words where they settle it.`;
 
-const RULES = `One of my hex sessions is about to change one of my rule files: the instructions every session of mine loads, or what I want hex to bring up on its own. You read the change before it lands, next to my newest words that session got, the work hex handed it, and my rules below.
-
-My rules change when I ask for a change, and then the edit carries my intent into the line it belongs to, editing or cutting what's there before adding. When I point out a mistake, I expect it fixed and hex to reflect on why it happened; that alone doesn't call for a new rule.
-
-Answer ok when my words ask for this change, or it carries out one I asked for, like taking back an edit I objected to; a standing instruction in my rules counts as asking, like adding a word voice transcripts mishear. A command that only reads the file is ok too. Answer revise when the change is the session's own idea or goes past what I asked: a note per problem, a line or two each, quoting my words where they settle it.`;
-
-const PROMPTS = { brief: SYSTEM, rules: RULES };
-
 const Judged = z.object({ verdict: z.enum(["ok", "revise"]), notes: z.string() });
 
 export type Verdict = z.infer<typeof Judged> & {
@@ -51,14 +43,6 @@ const ToolHook = z.object({
     .looseObject({
       command: textOrNothing,
       prompt: textOrNothing,
-      file_path: textOrNothing,
-      content: textOrNothing,
-      old_string: textOrNothing,
-      new_string: textOrNothing,
-      edits: z
-        .array(z.looseObject({ old_string: z.string(), new_string: z.string() }))
-        .optional()
-        .catch(undefined),
     })
     .optional(),
 });
@@ -107,129 +91,8 @@ const real = (path: string) => {
   }
 };
 
-export const ruleFiles = (): string[] =>
+const ruleFiles = (): string[] =>
   [...files().map(({ path }) => path), join(hexDir(), "PROACTIVE.md")].map(real);
-
-const INTO = /(?:(?:^|[^\d&>=-])\d?>>?|\btee\s+(?:-\S+\s+)*)\s*(\S+)/gu;
-
-const PROGRAM =
-  /^\(?\s*(?:sudo(?:\s+-[pug]\s+\S+|\s+-\w+)*\s+)?(?:\w+=\S*\s+)*(?:\S*\/)?([^\s/]+)/u;
-
-const READS =
-  /^(?:rg|grep|cat|head|tail|less|wc|ls|lsattr|stat|diff|file|bat|realpath|readlink|echo|printf|awk|nl|sort|fd|test|sha256sum)$/u;
-
-const GIT_WRITES =
-  /^(?:checkout|switch|restore|apply|am|revert|stash|merge|pull|cherry-pick|rm|mv)$/u;
-
-const place = (path: string, from: string) =>
-  resolve(
-    from,
-    path.replaceAll(/^['"]|['"]$/gu, "").replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/u, homedir()),
-  );
-
-function parts(command: string): string[] {
-  const out = [""];
-  let quote = "";
-
-  for (let i = 0; i < command.length; i++) {
-    const char = command[i] ?? "";
-    const pair = char + (command[i + 1] ?? "");
-
-    if (quote === "" && (/[;\n|]/u.test(char) || pair === "&&")) {
-      out.push("");
-      i += pair === "&&" || pair === "||" ? 1 : 0;
-      continue;
-    }
-
-    quote = quote === char ? "" : quote === "" && /['"]/u.test(char) ? char : quote;
-    out[out.length - 1] += char;
-  }
-
-  return out.flatMap((part) => (part.trim() === "" ? [] : [part.trim()]));
-}
-
-function writes(part: string, program: string, path: string, here: string): boolean {
-  const bare = part.replaceAll(/'[^']*\s[^']*'|"[^"]*\s[^"]*"/gu, "''");
-
-  if ([...bare.matchAll(INTO)].some(([, into = ""]) => real(place(into, here)) === path)) {
-    return true;
-  }
-
-  if (/^(?:cp|mv|install|ln)$/u.test(program)) {
-    return real(place(bare.split(/\s+/u).at(-1) ?? "", here)) === path;
-  }
-
-  if (program === "git") {
-    const sub = /\bgit(?:\s+-[Cc]\s+\S+)*\s+([\w-]+)/u.exec(bare)?.[1] ?? "";
-
-    return (
-      (GIT_WRITES.test(sub) && !/\s--staged\b/u.test(bare)) || /\breset\s+--hard\b/u.test(bare)
-    );
-  }
-
-  if (program === "sed" || program === "perl") {
-    return /\s(?:-\w*i|--in-place)/u.test(bare);
-  }
-
-  if (program === "chattr") {
-    return /\s-\w*i/u.test(bare);
-  }
-
-  return !READS.test(program);
-}
-
-export function written(command: string, cwd: string, rules: string[]): string[] {
-  let dir = cwd;
-  const out: string[] = [];
-
-  for (const part of parts(command)) {
-    const program = PROGRAM.exec(part)?.[1] ?? "";
-    const git = program === "git" ? /\s-C\s+(\S+)/u.exec(part)?.[1] : undefined;
-    const here = git === undefined ? dir : place(git, dir);
-
-    const touched = [...part.matchAll(/[\w.~${}/-]*[\w-]\.md\b/gu)].flatMap(([path]) => {
-      const file = real(place(path, here));
-
-      return rules.includes(file) ? [file] : [];
-    });
-
-    if (program === "cd") {
-      dir = place(part.split(/\s+/u)[1] ?? "~", dir);
-    }
-
-    out.push(...touched.filter((path) => writes(part, program, path, here)));
-  }
-
-  return out;
-}
-
-export function ruleEdit(
-  { tool_name: tool = "", tool_input: input = {}, cwd = process.cwd() }: Hook,
-  rules = ruleFiles(),
-): string | undefined {
-  const isRule = (path: string) =>
-    rules.includes(real(resolve(cwd, path.replace(/^~(?=\/)/u, homedir()))));
-
-  if (/^(Edit|Write|MultiEdit)$/u.test(tool)) {
-    const path = input.file_path ?? "";
-
-    if (!isRule(path)) {
-      return;
-    }
-
-    const edits = input.edits ?? [
-      { old_string: input.old_string ?? "", new_string: input.new_string ?? "" },
-    ];
-
-    return tool === "Write"
-      ? `${tool} ${path}, all of it:\n\n${input.content ?? ""}`
-      : `${tool} ${path}:\n\n${edits.map((edit) => `replacing:\n${edit.old_string}\n\nwith:\n${edit.new_string}`).join("\n\n")}`;
-  }
-
-  const command = tool === "Bash" ? (input.command ?? "") : "";
-
-  return written(command, cwd, rules).length > 0 ? command : undefined;
-}
 
 function promptFilesNow(text: string, cwd: string): [string, string][] {
   const expanded = text.replaceAll(
@@ -329,7 +192,7 @@ export function asked(store: Store, session: string, text: string, thread?: stri
     .join("\n\n");
 }
 
-export async function judge(input: string, kind: Kind = "brief"): Promise<Verdict> {
+export async function judge(input: string): Promise<Verdict> {
   const rules = Bun.spawnSync([join(import.meta.dir, "../bin/instructions")], {
     stdout: "pipe",
     stderr: "ignore",
@@ -346,7 +209,7 @@ export async function judge(input: string, kind: Kind = "brief"): Promise<Verdic
       "--tools",
       "",
       "--system-prompt",
-      `${PROMPTS[kind]}\n\n${rules}`,
+      `${SYSTEM}\n\n${rules}`,
     ],
     schema: Judged,
     cwd: hexDir(),
@@ -365,10 +228,7 @@ const SentBack = z.object({
 
 type Sent = z.infer<typeof SentBack>;
 
-export type Kind = keyof typeof PROMPTS;
-
 export type Checked = {
-  kind: Kind;
   verdict: Verdict | "failed";
   text: string;
   round: number;
@@ -380,46 +240,16 @@ export async function check(
   hook: Hook,
   store: Store,
   decide = judge,
-  rules?: string[],
   thread?: string,
 ): Promise<Checked | undefined> {
-  const edit = ruleEdit(hook, rules);
+  const text = brief(hook);
 
-  const onRules =
-    edit === undefined ? undefined : await checkAs("rules", edit, hook, store, decide, thread);
-
-  const sentBack =
-    onRules !== undefined &&
-    onRules.verdict !== "failed" &&
-    onRules.verdict.verdict === "revise" &&
-    onRules.through !== true;
-
-  const handoff = brief(hook);
-
-  if (sentBack || handoff === undefined || handoff === "") {
-    return onRules;
+  if (text === undefined || text === "") {
+    return;
   }
 
-  return await checkAs("brief", handoff, hook, store, decide, thread);
-}
-
-const NAMED: Record<Kind, [string, string]> = {
-  brief: ["brief", "The brief"],
-  rules: ["change to my rules", "The change to my rules"],
-};
-
-async function checkAs(
-  kind: Kind,
-  text: string,
-  hook: Hook,
-  store: Store,
-  decide: typeof judge,
-  thread?: string,
-): Promise<Checked> {
   const session = hook.session_id ?? "";
-  const key = kind === "brief" ? "intent" : `intent:${kind}`;
-  const [name, what] = NAMED[kind];
-  const sent = SentBack.safeParse(JSON.parse(store.seen.get(session, key) || "null")).data;
+  const sent = SentBack.safeParse(JSON.parse(store.seen.get(session, "intent") || "null")).data;
 
   const last =
     sent !== undefined && sent.rounds > 0 && Date.now() - sent.at < REWRITE_WINDOW_MS
@@ -430,7 +260,7 @@ async function checkAs(
 
   const before =
     last !== undefined &&
-    `This session's last ${name}, ${Math.round((Date.now() - last.at) / 60_000)} min ago, went back with your notes, and this one may be its rewrite. That one:\n\n${last.brief}\n\nYour notes on it:\n\n${last.notes}`;
+    `This session's last brief, ${Math.round((Date.now() - last.at) / 60_000)} min ago, went back with your notes, and this one may be its rewrite. That one:\n\n${last.brief}\n\nYour notes on it:\n\n${last.notes}`;
 
   const words =
     asked(store, session, text, thread) ||
@@ -438,10 +268,9 @@ async function checkAs(
 
   try {
     const verdict = await decide(
-      [words, before, `${what} (${hook.tool_name}):\n\n${text.slice(0, 40_000)}`]
+      [words, before, `The brief (${hook.tool_name}):\n\n${text.slice(0, 40_000)}`]
         .filter(Boolean)
         .join("\n\n"),
-      kind,
     );
 
     const through = verdict.verdict === "revise" && round > SENDBACKS_BEFORE_IT_GOES_THROUGH;
@@ -449,7 +278,7 @@ async function checkAs(
     if (verdict.verdict === "revise" && !through) {
       store.seen.show(
         session,
-        key,
+        "intent",
         JSON.stringify({
           at: Date.now(),
           rounds: round,
@@ -458,12 +287,12 @@ async function checkAs(
         } satisfies Sent),
       );
     } else {
-      store.seen.unshow(session, key);
+      store.seen.unshow(session, "intent");
     }
 
-    return { kind, verdict, text, round, ...(through && { through }) };
+    return { verdict, text, round, ...(through && { through }) };
   } catch (error) {
-    return { kind, verdict: "failed", text, round, error: String(error) };
+    return { verdict: "failed", text, round, error: String(error) };
   }
 }
 
@@ -477,10 +306,10 @@ if (import.meta.main) {
       process.env.HEX_OWNER;
 
     const began = Date.now();
-    const result = await check(hook, open(stateDir()), judge, undefined, thread);
+    const result = await check(hook, open(stateDir()), judge, thread);
 
     if (result) {
-      const { kind, verdict, text, round, through, error } = result;
+      const { verdict, text, round, through, error } = result;
 
       const record = {
         at: new Date().toISOString(),
@@ -488,7 +317,6 @@ if (import.meta.main) {
         session: hook.session_id,
         thread,
         tool: hook.tool_name,
-        kind,
         tasks: named(text),
         round,
         verdict: verdict === "failed" ? verdict : verdict.verdict,
@@ -506,10 +334,7 @@ if (import.meta.main) {
             ? "The check reads your rewrite next to these notes."
             : "This is its last sendback: your next version goes through whatever the check says, so weigh these notes yourself.";
 
-        const reason = {
-          rules: `Intent check: the owner didn't ask for this change to their rules.\n\n${verdict.notes}\n\nWhere their words do ask for it, make the change again. ${next}`,
-          brief: `Intent check: this brief drifts from what the owner asked.\n\n${verdict.notes}\n\nRewrite the brief and start it again. ${next}`,
-        }[kind];
+        const reason = `Intent check: this brief drifts from what the owner asked.\n\n${verdict.notes}\n\nRewrite the brief and start it again. ${next}`;
 
         console.log(
           JSON.stringify({
