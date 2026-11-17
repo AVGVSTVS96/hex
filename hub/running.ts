@@ -134,29 +134,6 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
   return sessions;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A background session's record starts when its job takes a spare process, which is when it loads plugins; a /clear keeps the process and gives the record the new session's id.
-export function own(
-  session: string,
-  claude = CLAUDE,
-  pid = process.ppid,
-): { started: number; cwd: string | undefined } | undefined {
-  for (let above = pid; above > 0; above = parentOf(above)) {
-    const record = readJson(join(claude, "sessions", `${above}.json`), SessionRecord);
-
-    if (
-      record?.sessionId === session &&
-      record.pid === above &&
-      record.startedAt !== undefined &&
-      alive(above, record.procStart)
-    ) {
-      return { started: record.startedAt, cwd: record.cwd };
-    }
-  }
-
-  return undefined;
-}
-
 type OwnershipOptions = {
   owners?: Map<string, string>;
   boundary?: (id: string) => boolean;

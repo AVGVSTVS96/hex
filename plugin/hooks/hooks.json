@@ -10,10 +10,7 @@
         "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted" }]
       },
       {
-        "hooks": [
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules" },
-          { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/tasks.ts" }
-        ]
+        "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/tasks.ts" }]
       },
       {
         "matcher": "startup",
@@ -107,10 +104,6 @@
             "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/state.ts busy",
             "timeout": 600
           },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules 1" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules 2" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules 3" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules 4 last" },
           { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/tasks.ts" },
           { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/said.ts" }
         ]
@@ -133,9 +126,6 @@
     ],
     "PreCompact": [
       { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/precompact" }] }
-    ],
-    "SessionEnd": [
-      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules" }] }
     ]
   }
 }

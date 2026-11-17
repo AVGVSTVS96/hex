@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { open } from "../../hub/store.ts";
 
@@ -77,14 +77,6 @@ const notes = (from: number, count: number) =>
   `${Array.from({ length: count }, (_, i) => `#${from + i} 2026-10-06 ${"x".repeat(180)}`).join(
     "\n",
   )}\n`;
-
-test("HEX.md imports the wake file, so Claude Code loads it into every session in the hex folder", () => {
-  const imports = [...readFileSync(join(BIN, "../HEX.md"), "utf-8").matchAll(/^@(\S+)$/gmu)].map(
-    ([, path]) => resolve(home, ".hex", path ?? ""),
-  );
-
-  expect(imports).toEqual([file]);
-});
 
 test("the file holds every part of memo's wake in order, as long as it runs", () => {
   memo([

@@ -65,12 +65,6 @@ export function sessionFiles({
     return join(dir, `beside-${encodeURIComponent(thread)}.json`);
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Where the thread's session keeps the copy of its instruction files it loads (bin/instructions hold).
-  function heldOf(thread: string) {
-    return join(dir, encodeURIComponent(thread));
-  }
-
   function besideLog(session: string) {
     return join(dir, `beside-${session}.log`);
   }
@@ -86,7 +80,7 @@ export function sessionFiles({
       ...envOf(thread),
       HEX_HUB: socketPath,
       ...(connect && { MCP_TIMEOUT: String(connect) }),
-      ...(fresh(thread) ? { HEX_FRESH: "1" } : { HEX_HELD: heldOf(thread) }),
+      ...(fresh(thread) && { HEX_FRESH: "1" }),
       ...(present(takesOverFrom) && { HEX_HANDOFF: takesOverFrom }),
     };
 
@@ -112,7 +106,6 @@ export function sessionFiles({
   function forget(thread: string) {
     rmSync(settingsOf(thread), { force: true });
     rmSync(besideSettingsOf(thread), { force: true });
-    rmSync(heldOf(thread), { recursive: true, force: true });
   }
 
   function sweepBesideLogs(running: (session: string) => boolean) {

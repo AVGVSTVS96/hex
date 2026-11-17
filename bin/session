@@ -11,10 +11,10 @@ bg=${1:-}
 [ "$bg" != --bg ] || above || "$hex/bin/trust" "$here"
 # Memory passes keep the wake current; a launch writes it only when there's none yet, and removes it once memory is off.
 (. "$hex/bin/settings"; { [ -n "${MEMORY_DIR:-}" ] && [ -s "$home/state/wake/CLAUDE.md" ]; } || wake)
-# A job works from its prompt, as a subagent does, so it starts without the wake, and the agents it starts inherit that.
+# A job works from its prompt, as a subagent does, so it starts without the wake.
 [ -n "${HEX_OWNER:-}" ] && [ -z "${HEX_THREAD:-}" ] && job=1
-# Outside the hex folder, hex's settings come only through --settings, and so does what a job leaves out.
-[ -n "${away:-}${job:-}" ] && ! printf '%s\n' "$@" | grep -qx -- --settings && set -- --settings '{}' "$@"
+# Outside the hex folder, hex's settings come only through --settings.
+[ -n "${away:-}" ] && ! printf '%s\n' "$@" | grep -qx -- --settings && set -- --settings '{}' "$@"
 case ${CLAUDE_CODE_SHELL:-${SHELL:-}} in *zsh) shell=$hex/bin/shell/zsh ;; *) shell=$hex/bin/shell/bash ;; esac
 for arg; do
   shift
@@ -33,14 +33,6 @@ for arg; do
     # A chat turn's system prompt ends with the instruction files, where the cache reads them, so Claude Code skips its own copy.
     # A chat turn lists skills by name only; the Skill tool still loads any of them.
     [ -n "${chat:-}" ] && arg=$(printf '%s' "$arg" | jq -c --argjson files "$("$hex/bin/instructions" paths)" '.claudeMdExcludes += $files | .skillListingBudgetFraction = 0.0001')
-    # A hub thread's session loads its instruction files and the wake from a copy that a resume keeps (bin/instructions hold).
-    held=$(printf '%s' "$arg" | jq -r '.env.HEX_HELD // empty')
-    if [ -n "$held" ] && [ -z "${away:-}" ] && { { printf '%s\n' "$@" | grep -qx -- --resume && [ -s "$held/CLAUDE.md" ]; } || "$hex/bin/instructions" hold "$held"; }; then
-      arg=$(printf '%s' "$arg" | jq -c --argjson files "$("$hex/bin/instructions" paths)" --arg wake "$home/state/wake/CLAUDE.md" '.claudeMdExcludes += $files + [$wake]')
-    else
-      held=
-    fi
-    [ -n "${job:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg wake "$home/state/wake/CLAUDE.md" '.claudeMdExcludes += [$wake]')
     # The caller waits on every turn, so a call runs a fast model, HEX_VOICE_MODEL's or Sonnet. Calls pause mid-call often enough that the 1-hour cache cost less than 5 minutes over past calls.
     [ -n "${voice:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg model "$(jq -r '.env.HEX_VOICE_MODEL // "sonnet"' "$home/.claude/settings.json" 2>/dev/null || echo sonnet)" '{model: $model, effortLevel: "low"} + . | .env += {CLAUDE_CODE_PROMPT_CACHE_TTL: "1h", CLAUDE_CODE_SILENT_TURN_REMINDER_TEXT: "The caller has heard nothing from you in a while. If there is something to tell them, a finding or a change of plan, tell them in a few words with say."}')
     # Nobody reads a Telegram, Discord or Buzz session's terminal, and it messages its user when there's something to tell, so Claude Code's nudge to speak after a quiet minute is off there.
@@ -70,11 +62,8 @@ if [ -n "${chat:-}" ]; then
   set -- --mcp-config "$(jq -cn --arg chat "$hex/bin/chat" --arg dir "$(dirname "$system")" '{mcpServers: {chat: {command: $chat, args: ["mcp", $dir]}}}')" --system-prompt-file "$system" --add-dir "$(dirname "$system")/tail" --disallowedTools Artifact,AskUserQuestion,EnterWorktree,Workflow,ScheduleWakeup,ReportFindings "$@"
 fi
 [ -n "${away:-}" ] && set -- --add-dir "$home" --append-system-prompt "$("$hex/bin/identity" "$home")" "$@"
-# A DM turn skips the instruction files and a session away from the hex folder never reads them, so HEX.md's import of the wake reaches neither: it goes as a file Claude Code loads at start and after compacting.
+# A DM turn skips the instruction files and a session away from the hex folder never reads them, so neither is told to read the wake: it goes as a file Claude Code loads at start and after compacting.
 [ -n "${away:-}${chat:-}" ] && [ -z "${job:-}" ] && [ -s "$home/state/wake/CLAUDE.md" ] && set -- --add-dir "$home/state/wake" "$@"
-[ -n "${held:-}" ] && set -- --add-dir "$held" "$@"
-# A thread's general-purpose agent works from its brief, as a job does: Claude Code starts it without the instruction files and the wake, and bin/instructions hands it the instruction files.
-[ -n "${thread:-}" ] && set -- --agents "$("$hex/bin/instructions" agents)" "$@"
 # With several Claude accounts pooled by tokenmaxxing (github.com/anaclumos/tokenmaxxing), each session starts on the one with the most headroom left.
 [ -z "${CLAUDE_SECURESTORAGE_CONFIG_DIR+set}" ] && store=$(tokenmaxxing seat $$ 2>/dev/null) && export CLAUDE_SECURESTORAGE_CONFIG_DIR="$store"
 export CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 CLAUDE_CODE_SHELL="$shell"

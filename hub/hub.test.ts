@@ -515,7 +515,6 @@ test("a message for a new thread starts a session bound to that thread", async (
       HEX_PORT: String(listener.port),
       HEX_TOKEN: readFileSync(join(dir, "token"), "utf-8"),
       HEX_STORE: dir,
-      HEX_HELD: join(dir, "sessions", "chat%3A7"),
     },
   });
   expect(states).toEqual([["chat:7", true]]);
