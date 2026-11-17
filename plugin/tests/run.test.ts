@@ -8,6 +8,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -313,6 +314,53 @@ test("a hub that lost hex to another machine stays stopped: hex exits with its c
   expect(readFileSync(join(BIN, "../systemd/hex.service"), "utf-8")).toMatch(
     /^RestartPreventExitStatus=3$/mu,
   );
+});
+
+test("a restart in place starts the hub again even when the login shell leaves something behind", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+
+  const shell = join(home, "shell-that-leaves-a-sleep");
+  writeFileSync(
+    shell,
+    `#!/bin/sh\nsleep 20 >/dev/null 2>&1 &\necho $! >> "${home}/strays"\necho\necho hex-path\nenv\n`,
+    { mode: 0o755 },
+  );
+
+  try {
+    run({ SHELL: shell });
+    await until(() => hubs().length === 1);
+    Bun.spawnSync([join(hex, "bin/hex"), "restart"]);
+    await until(() => hubs().length === 3);
+    expect(hubs()[2]).toMatch(/^start mark=1 loop=1 \d+$/u);
+  } finally {
+    Bun.spawnSync(["kill", ...readFileSync(join(home, "strays"), "utf-8").trim().split("\n")]);
+  }
+}, 30_000);
+
+test("hex without flock says so and stops as failed", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+
+  const tools = join(home, "tools");
+  mkdirSync(tools);
+
+  const linked = new Set(["flock"]);
+
+  for (const dir of (process.env.PATH ?? "").split(":")) {
+    for (const tool of existsSync(dir) ? readdirSync(dir) : []) {
+      if (!linked.has(tool)) {
+        linked.add(tool);
+        symlinkSync(join(dir, tool), join(tools, tool));
+      }
+    }
+  }
+
+  const shell = join(home, "shell-as-it-is");
+  writeFileSync(shell, "#!/bin/sh\necho\necho hex-path\nenv\n", { mode: 0o755 });
+
+  const running = run({ PATH: tools, SHELL: shell });
+  expect(await running.exited).toBe(1);
+  expect(await new Response(running.stderr).text()).toContain("flock isn't installed");
+  expect(hubs()).toEqual([]);
 });
 
 test("a second hex on a folder one already runs leaves it be", async () => {

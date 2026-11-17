@@ -179,6 +179,9 @@ case "${1:-}" in
     trap 'pkill -P $$ -f channels/iikb/door.ts || :' EXIT
     # Only whatever moved hex away brings it back: it starts hex ahead of its turn.
     if [ -e "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" != "$(uname -n)" ] && [ -z "${HEX_AHEAD:-}" ]; then echo "hex runs on another machine now ($marker), so it starts here only once it's moved back" >&2; exit 1; fi
+    # A restart in place comes here holding the locks below (6, 7) from before it, which anything started before they're
+    # taken again, like the login shell, would keep.
+    exec 6>&- 7>&-
     shell_path
     # In a shell of its own, so a line of .env that fails stops the check the way it would stop the hub. Only where it
     # failed is told, since the shell's error quotes the line, which may be a secret.
@@ -215,6 +218,7 @@ case "${1:-}" in
       hub=$!
     }
     # One hex runs a folder on a machine, however it was started: a second leaves the first be.
+    command -v flock >/dev/null || { down "hex can't start on $(uname -n): flock isn't installed (INSTALL.md step 1)."; exit 1; }
     exec 6>"$home/state/run.lock"
     flock -n 6 || { echo "hex runs here already" >&2; exit 0; }
     # A move holds state/records.lock alone, and hex here holds it beside nothing but itself for as long as it runs,
