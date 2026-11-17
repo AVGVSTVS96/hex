@@ -237,6 +237,16 @@ export class Messages {
     );
   }
 
+  heard(thread: string): Row | null {
+    return MessageRow.nullable().parse(
+      this.db
+        .query(
+          `select * from messages where "to" = ? and author != 'hex' order by at desc, n desc limit 1`,
+        )
+        .get(thread),
+    );
+  }
+
   find(thread: string, message: MessageId): Row | null {
     return MessageRow.nullable().parse(
       this.db
