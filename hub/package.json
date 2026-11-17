@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "catalog:",
+    "effect": "4.1.4",
     "zod": "catalog:"
   }
 }

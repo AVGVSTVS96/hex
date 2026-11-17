@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import {
   appendFileSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -19,6 +20,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import * as claude from "./claude.ts";
 import { settled } from "./claude.ts";
 import type { Job as JobRecord } from "./claude.ts";
 import { clock, manual } from "./clock.ts";
@@ -1179,6 +1181,79 @@ test("a session that restarts in place and still gets no channel is reported, no
   expect(calls().filter((each) => each[0] === "respawn").length).toBe(1);
 });
 
+test("a restart in place that can't write the session's settings file is a failed start, and the thread's next message starts it", async () => {
+  bound("chat:7");
+  const settings = join(dir, "sessions", "chat%3A7.json");
+  const startedWith = join(dir, "sessions", "started-with.json");
+  renameSync(settings, startedWith);
+  mkdirSync(settings);
+  writeFileSync(
+    join(dir, "jobs", SESSION.slice(0, 8), "state.json"),
+    JSON.stringify({
+      state: "working",
+      sessionId: SESSION,
+      respawnFlags: ["--settings", startedWith],
+    }),
+  );
+  start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: 42, startedAt: 1 }],
+    reconnect: 50,
+  });
+  await time.lapse(50);
+  await until(() => failures.length);
+  expect(failures).toEqual([["chat:7", matching(/chat%3A7\.json/u)]]);
+  expect(respawns()).toEqual([]);
+  rmSync(settings, { recursive: true });
+  writeFileSync(join(dir, "agents"), "[]");
+  hub.deliver("chat:7", "Desk anchors", message);
+  await launched();
+});
+
+test("a wait for a session's channel that breaks is over, and the thread's next message takes its session up again", async () => {
+  bound("chat:7");
+  start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: 42, startedAt: 1 }],
+    reconnect: 50,
+  });
+  const { close } = await session("chat:7");
+  const listing = spyOn(claude, "agents").mockRejectedValueOnce(new Error("no list of sessions"));
+
+  try {
+    close();
+    await time.lapse(50);
+    await time.advance(150);
+    expect(listing).toHaveBeenCalledTimes(1);
+    expect(respawns()).toEqual([]);
+    hub.deliver("chat:7", "Desk anchors", message);
+    await time.lapse(50);
+    await until(() => respawns().length);
+    expect(failures).toEqual([]);
+  } finally {
+    listing.mockRestore();
+  }
+});
+
+test("a starting session the hub stopped, since it couldn't restart it in place, is still reported when its start fails", async () => {
+  start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [],
+    reconnect: 50,
+  });
+  hub.deliver("chat:7", "Desk anchors", message);
+  await launched();
+  writeFileSync(
+    join(dir, "agents"),
+    JSON.stringify([{ sessionId: SESSION, pid: EXITED, startedAt: 1 }]),
+  );
+  await time.lapse(50);
+  await until(() => calls().find((each) => each[0] === "stop"));
+  await job("job12345", { state: "failed", detail: "exit 1 before init" });
+  await until(() => failures.length);
+  expect(failures).toEqual([["chat:7", "exit 1 before init"]]);
+});
+
 test("a session still running mid-turn when the hub starts gets its window to reconnect before anything else starts for its thread", async () => {
   bound("chat:7");
   const store = open(dir);
@@ -1833,6 +1908,54 @@ test("a session that fails to start is reported with its reason, and the next me
   await until(() => calls().filter((each) => each[0] === "--bg").length === 2);
 });
 
+test("a start that throws before its session launches is a failed start for its thread, not an error for whoever asked for it", async () => {
+  start();
+  const push = states.push.bind(states);
+
+  states.push = () => {
+    states.push = push;
+
+    throw new Error("the chat can't be shown as working");
+  };
+
+  hub.deliver("chat:7", "Desk anchors", message);
+  await until(() => failures.length);
+  expect(failures).toEqual([["chat:7", "the chat can't be shown as working"]]);
+  expect(bgStarts()).toEqual([]);
+  hub.deliver("chat:7", "Desk anchors", message);
+  await launched();
+});
+
+test("a start that fails stops watching its job record", async () => {
+  const { watchJob } = claude;
+  const watches: unknown[] = [];
+
+  const watching = spyOn(claude, "watchJob").mockImplementation((id, change) => {
+    const opened = watchJob(id, change);
+    const close = opened.close.bind(opened);
+    watches.push(opened);
+
+    opened.close = () => {
+      watches.splice(watches.indexOf(opened), 1);
+      close();
+    };
+
+    return opened;
+  });
+
+  try {
+    start();
+    hub.deliver("chat:7", "Desk anchors", message);
+    await launched();
+    expect(watches.length).toBe(1);
+    await job("job12345", { state: "failed", detail: "exit 1 before init" });
+    await until(() => failures.length);
+    expect(watches).toEqual([]);
+  } finally {
+    watching.mockRestore();
+  }
+});
+
 test("a start that fails before its session launches, as on a settings file it can't write, is reported, and the next message starts it", async () => {
   start();
   const settings = join(dir, "sessions", "chat%3A7.json");
@@ -1848,6 +1971,69 @@ test("a start that fails before its session launches, as on a settings file it c
   rmSync(settings, { recursive: true });
   hub.deliver("chat:7", "Desk anchors", { ...message, content: "again" });
   await launched();
+});
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A launcher whose starts each wait for the test: the first is under way once start1 is there and returns once go1 is, and so on. One let go with words fails with them, as claude --bg does.
+function slowLauncher() {
+  const launcher = join(dir, "launch");
+  writeFileSync(
+    launcher,
+    `#!/bin/sh
+n=1
+until mkdir "${dir}/start$n" 2>/dev/null; do [ -d "${dir}" ] || exit 0; n=$((n + 1)); done
+until [ -f "${dir}/go$n" ]; do [ -d "${dir}" ] || exit 0; sleep 0.02; done
+[ -s "${dir}/go$n" ] && { cat "${dir}/go$n"; exit 1; }
+exec claude "$@"
+`,
+  );
+  chmodSync(launcher, 0o755);
+
+  return launcher;
+}
+
+test("a start still under way when its thread closes doesn't fail the thread's next start when it fails", async () => {
+  start({ launcher: slowLauncher() });
+  hub.deliver("chat:7", "Desk anchors", message);
+  await until(() => existsSync(join(dir, "start1")));
+  void hub.retire("chat:7");
+  hub.deliver("chat:7", "Desk anchors", { ...message, content: "again" });
+  await until(() => existsSync(join(dir, "start2")));
+  writeFileSync(join(dir, "go1"), "claude: the daemon stopped answering");
+  writeFileSync(join(dir, "go2"), "");
+  await launched();
+  const { received } = await session("chat:7");
+  await until(() => heard(received).some((each) => each.content === "again"));
+  expect(failures).toEqual([]);
+});
+
+test("a session that connects before the command that started it has returned is still seen to pause", async () => {
+  const needs = "Answer the permission prompt in the terminal to continue";
+  start({ launcher: slowLauncher(), reconnect: 50 });
+  hub.deliver("chat:7", "Desk anchors", message);
+  await until(() => existsSync(join(dir, "start1")));
+  bound("chat:7", SESSION, "job12345");
+  writeFileSync(
+    join(dir, "agents"),
+    JSON.stringify([{ id: "job12345", sessionId: SESSION, pid: process.pid, startedAt: 1 }]),
+  );
+  const line = http("chat:7");
+  await line.initialize();
+  await line.open();
+  await line.rpc("tools/list");
+  await until(() => line.listed() === 2);
+  expect(bgStarts()).toEqual([]);
+  writeFileSync(join(dir, "go1"), "");
+  await launched();
+  await turning("chat:7", line);
+  await pauses("job12345", needs);
+  await until(() => failures.length);
+  expect(failures).toEqual([
+    [
+      "chat:7",
+      `its session stopped on a question only its terminal can answer ("${needs}"), so your message got no answer. Your next message starts it again.`,
+    ],
+  ]);
 });
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -2324,8 +2510,8 @@ function pauses(jobId = "job12345", needs = REFUSED) {
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A session that took the message and began its turn.
-async function turning(thread: string) {
-  const line = await session(thread);
+async function turning(thread: string, connected?: ReturnType<typeof http>) {
+  const line = connected ?? (await session(thread));
   await until(() => line.received.length);
   open(dir).turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
   fold(line.received);

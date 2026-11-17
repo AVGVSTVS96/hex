@@ -1,9 +1,12 @@
 import type { FSWatcher } from "node:fs";
 
+import { Cause, Data, Effect, Option } from "effect";
+
 import * as claude from "./claude.ts";
 import { clock } from "./clock.ts";
-import type { Timer } from "./clock.ts";
 import type { failedStarts, Opening } from "./failing.ts";
+import { ownedWork } from "./fibers.ts";
+import type { Work } from "./fibers.ts";
 import type { SessionFiles } from "./files.ts";
 import type { Keep } from "./kept.ts";
 import type { Line } from "./mcp.ts";
@@ -16,36 +19,109 @@ import type { Threads } from "./threads.ts";
 import type { MessagesWaiting } from "./waiting.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Where a thread's session stands. launching: the hub started or restarted it and waits for its channel, so one that ends first failed to start. recovering: it runs without its channel, which Claude Code may still bring back. Either wait ends at its deadline. watch: on Claude's job record of the session.
+// Where a thread's session stands. launching: the hub started or restarted it and waits for its channel, so one that ends first failed to start. recovering: it runs without its channel, which Claude Code may still bring back. again: the hub started the thread again on its own (retry, revive), not for a message or prompt.
 type Phase =
   | { is: "stopped" }
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // again: the hub started the thread again on its own (retry, revive), not for a message or prompt.
   | {
       is: "launching";
+      started?: Promise<string>;
       job?: string;
-      watch?: FSWatcher;
-      deadline?: Timer | undefined;
       respawned?: boolean;
       again?: boolean | undefined;
     }
-  | { is: "recovering"; deadline?: Timer | undefined; again?: boolean | undefined }
-  | { is: "live"; line: Line; watch?: FSWatcher };
+  | { is: "recovering"; again?: boolean | undefined }
+  | { is: "live"; line: Line };
 
-type Standing = { phase: Phase };
+type Launching = Extract<Phase, { is: "launching" }>;
 
-function become(standing: Standing, phase: Phase) {
-  const was = standing.phase;
+type Waiting = Extract<Phase, { is: "launching" | "recovering" }>;
 
-  if (was.is === "launching" || was.is === "live") {
-    was.watch?.close();
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// work: what the hub is doing for the phase, which lasts no longer than it does.
+type Standing = { phase: Phase; work: Work<StartFailed> };
+
+class StartFailed extends Data.TaggedError("StartFailed")<{ reason: string }> {}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Claude's job record of a session, read now and at each change, until a reading ends it or it's interrupted. Effect runs a callback's own cleanup only when it's interrupted, so the watch closes in ensuring, however this ends.
+const watched = <E = never>(
+  thread: string,
+  job: string,
+  read: (record: claude.Job, end: (ended: Effect.Effect<never, E>) => void) => void,
+) =>
+  Effect.suspend(() => {
+    let watch: FSWatcher | undefined;
+
+    return Effect.callback<never, E>((resume) => {
+      const check = () => {
+        read(claude.record(job), resume);
+      };
+
+      try {
+        watch = claude.watchJob(job, check);
+        check();
+      } catch {
+        process.stderr.write(
+          `hub: no job record for ${job}, so ${thread}'s session can't be seen\n`,
+        );
+      }
+    }).pipe(Effect.ensuring(Effect.sync(() => watch?.close())));
+  });
+
+const failedRecord = (thread: string, job: string) =>
+  watched<StartFailed>(thread, job, ({ state, detail }, end) => {
+    if (state === "failed") {
+      end(
+        Effect.fail(
+          new StartFailed({
+            reason: detail === undefined || detail === "" ? "the session failed to start" : detail,
+          }),
+        ),
+      );
+    }
+  });
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A session without its channel gets Claude Code's reconnect window to come back, and a starting one, still running each time the hub looks, also the time Claude Code waits for the hub to answer its channel. Returns the session once it has run past that without its channel, or nothing when it's gone. sessionOf: the running session serving the thread, as Claude lists it then. since: when the wait began, which a session that started later begins again. pid: the starting session's process, which the hub looks at itself until its wait is over.
+const channelless = Effect.fn("channelless")(function* channelless(
+  phase: Waiting,
+  sessionOf: () => Promise<claude.Agent | undefined>,
+  { reconnect, connect }: { reconnect: number; connect: number },
+) {
+  let since = clock.now();
+  let pid: number | undefined;
+
+  for (;;) {
+    yield* Effect.sleep(reconnect);
+    const connecting = phase.is === "launching" && clock.now() - since < connect;
+
+    if (connecting && pid !== undefined && pid !== 0 && claude.alive(pid)) {
+      continue;
+    }
+
+    const running = yield* Effect.promise(sessionOf);
+
+    if (!running) {
+      return;
+    }
+
+    if ((running.startedAt ?? 0) >= since) {
+      since = clock.now();
+      pid = undefined;
+    } else if (connecting) {
+      ({ pid } = running);
+    } else {
+      return running;
+    }
   }
+});
 
-  if (was.is === "launching" || was.is === "recovering") {
-    clock.clearTimeout(was.deadline);
-  }
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The thread a session was started for, by the settings file it started with.
+function boundTo(agent: claude.Agent, channel: string) {
+  const env = claude.settingsOf(agent)?.env;
 
-  standing.phase = phase;
+  return env?.HEX_CHANNEL === channel ? env.HEX_THREAD : undefined;
 }
 
 function underway(standing: Standing) {
@@ -53,7 +129,7 @@ function underway(standing: Standing) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Where each thread's session stands, and the starts and restarts that move it: become is the one writer of which phase it's in, and only this file changes what goes with that phase. What the hub does about it goes up as a fact: a turn began or ended, a start failed.
+// Where each thread's session stands, and the starts and restarts that move it: become is the one writer of which phase it's in, and only this file changes what goes with that phase. What the hub does for a phase is that phase's work, an Effect: a start's steps, a wait for a channel, a watch on Claude's job record. A phase ending interrupts its work, so none of it acts for a phase that's over, and work that fails or breaks ends a start as failed. What the hub does about a phase goes up as a fact: a turn began or ended, a start failed.
 export function threadSessions({
   runs,
   threads,
@@ -95,30 +171,69 @@ export function threadSessions({
   turnEnded: (thread: string) => void;
   startFailed: (thread: string) => void;
 }) {
-  const standings = runs.part((): Standing => ({ phase: { is: "stopped" } }));
+  const standings = runs.part((): Standing => ({ phase: { is: "stopped" }, work: ownedWork() }));
   const standingOf = standings.of;
 
   function of(thread: string): { readonly phase: Readonly<Phase> } {
     return standingOf(thread);
   }
 
-  function connected(thread: string, line: Line): Readonly<Phase> | undefined {
+  function become(thread: string, phase: Phase, doing?: Effect.Effect<unknown, StartFailed>) {
     const standing = standingOf(thread);
+    standing.phase = phase;
+    standing.work.end();
 
+    if (doing) {
+      during(thread, doing);
+    }
+  }
+
+  function during(thread: string, doing: Effect.Effect<unknown, StartFailed>) {
+    const { phase, work } = standingOf(thread);
+
+    work.start(doing, (cause) => {
+      broke(thread, phase, cause);
+    });
+  }
+
+  function broke(thread: string, phase: Phase, cause: Cause.Cause<StartFailed>) {
+    const error = Cause.squash(cause);
+    const planned = error instanceof StartFailed;
+
+    if (!planned) {
+      process.stderr.write(
+        `hub: ${thread}'s work while ${phase.is} broke: ${Cause.pretty(cause)}\n`,
+      );
+    }
+
+    if (standingOf(thread).phase !== phase) {
+      return;
+    }
+
+    if (phase.is === "launching") {
+      fail(thread, planned ? error.reason : error instanceof Error ? error.message : String(error));
+    } else if (phase.is === "recovering") {
+      become(thread, { is: "stopped" });
+    }
+  }
+
+  function connected(thread: string, line: Line): Readonly<Phase> | undefined {
     if (stops.ending(thread)) {
       return;
     }
 
-    const was = standing.phase;
-    become(standing, { is: "live", line });
+    const was = standingOf(thread).phase;
+    become(thread, { is: "live", line });
     failing.connected(thread);
     pauses.connected(thread);
 
     return was;
   }
 
-  function track(thread: string, was: Readonly<Phase>) {
-    const job = was.is === "launching" ? was.job : undefined;
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A live session's job record is watched under the job it was started as, which the start still under way when it connected has yet to say, or else under its short id, as Claude lists a job without one.
+  function track(thread: string, was: Readonly<Phase>, line: Line) {
+    const { job, started } = was.is === "launching" ? was : {};
     threads.register(thread, thread);
 
     const id = present(job) ? claude.record(job).sessionId : undefined;
@@ -127,23 +242,42 @@ export function threadSessions({
       threads.note(thread, id);
     }
 
-    const record = job ?? threads.current(thread)?.slice(0, 8);
+    during(
+      thread,
+      Effect.gen(function* watching() {
+        const late =
+          !present(job) && started
+            ? yield* Effect.option(Effect.tryPromise(() => started))
+            : Option.none();
 
-    if (present(record)) {
-      watchJob(thread, record);
-    }
+        const record = job ?? Option.getOrUndefined(late) ?? threads.current(thread)?.slice(0, 8);
+
+        if (present(record)) {
+          yield* watched(thread, record, ({ needs }) => {
+            during(thread, pauses.check(thread, line, needs));
+          });
+        }
+      }),
+    );
   }
 
   function noteRunning(thread: string, line: Line) {
-    const standing = standingOf(thread);
+    const { phase } = standingOf(thread);
 
-    void (async () => {
-      const running = await sessionOf(thread);
+    if (phase.is !== "live" || phase.line !== line) {
+      return;
+    }
 
-      if (running && standing.phase.is === "live" && standing.phase.line === line) {
-        threads.note(thread, running.sessionId);
-      }
-    })();
+    during(
+      thread,
+      Effect.gen(function* noting() {
+        const running = yield* Effect.promise(() => sessionOf(thread));
+
+        if (running) {
+          threads.note(thread, running.sessionId);
+        }
+      }),
+    );
   }
 
   function dropped(thread: string, line: Line) {
@@ -153,13 +287,18 @@ export function threadSessions({
       return false;
     }
 
-    become(standing, { is: "recovering" });
+    recover(thread);
 
     return true;
   }
 
+  function recover(thread: string, again?: boolean) {
+    const phase: Phase = { is: "recovering", again };
+    become(thread, phase, channelOrRestart(thread, phase));
+  }
+
   function end(thread: string) {
-    become(standingOf(thread), { is: "stopped" });
+    become(thread, { is: "stopped" });
   }
 
   function waitedOn(thread: string) {
@@ -170,7 +309,7 @@ export function threadSessions({
     }
   }
 
-  async function launch(
+  function launch(
     thread: string,
     name: string,
     {
@@ -179,12 +318,20 @@ export function threadSessions({
       ...given
     }: Opening & { cwd?: string | undefined; again?: boolean | undefined } = {},
   ) {
-    const standing = standingOf(thread);
-
-    if (!serving() || underway(standing)) {
+    if (!serving() || underway(standingOf(thread))) {
       return;
     }
 
+    const phase: Phase = { is: "launching", again };
+    become(thread, phase, starting(thread, phase, { name, cwd }, given));
+  }
+
+  const starting = Effect.fn("starting")(function* starting(
+    thread: string,
+    phase: Launching,
+    { name, cwd }: { name: string; cwd: string | undefined },
+    given: Opening,
+  ) {
     const { prompt, fork, quiet = false } = failing.keepOpening(thread, given);
     threads.register(thread, name, cwd);
     threads.claim(thread);
@@ -193,46 +340,41 @@ export function threadSessions({
       turnBegan(thread);
     }
 
-    const phase: Phase = { is: "launching", again };
-    become(standing, phase);
-
+    const { again } = phase;
     waiting.markAll(thread);
+    let daemonChecked: Promise<void> | undefined;
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // A fork's first start has no session to find; after a failed one, the session it started may run on.
-    if (present(fork) && !failing.failedLast(thread)) {
-      await watchStart(thread, starts.start(thread, prompt, fork));
+    if (!present(fork) || failing.failedLast(thread)) {
+      if (yield* Effect.promise(() => sessionOf(thread))) {
+        recover(thread, again);
 
-      return;
+        return;
+      }
+
+      waiting.cut(thread, threads.current(thread));
+      daemonChecked = claude.restartStaleDaemon();
+      const session = threads.get(thread)?.session;
+
+      if (!present(fork) && present(session) && !fresh(thread)) {
+        yield* Effect.promise(() => claude.rm(session));
+      }
     }
 
-    const running = await sessionOf(thread);
+    const started = starts.start(thread, prompt, fork, daemonChecked);
+    phase.started = started;
 
-    if (standing.phase !== phase) {
-      return;
-    }
+    const job = yield* Effect.tryPromise({
+      try: () => started,
+      catch: (error) =>
+        new StartFailed({ reason: error instanceof Error ? error.message : String(error) }),
+    });
 
-    if (running) {
-      become(standing, { is: "recovering", again });
-
-      recover(thread);
-
-      return;
-    }
-
-    waiting.cut(thread, threads.current(thread));
-    const daemonChecked = claude.restartStaleDaemon();
-
-    const session = threads.get(thread)?.session;
-
-    if (!present(fork) && present(session) && !fresh(thread)) {
-      await claude.rm(session);
-    }
-
-    if (standing.phase === phase) {
-      await watchStart(thread, starts.start(thread, prompt, fork, daemonChecked));
-    }
-  }
+    phase.job = job;
+    during(thread, failedRecord(thread, job));
+    yield* channelOrRestart(thread, phase);
+  });
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The running session serving a thread: its current one, or one started for it whose conversation isn't saved yet.
@@ -241,68 +383,23 @@ export function threadSessions({
 
     return (
       running.find((agent) => agent.sessionId === threads.current(thread)) ??
-      running.find((agent) => boundTo(agent) === thread)
+      running.find((agent) => boundTo(agent, channel) === thread)
     );
   }
 
-  function boundTo(agent: claude.Agent) {
-    const env = claude.settingsOf(agent)?.env;
-
-    return env?.HEX_CHANNEL === channel ? env.HEX_THREAD : undefined;
-  }
-
-  async function watchStart(thread: string, job: Promise<string>) {
-    try {
-      watchJob(thread, await job);
-    } catch (error) {
-      fail(thread, error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  function watchJob(thread: string, job: string) {
-    const phase = standingOf(thread).phase;
-
-    if (phase.is === "launching") {
-      phase.job = job;
-      recover(thread);
-    } else if (phase.is !== "live") {
-      return;
-    }
-
-    const check = () => {
-      const { state: status, detail, needs } = claude.record(job);
-
-      if (phase.is === "live") {
-        const standing = standingOf(thread);
-        void pauses.check(thread, phase.line, needs, () => standing.phase === phase);
-      } else if (status === "failed") {
-        fail(
-          thread,
-          detail === undefined || detail === "" ? "the session failed to start" : detail,
-        );
-      }
-    };
-
-    try {
-      phase.watch = claude.watchJob(job, check);
-      check();
-    } catch {
-      process.stderr.write(`hub: no job record for ${job}, so ${thread}'s session can't be seen\n`);
-    }
-  }
-
   function fail(thread: string, reason: string) {
-    const standing = standingOf(thread);
-    const { phase } = standing;
+    const { phase } = standingOf(thread);
 
     if (phase.is !== "launching") {
       return;
     }
 
-    become(standing, { is: "stopped" });
+    become(thread, { is: "stopped" });
 
     if (failing.lost(thread, reason)) {
-      return void launch(thread, threads.of(thread).name, { again: phase.again });
+      launch(thread, threads.of(thread).name, { again: phase.again });
+
+      return;
     }
 
     startFailed(thread);
@@ -312,7 +409,7 @@ export function threadSessions({
 
   function retry() {
     for (const thread of failing.retries((held) => standings.get(held)?.phase.is === "stopped")) {
-      void launch(thread, threads.get(thread)?.name ?? thread, { again: true });
+      launch(thread, threads.get(thread)?.name ?? thread, { again: true });
     }
   }
 
@@ -322,7 +419,7 @@ export function threadSessions({
     const session = threads.current(thread);
 
     if (!present(session)) {
-      await launch(thread, threads.of(thread).name, { prompt });
+      launch(thread, threads.of(thread).name, { prompt });
 
       return;
     }
@@ -331,129 +428,96 @@ export function threadSessions({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Resuming before the old process exits starts a copy, so it waits for the exit. The stopped session's stream can close after that, so it isn't waited for.
+  // Resuming before the old process exits starts a copy, so it waits for the exit. The stopped session's stream can close after that, so it isn't waited for, and the wait is no phase's work: a session that connects meanwhile is still the one being stopped.
   async function cycle(thread: string, running?: claude.Agent, prompt?: string, quiet = false) {
-    const standing = standingOf(thread);
-
     if (running) {
       await stops.stop(thread, running);
     }
 
-    if (standing.phase.is === "live" || standing.phase.is === "recovering") {
-      become(standing, { is: "stopped" });
+    const { phase } = standingOf(thread);
+
+    if (phase.is === "live" || phase.is === "recovering") {
+      become(thread, { is: "stopped" });
     }
 
-    void launch(thread, threads.of(thread).name, { prompt, quiet });
+    launch(thread, threads.of(thread).name, { prompt, quiet });
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session without its channel gets Claude Code's reconnect window to come back, and a starting one, still running each time the hub looks, also the time Claude Code waits for the hub to answer its channel. After that, one still running restarts in place (a turn it was on runs again) if it started before the wait did, or else gets another window; a start that ended is reported, a gone main thread starts again, and a thread whose messages waited on a session that has since ended resumes. pid: the starting session's process, which the hub looks at itself until its wait is over.
-  function recover(thread: string, since = clock.now(), pid?: number) {
-    const standing = standingOf(thread);
-    const phase = standing.phase;
+  // The wait for a session's channel, and what the hub does when it stays away. A session still running restarts in place, once (a turn it was on runs again), and is a failed start if its channel stays away after that; a start that ended is reported, a gone main thread starts again, and a thread whose messages waited on a session that has since ended resumes. A respawn starts from the flags the session started with, which read the thread's current settings file only for a session the hub started that way, so any other stops and starts again.
+  const channelOrRestart: (thread: string, phase: Waiting) => Effect.Effect<void, StartFailed> =
+    Effect.fn("channelOrRestart")(function* channelOrRestart(thread: string, phase: Waiting) {
+      for (;;) {
+        const running = yield* channelless(phase, () => sessionOf(thread), { reconnect, connect });
 
-    if (!serving() || phase.is === "stopped" || phase.is === "live" || phase.deadline) {
-      return;
-    }
+        if (!running) {
+          gone(thread);
 
-    const reconnectOrRecover = async () => {
-      phase.deadline = undefined;
-      const starting = phase.is === "launching" && clock.now() - since < connect;
+          return;
+        }
 
-      if (starting && pid !== undefined && pid !== 0 && claude.alive(pid)) {
-        recover(thread, since, pid);
+        const settings = claude.settingsOf(running);
 
-        return;
+        if (!settings) {
+          void cycle(thread, running);
+
+          return;
+        }
+
+        const id = running.id ?? running.sessionId.slice(0, 8);
+
+        if (phase.is === "recovering") {
+          const next: Phase = { is: "launching", respawned: true, again: phase.again };
+          become(thread, next, restarted(thread, next, running, id));
+
+          return;
+        }
+
+        if (phase.respawned === true) {
+          process.stderr.write(
+            `hub: ${thread}'s session ${id} restarted and still has no channel\n`,
+          );
+
+          return yield* new StartFailed({
+            reason: "its session runs, but its channel never connects",
+          });
+        }
+
+        phase.respawned = true;
+        yield* respawn(thread, running, id);
       }
+    });
 
-      const running = await sessionOf(thread);
+  const respawn = Effect.fn("respawn")(function* respawn(
+    thread: string,
+    running: claude.Agent,
+    id: string,
+  ) {
+    process.stderr.write(
+      `hub: ${thread}'s session ${id} runs without its channel, so it restarts in place\n`,
+    );
 
-      if (standing.phase !== phase) {
-        return;
-      }
+    files.write(thread, claude.settingsOf(running));
+    yield* Effect.promise(() => claude.respawn(running));
+  });
 
-      if (!running) {
-        gone(thread);
-
-        return;
-      }
-
-      if ((running.startedAt ?? 0) >= since) {
-        recover(thread);
-
-        return;
-      }
-
-      if (starting) {
-        recover(thread, since, running.pid);
-
-        return;
-      }
-
-      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-      // A respawn starts from the flags the session started with, which read the thread's current settings file only for a session the hub started that way.
-      if (claude.settingsOf(running)) {
-        await respawn(thread, running);
-
-        return;
-      }
-
-      void cycle(thread, running);
-    };
-
-    phase.deadline = clock.setTimeout(() => void reconnectOrRecover(), reconnect);
-  }
+  const restarted = (thread: string, phase: Launching, running: claude.Agent, id: string) =>
+    Effect.andThen(respawn(thread, running, id), channelOrRestart(thread, phase));
 
   function gone(thread: string) {
-    const standing = standingOf(thread);
-    const started = standing.phase.is === "launching";
+    const started = standingOf(thread).phase.is === "launching";
     waiting.cut(thread, threads.current(thread));
 
     if (started) {
       fail(thread, "its session ended before its channel connected");
     } else {
-      become(standing, { is: "stopped" });
+      become(thread, { is: "stopped" });
     }
 
     if (thread === main) {
       revive();
     } else if (!started && waiting.forNext(thread).length) {
-      void launch(thread, threads.get(thread)?.name ?? thread);
-    }
-  }
-
-  async function respawn(thread: string, running: claude.Agent) {
-    const standing = standingOf(thread);
-    const id = running.id ?? running.sessionId.slice(0, 8);
-
-    if (standing.phase.is === "launching" && standing.phase.respawned === true) {
-      process.stderr.write(`hub: ${thread}'s session ${id} restarted and still has no channel\n`);
-
-      fail(thread, "its session runs, but its channel never connects");
-
-      return;
-    }
-
-    process.stderr.write(
-      `hub: ${thread}'s session ${id} runs without its channel, so it restarts in place\n`,
-    );
-
-    if (standing.phase.is === "launching") {
-      standing.phase.respawned = true;
-    } else {
-      become(standing, {
-        is: "launching",
-        respawned: true,
-        again: standing.phase.is === "recovering" && standing.phase.again,
-      });
-    }
-
-    const phase = standing.phase;
-    files.write(thread, claude.settingsOf(running));
-    await claude.respawn(running);
-
-    if (standing.phase === phase) {
-      recover(thread);
+      launch(thread, threads.get(thread)?.name ?? thread);
     }
   }
 
@@ -465,7 +529,7 @@ export function threadSessions({
     }
 
     threads.update(main, { name: mainName });
-    void launch(main, mainName, { again: true });
+    launch(main, mainName, { again: true });
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -476,7 +540,8 @@ export function threadSessions({
         .ids()
         .filter((thread) =>
           running.some(
-            (agent) => agent.sessionId === threads.current(thread) || boundTo(agent) === thread,
+            (agent) =>
+              agent.sessionId === threads.current(thread) || boundTo(agent, channel) === thread,
           ),
         ),
     );
@@ -490,14 +555,11 @@ export function threadSessions({
       );
 
     for (const thread of [...outlived, ...cutShort]) {
-      const standing = standingOf(thread);
-
-      if (standing.phase.is !== "stopped") {
+      if (standingOf(thread).phase.is !== "stopped") {
         continue;
       }
 
       if (outlived.has(thread)) {
-        become(standing, { is: "recovering" });
         recover(thread);
       } else {
         gone(thread);
@@ -523,6 +585,5 @@ export function threadSessions({
     retry,
     restart,
     cycle,
-    recover,
   };
 }
