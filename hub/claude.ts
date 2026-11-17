@@ -224,7 +224,9 @@ async function awake(asking: () => boolean) {
   }
 
   const starting =
-    startedDaemon?.pid !== undefined && startedDaemon.exitCode === null && startedDaemon.signalCode === null;
+    startedDaemon?.pid !== undefined &&
+    startedDaemon.exitCode === null &&
+    startedDaemon.signalCode === null;
 
   if (!asking() || starting) {
     return false;

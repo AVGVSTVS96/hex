@@ -647,14 +647,20 @@ test("a daemon that went down while General ran is started, so the hub finds Gen
 test("threads that start together while Claude's daemon is down start it once", async () => {
   writeFileSync(join(dir, "down"), "");
   writeFileSync(join(dir, "held"), "");
-  const runs = () => (existsSync(join(dir, "daemon-runs")) ? readFileSync(join(dir, "daemon-runs"), "utf8").length : 0);
+
+  const daemonRuns = () =>
+    existsSync(join(dir, "daemon-runs"))
+      ? readFileSync(join(dir, "daemon-runs"), "utf-8").length
+      : 0;
+
   start();
   hub.deliver("chat:7", "Desk anchors", message);
   hub.deliver("chat:8", "Lamp", message);
   hub.deliver("chat:9", "Shelf", message);
-  await until(() => runs() > 0);
+
+  await until(() => daemonRuns() > 0);
   await time.advance(10_000);
-  expect(runs()).toBe(1);
+  expect(daemonRuns()).toBe(1);
   rmSync(join(dir, "held"));
 });
 
