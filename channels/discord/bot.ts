@@ -652,7 +652,7 @@ async function serve(token: string) {
     ],
   });
 
-  const ledger = new Ledger(STATE_DIR, "discord");
+  const ledger = new Ledger(STATE_DIR, "discord", (note) => hub.noted(note));
 
   function bot() {
     if (!client.user) {

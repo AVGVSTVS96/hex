@@ -563,7 +563,7 @@ async function dmTopic(owner: string, thread: string): Promise<number | undefine
   }
 }
 
-const ledger = new Ledger(STATE_DIR, "telegram");
+const ledger = new Ledger(STATE_DIR, "telegram", (note) => hub.noted(note));
 
 const post: Post = {
   room: MAX_CHUNK_LIMIT,

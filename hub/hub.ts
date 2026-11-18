@@ -532,6 +532,7 @@ export async function startHub({
   const api = {
     deliver: inbox.deliver,
     sent: words.sent,
+    noted: words.noted,
     said: words.said,
     command: sessions.restart,
     configure,
