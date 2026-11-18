@@ -114,7 +114,22 @@ afterEach(() => {
 
 async function start() {
   ({ process: bot, port: PORT } = await service(join(import.meta.dir, "bot.ts"), env));
-  await until(() => existsSync(join(dir, "state", "acp.sock")));
+  await until(() => accepts(join(dir, "state", "acp.sock")));
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Whether the bot takes a connection on its socket yet: the socket's file appears when the bot binds it, a moment before it listens, and a connection made in between is refused.
+function accepts(path: string) {
+  return new Promise<boolean>((resolve) => {
+    const socket = connect(path, () => {
+      socket.end();
+      resolve(true);
+    });
+
+    socket.on("error", () => {
+      resolve(false);
+    });
+  });
 }
 
 async function restart(down: () => Promise<void> | void = () => {}) {
@@ -989,10 +1004,13 @@ async function toolCall(thread: string) {
   });
 
   await run.exited;
+  const said = await new Response(run.stdout).text();
 
-  return z
-    .object({ hookSpecificOutput: z.object({ additionalContext: z.string() }) })
-    .parse(JSON.parse(await new Response(run.stdout).text())).hookSpecificOutput.additionalContext;
+  return said === ""
+    ? undefined
+    : z
+        .object({ hookSpecificOutput: z.object({ additionalContext: z.string() }) })
+        .parse(JSON.parse(said)).hookSpecificOutput.additionalContext;
 }
 
 test("a steer leaves the session running, its message reaches the session at its next tool call, and its turn ends with the session's", async () => {
@@ -1016,12 +1034,7 @@ test("a steer leaves the session running, its message reaches the session at its
     prompt: [{ type: "text", text: "and check the tests" }],
   });
 
-  await eventually(async () =>
-    (await hexdb(join(dir, "hex", "state")).messages.untaken(sessionId)).some(
-      (row) => row.body === "and check the tests",
-    ),
-  );
-  const context = await toolCall(sessionId);
+  const context = await eventually(async () => await toolCall(sessionId));
   expect(context).toContain("and check the tests");
   expect(hex.inbound()).toHaveLength(2);
   hex.write(
