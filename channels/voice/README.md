@@ -530,7 +530,9 @@ them with hex) gets Claude walking the list in order.
    renew, and once that turn is done the hub starts `voice` over fresh. It
    reads the memory and rules when the call's first message arrives, and
    "call started" brings the last five calls' titles, summaries and what they
-   left waiting, instead of one context that grows with every call.
+   left waiting, instead of one context that grows with every call. The voice
+   hands the session what the caller asks, and the session answers from what
+   it checks then; a call about a run or a Feed entry has it check that first.
 
 3. Open the call page. The browser only allows the microphone on `localhost`
    or HTTPS:
