@@ -2,10 +2,12 @@
 set -eu
 hex=$(cd "$(dirname "$0")/.." && pwd)
 cd "$hex"
-# The update runs inside a hex session, whose HEX_* variables would steer the hooks under test.
-unset $(env | sed -n 's/^\(HEX_[A-Z_]*\)=.*/\1/p')
+# A check runs where hex runs, often in one of its sessions or jobs, whose environment names hex's folder and store,
+# its channels' state and tokens, its memory, its sessions and the machine it runs on: none of it reaches a test, so a
+# test only ever finds the hex it makes.
+unset $(env | sed -nE 's/^(HEX_[A-Z0-9_]*|[A-Z0-9_]*_STATE_DIR|[A-Z0-9_]*_TOKEN|BUZZ_[A-Z0-9_]*|IIKB_[A-Z0-9_]*|VOICE_[A-Z0-9_]*|MEMORY_DIR|NOTIFY_SOCKET|INVOCATION_ID)=.*/\1/p')
 out=$(mktemp -d)
-export TMPDIR="$out"
+export TMPDIR="$out" CLAUDE_CONFIG_DIR="$out/claude" XDG_STATE_HOME="$out/state"
 trap 'rm -rf "$out"' EXIT
 # Discord's voice (prism-media) requires ffmpeg-static only when it's installed, which a bundle can't tell.
 build="bun build --target bun --external ffmpeg-static"

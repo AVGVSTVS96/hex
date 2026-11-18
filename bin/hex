@@ -329,8 +329,19 @@ case "${1:-}" in
       version="$(cat "$built"/*.js "$config" | git hash-object --stdin)@$(git -C "$from" log -1 --format=%H@%ct)"
       # Proven where hex points, or before a move at the Worker's own address.
       target() { if [ -e "$store" ]; then cat "$store"; else printf '{"url":"%s","name":"hex","key":"%s"}' "$url" "$key"; fi; }
-      # Waits up to a minute for the store to answer as the version given.
-      as() { tries=0; until [ "$(target | answers || :)" = "$1" ]; do [ $((tries += 1)) -lt 30 ] || return 1; sleep 2; done; }
+      # A running object takes new code only when it starts again, which Cloudflare defers up to five minutes unless
+      # told otherwise: hex's object restarts on it at once, and its callers ride out the restart as an outage.
+      now_mode="--durable-objects-code-update-mode immediate"
+      # Waits for the store to answer as the version given, past the longest Cloudflare would defer it.
+      # heard keeps what it last answered.
+      heard=
+      as() {
+        tries=0 heard=
+        until now=$(target | answers) && heard=$now && [ "$now" = "$1" ]; do
+          [ $((tries += 1)) -lt 165 ] || return 1
+          sleep 2
+        done
+      }
       secret=
       if [ -e "$store" ]; then
         was=$(answers < "$store") || { echo "the store at $(jq -r .url "$store") doesn't answer, so nothing deploys over it: whether this one is newer can't be told" >&2; exit 1; }
@@ -358,16 +369,21 @@ case "${1:-}" in
         fi
       fi
       # A new key goes up with the code, as one version, through stdin: never in a shell's history or ps.
-      out=$(if [ -n "$secret" ]; then printf '{"KEY":"%s"}' "$key" | $wrangler deploy --config "$config" --var "VERSION:$version" --secrets-file /dev/stdin; else $wrangler deploy --config "$config" --var "VERSION:$version"; fi 2>&1) || { printf '%s\n' "$out" >&2; exit 1; }
+      out=$(if [ -n "$secret" ]; then printf '{"KEY":"%s"}' "$key" | $wrangler deploy --config "$config" $now_mode --var "VERSION:$version" --secrets-file /dev/stdin; else $wrangler deploy --config "$config" $now_mode --var "VERSION:$version"; fi 2>&1) || { printf '%s\n' "$out" >&2; exit 1; }
       url=$(printf '%s\n' "$out" | grep -o 'https://[^ ]*\.workers\.dev' | head -n 1) || :
       to=$(target | jq -r .url)
       as "$version" || {
-        # Migrations only add, each in one write, so the code before runs on what the new code migrated, as an older hub
-        # does on a hex.db after bin/hex goes back.
-        if ! $wrangler rollback --config "$config" -y -m "hex: $to didn't answer as $version" >/dev/null 2>&1; then back="there was no store before it to put back"
+        # A store that still answers, as the code before, runs on the records as the new one would, since migrations
+        # only add and an older hex runs on a newer store: Cloudflare is still taking the new one out, so it stays, and
+        # the next update finds it there (exit 2). One that answers not at all can't run, so the code before goes back.
+        if [ -n "$heard" ]; then
+          echo "the store at $to still answers as $heard, not as $version, the one deployed, after five and a half minutes: Cloudflare is still taking it out, so it stays deployed" >&2
+          exit 2
+        fi
+        if ! $wrangler rollback --config "$config" $now_mode -y -m "hex: $to didn't answer as $version" >/dev/null 2>&1; then back="there was no store before it to put back"
         elif [ -z "${was:-}" ] || as "$was"; then back="the store before it is back"
         else back="the store before it is back, and doesn't answer either"; fi
-        echo "the store at ${to:-the Worker's address} didn't answer as $version, the one deployed, within a minute: $back" >&2
+        echo "the store at ${to:-the Worker's address} didn't answer at all in five and a half minutes as $version, the one deployed: $back" >&2
         exit 1
       }
       # Before a move, the Worker's address is kept for `hex status`, which has no store.json to find it by yet.
