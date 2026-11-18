@@ -48,6 +48,7 @@ import * as stores from "./store.ts";
 import { file, LostError, MovedError, RefusedError, UnreachedError } from "./store.ts";
 import type { Author, File, Store } from "./store.ts";
 import { ATTACH, hangUpAll, http as channelLine, port } from "./testing.ts";
+import * as transcripts from "./transcripts.ts";
 import { until } from "./until.ts";
 
 const CHANNEL = "plugin:telegram@hex";
@@ -142,6 +143,22 @@ await mock.module("./store.ts", () => ({
   ...stores,
   open: withOutages,
   unclaimed: unclaimedWithOutages,
+}));
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What a start hears of the conversation it would go on from: a test can have it not be whole on this machine, as after hex moved here from a machine that has more of it (transcripts.test.ts covers when that is).
+let wholeHere = true;
+const transcriptsFirst = transcripts.sessionTranscripts;
+
+await mock.module("./transcripts.ts", () => ({
+  ...transcripts,
+  sessionTranscripts: (given: Parameters<typeof transcriptsFirst>[0]) => {
+    const first = transcriptsFirst(given);
+
+    return {
+      land: async (thread: string, fork?: string) => (await first.land(thread, fork)) && wholeHere,
+    };
+  },
 }));
 
 const toldOwner: string[] = [];
@@ -280,6 +297,7 @@ exit 0
 
 afterEach(() => {
   outage = undefined;
+  wholeHere = true;
   toldOwner.length = 0;
   claimedAs(undefined);
   refusingOver = undefined;
@@ -2223,6 +2241,23 @@ test("a thread whose session's conversation no project folder has, as after hex 
   expect(received).toEqual([inbound(message)]);
   await until(() => registry()["chat:7"]?.session === "2c3d4e5f-0000-4000-8000-000000000000");
   expect(failures).toEqual([]);
+});
+
+test("a thread whose conversation isn't whole on this machine takes over from it in a new session, with the prompt its start carries, and a fork of it does too", async () => {
+  wholeHere = false;
+  saved();
+  await start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } }, agents: [] });
+  await hub.command("chat:7", "/compact");
+  const args = await launched();
+  expect(args).not.toContain("--resume");
+  expect(args.at(-1)).toBe("/compact");
+  expect(settingsOf(args).env.HEX_HANDOFF).toEndWith(`/${SESSION}.jsonl`);
+
+  hub.fork("chat:10", "Copy", SESSION, "carry on");
+  const forked = await until(() => bgStarts()[1]);
+  expect(forked).not.toContain("--resume");
+  expect(forked.at(-1)).toBe("carry on");
+  expect(settingsOf(forked).env.HEX_HANDOFF).toEndWith(`/${SESSION}.jsonl`);
 });
 
 test("a thread whose session's conversation vanishes as it resumes starts a new one, which hears why when it connects", async () => {

@@ -131,6 +131,30 @@ function machine(name: string, store: Store, known: Known = {}) {
   const beside = (result: string, session = SESSION) =>
     join(transcripts, session, "tool-results", result);
 
+  const thread = () => ({
+    name: "plants",
+    session: known.session ?? SESSION,
+    ...(known.fork !== undefined && { fork: known.fork }),
+  });
+
+  async function hubNow() {
+    process.env.CLAUDE_CONFIG_DIR = config;
+    reaches = true;
+    await store.threads.keep("telegram", { [THREAD]: thread() });
+
+    return sessionTranscripts({
+      threads: {
+        ids: () => [THREAD],
+        current: () => known.session ?? SESSION,
+        get: thread,
+        cwd: () => folder,
+      },
+      kept,
+      fresh: () => known.fresh === true,
+      machine: name,
+    });
+  }
+
   return {
     path,
     transcripts,
@@ -141,35 +165,23 @@ function machine(name: string, store: Store, known: Known = {}) {
       reaches = now;
     },
     hub: async () => {
-      process.env.CLAUDE_CONFIG_DIR = config;
-      reaches = true;
-      await store.threads.keep("telegram", {
-        [THREAD]: {
-          name: "plants",
-          session: known.session ?? SESSION,
-          ...(known.fork !== undefined && { fork: known.fork }),
-        },
-      });
-
-      const whole = await sessionTranscripts({
-        threads: {
-          ids: () => [THREAD],
-          current: () => known.session ?? SESSION,
-          get: () => ({
-            name: "plants",
-            session: known.session ?? SESSION,
-            ...(known.fork !== undefined && { fork: known.fork }),
-          }),
-          cwd: () => folder,
-        },
-        kept,
-        fresh: () => known.fresh === true,
-        machine: name,
-      }).land(THREAD);
-
+      const hub = await hubNow();
+      const whole = await hub.land(THREAD);
       await sent();
 
       return whole;
+    },
+    started: async () => {
+      const hub = await hubNow();
+      await sent();
+
+      return async () => {
+        process.env.CLAUDE_CONFIG_DIR = config;
+        const whole = await hub.land(THREAD);
+        await sent();
+
+        return whole;
+      };
     },
   };
 }
@@ -481,6 +493,63 @@ test("the tool results beside a transcript, text or not, come with it, and one t
   await server.hub();
   expect(await twin.hub()).toBe(true);
   expect(existsSync(join(twin.transcripts, "escaped"))).toBe(false);
+});
+
+test("a tool result comes at a later start when the first didn't bring it: the hub was up and held the same transcript before the thread started, or the store didn't list what is beside it", async () => {
+  const { store, net } = storeElsewhere();
+  const server = machine("server", store);
+  const twin = machine("twin", store);
+  mkdirSync(dirname(server.beside("toolu_01.txt")), { recursive: true });
+  writeFileSync(server.beside("toolu_01.txt"), "what the tool said, in full\n");
+  writeFileSync(server.path(), line("the plants are in the hall"));
+  await server.hub();
+  await until(async () => (await store.transcripts.besides(SESSION)).length === 1);
+
+  writeFileSync(twin.path(), server.written());
+  net.drops = (call) => call === "transcripts.besides";
+  const start = await twin.started();
+  await until(async () => (await store.transcripts.end(SESSION)).by === "twin");
+  expect(await start()).toBe(true);
+  expect(existsSync(twin.beside("toolu_01.txt"))).toBe(false);
+
+  net.drops = () => false;
+  expect(await start()).toBe(true);
+  expect(readFileSync(twin.beside("toolu_01.txt"), "utf-8")).toBe("what the tool said, in full\n");
+
+  writeFileSync(twin.beside("toolu_01.txt"), "what the twin's own tool said since\n");
+  rmSync(server.beside("toolu_01.txt"));
+  expect(await server.hub()).toBe(true);
+  expect(readFileSync(server.beside("toolu_01.txt"), "utf-8")).toBe(
+    "what the tool said, in full\n",
+  );
+});
+
+test("a file put back shorter than a copy of several pages gets the rest while its own hub's send is at the same copy", async () => {
+  const { store, net } = storeElsewhere();
+  const server = machine("server", store);
+  const whole = line("x".repeat(100_000)).repeat(70);
+  writeFileSync(server.path(), whole);
+  const start = await server.started();
+  await until(async () => (await copyIn(store)) === whole);
+
+  net.takes = 2;
+  writeFileSync(server.path(), whole.slice(0, whole.indexOf("\n") + 1));
+  expect(await start()).toBe(true);
+  expect(server.written() === whole).toBe(true);
+  expect((await copyIn(store)) === whole).toBe(true);
+  expect(readdirSync(server.transcripts)).toEqual([`${SESSION}.jsonl`]);
+});
+
+test("a session that wrote on this machine under this hub is resumed there though the store says nothing of it, and one that didn't isn't", async () => {
+  const { store, net } = storeElsewhere();
+  const server = machine("server", store);
+  net.drops = (call) => call.startsWith("transcripts.");
+  writeFileSync(server.path(), line("the plants are in the hall"));
+  const start = await server.started();
+  expect(await start()).toBe(false);
+
+  appendFileSync(server.path(), line("water them on Friday"));
+  await until(start);
 });
 
 test("a line longer than a piece, in characters of several bytes, arrives as it was written, and so does the session a thread forks from", async () => {
