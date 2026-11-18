@@ -14,9 +14,10 @@ import { join } from "node:path";
 
 import { fakeClaude, flags } from "./claude.testing.ts";
 import type { Reply } from "./claude.testing.ts";
-import { clock, drain, nap, observe, record, within } from "./observe.ts";
+import { clock, drain, nap, observe, record, startPass, within } from "./observe.ts";
 import type { Answer, Pass } from "./observe.ts";
 import { file } from "./store.ts";
+import { until } from "./until.ts";
 
 let dir: string;
 const none: Answer = { notes: [], profile: null };
@@ -618,4 +619,73 @@ printf '%s %s\\n' "$2" "$3" > "${dir}/napped"
 
   expect(readFileSync(join(dir, "napped"), "utf-8")).toBe("0-1 a and b\n");
   expect(asked.stdin).toStartWith("Compress memories #0-1");
+});
+
+const scopes =
+  Bun.which("systemd-run") !== null &&
+  Bun.spawnSync(["systemd-run", "--user", "--scope", "--quiet", "true"]).success;
+
+const passWritingItsPid = () => {
+  const pass = join(dir, "pass");
+  writeFileSync(pass, `#!/bin/sh\necho $$ > "${dir}/pid"\nexec sleep 60\n`);
+  chmodSync(pass, 0o755);
+
+  return pass;
+};
+
+const pidWritten = () =>
+  until(
+    () => existsSync(join(dir, "pid")) && readFileSync(join(dir, "pid"), "utf-8").endsWith("\n"),
+  );
+
+test.skipIf(!scopes)(
+  "a pass started in a unit outlives it, though systemd stops what a unit leaves behind",
+  () => {
+    const starter = join(dir, "starter.ts");
+    writeFileSync(
+      starter,
+      `import { startPass } from ${JSON.stringify(join(import.meta.dir, "observe.ts"))};
+import { until } from ${JSON.stringify(join(import.meta.dir, "until.ts"))};
+import { existsSync, readFileSync } from "node:fs";
+
+startPass(${JSON.stringify(dir)}, [${JSON.stringify(passWritingItsPid())}]);
+await until(() => existsSync(${JSON.stringify(join(dir, "pid"))}) && readFileSync(${JSON.stringify(join(dir, "pid"))}, "utf-8").endsWith("\\n"));
+`,
+    );
+
+    const unit = Bun.spawnSync([
+      "systemd-run",
+      "--user",
+      "--quiet",
+      "--wait",
+      "--collect",
+      process.execPath,
+      starter,
+    ]);
+
+    expect(unit.stderr.toString()).toBe("");
+    const pass = readFileSync(join(dir, "pid"), "utf-8").trim();
+
+    try {
+      expect(readFileSync(join(dir, "observe.log"), "utf-8")).toBe("");
+      expect(existsSync(`/proc/${pass}`)).toBe(true);
+      expect(readFileSync(`/proc/${pass}/cgroup`, "utf-8")).toContain("/hex-jobs.slice/");
+    } finally {
+      Bun.spawnSync(["kill", pass]);
+    }
+  },
+);
+
+test("a pass runs right where it's started when systemd can't give it a scope", async () => {
+  const path = process.env.PATH;
+  process.env.PATH = dir;
+
+  try {
+    startPass(dir, [passWritingItsPid()]);
+  } finally {
+    process.env.PATH = path;
+  }
+
+  expect(await pidWritten()).toBe(true);
+  Bun.spawnSync(["kill", readFileSync(join(dir, "pid"), "utf-8").trim()]);
 });

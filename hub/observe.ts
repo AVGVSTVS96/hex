@@ -458,28 +458,35 @@ export async function queue(state: string, turn: Pass, through?: Store) {
           await store.passes.wait(turn);
         })
       : through.passes.wait(turn));
-    const observeLog = openSync(join(state, "observe.log"), "a");
-
-    try {
-      // Claude Code kills a hook still running when a -p session ends, so the pass runs detached: https://code.claude.com/docs/en/hooks#run-hooks-in-the-background
-      spawn(process.execPath, [import.meta.path], {
-        detached: true,
-        stdio: ["ignore", "ignore", observeLog],
-        env: { ...process.env, HEX_STORE: state, HEX_PASS: "1" },
-      })
-        .on("error", (error) => {
-          process.stderr.write(`hex couldn't start the memory agent: ${String(error)}\n`);
-        })
-        .unref();
-    } finally {
-      closeSync(observeLog);
-    }
+    startPass(state);
   } catch (error) {
     if (error instanceof UnreachedError) {
       throw error;
     }
 
     process.stderr.write(`hex couldn't queue a turn for memories: ${String(error)}\n`);
+  }
+}
+
+// Claude Code kills a hook still running when a -p session ends, and systemd every process left in a unit that stops, like a job's once its session ends, so a pass runs detached, in a scope of its own where systemd runs: https://code.claude.com/docs/en/hooks#run-hooks-in-the-background https://www.freedesktop.org/software/systemd/man/latest/systemd.kill.html#KillMode=
+const IN_A_SCOPE_OF_ITS_OWN =
+  'command -v systemd-run >/dev/null && systemd-run --user --scope --quiet --collect --slice=hex-jobs.slice -- "$@" || exec "$@"';
+
+export function startPass(state: string, command = [process.execPath, import.meta.path]) {
+  const out = openSync(join(state, "observe.log"), "a");
+
+  try {
+    spawn("/bin/sh", ["-c", IN_A_SCOPE_OF_ITS_OWN, "sh", ...command], {
+      detached: true,
+      stdio: ["ignore", "ignore", out],
+      env: { ...process.env, HEX_STORE: state, HEX_PASS: "1" },
+    })
+      .on("error", (error) => {
+        process.stderr.write(`hex couldn't start the memory agent: ${String(error)}\n`);
+      })
+      .unref();
+  } finally {
+    closeSync(out);
   }
 }
 
