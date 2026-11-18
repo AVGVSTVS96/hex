@@ -1747,6 +1747,10 @@ test("every message is read in pages of about 4 MB, so a log of large messages n
   expect(read.flat().map((row) => row.key)).toEqual(file.messages.since().map((row) => row.key));
 });
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A client that hears the word, however long the machine takes to ask it, and probes too late to take the word back mid-test.
+const unprobed = { ...quick, firstRetry: 3_600_000, longestRetry: 3_600_000 };
+
 test("a backup reads through a client of its own: another process's word that the object is down doesn't stop it, and its own failure tells no one", async () => {
   const storage = objectStorage();
   startedEmpty(storage).call(raw("messages", "deliver", [message]));
@@ -1755,7 +1759,7 @@ test("a backup reads through a client of its own: another process's word that th
   writeFileSync(join(dir, "store.down"), "another process found it down\n");
 
   try {
-    expect(await thrown(remote(dir, quick)?.messages.untaken() ?? never)).toBeInstanceOf(
+    expect(await thrown(remote(dir, unprobed)?.messages.untaken() ?? never)).toBeInstanceOf(
       UnreachedError,
     );
     await backup(dir, "2026-11-17");
