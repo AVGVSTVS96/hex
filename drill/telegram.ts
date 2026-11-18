@@ -125,7 +125,17 @@ export function telegram() {
     port: 0,
     idleTimeout: 0,
     fetch: async (request) => {
-      const method = new URL(request.url).pathname.split("/").at(-1) ?? "";
+      const { pathname } = new URL(request.url);
+
+      if (pathname === "/owner") {
+        return Response.json({ key: say(await request.text()) });
+      }
+
+      if (pathname === "/sent") {
+        return Response.json(sent);
+      }
+
+      const method = pathname.split("/").at(-1) ?? "";
       const payload = await payloadOf(request);
 
       return method === "getUpdates"
@@ -134,30 +144,34 @@ export function telegram() {
     },
   });
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // The owner writing in a topic of the group: from a drill, or from outside as `curl -d <words> <url>/owner`, with what hex sent at `<url>/sent`.
+  function say(text: string, topic = 42) {
+    const update = {
+      update_id: ++lastUpdate,
+      message: {
+        message_id: ++lastMessage,
+        date: Math.floor(Date.now() / 1000),
+        chat: chat(GROUP),
+        from: { id: OWNER, is_bot: false, first_name: "Owner", username: "owner" },
+        message_thread_id: topic,
+        is_topic_message: true,
+        text,
+      },
+    };
+
+    updates.push(update);
+
+    if (polling !== undefined && due(polling.offset).length > 0) {
+      polling.answer(ok(due(polling.offset)));
+    }
+
+    return `telegram:${GROUP}:${update.message.message_id}`;
+  }
+
   return {
     url: server.url.origin,
-    say: (text: string, topic = 42) => {
-      const update = {
-        update_id: ++lastUpdate,
-        message: {
-          message_id: ++lastMessage,
-          date: Math.floor(Date.now() / 1000),
-          chat: chat(GROUP),
-          from: { id: OWNER, is_bot: false, first_name: "Owner", username: "owner" },
-          message_thread_id: topic,
-          is_topic_message: true,
-          text,
-        },
-      };
-
-      updates.push(update);
-
-      if (polling !== undefined && due(polling.offset).length > 0) {
-        polling.answer(ok(due(polling.offset)));
-      }
-
-      return `telegram:${GROUP}:${update.message.message_id}`;
-    },
+    say,
     heard: (words: string) =>
       sent.filter((payload) => JSON.stringify(payload).includes(words)).length,
     stop: async () => {

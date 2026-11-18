@@ -194,6 +194,7 @@ export async function folder(
   return {
     dir,
     hex,
+    env,
     git,
     bin,
     log: () =>
