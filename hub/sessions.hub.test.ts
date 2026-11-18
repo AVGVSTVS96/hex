@@ -36,6 +36,7 @@ import {
   registry,
   fault,
   bgStarts,
+  sleepers,
 } from "./hub.testing.ts";
 import { file } from "./store.ts";
 import type { File } from "./store.ts";
@@ -946,7 +947,13 @@ test("a fork resumes a copy of the session without checking agents or clearing i
 });
 
 test("a session is live as its channel connects, so a thread closed while the hub reads what the session is given stops that session and stays closed", async () => {
-  await start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } } });
+  const process = Bun.spawn(["sleep", "60"]);
+  sleepers.push(process);
+
+  await start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: process.pid, status: "idle" }],
+  });
   writeFileSync(
     join(dir, "jobs", "job12345", "state.json"),
     JSON.stringify({ state: "working", sessionId: SESSION }),
