@@ -7,6 +7,18 @@ export class UnreachedError extends Error {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The object runs an older hex's store than this one: it answers, but lacks what this hex calls, until this hex's store is deployed.
+export class OtherStoreError extends UnreachedError {
+  override name = "OtherStoreError";
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// This process never sent the call: its client, or another process of the folder, found the store not answering a moment ago and waits for a probe to hear it again. A new client of the folder sends it.
+export class UnaskedError extends UnreachedError {
+  override name = "UnaskedError";
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The store ran this one call and said no: nothing of it landed, and the same call never will.
 export class RefusedError extends Error {
   override name = "RefusedError";

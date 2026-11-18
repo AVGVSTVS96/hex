@@ -1,6 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Namespace } from "cloudflare:workers";
 
+import { OFFERS } from "./domains.ts";
+import type { Offers } from "./domains.ts";
 import { recordsIn } from "./storage.ts";
 import type { Reply } from "./wire.ts";
 
@@ -11,13 +13,17 @@ type Env = { STORE: Namespace; KEY?: string; VERSION?: string };
 const SHORTEST_KEY = 32;
 const NAME = /^[a-z0-9][a-z0-9-]{0,62}$/u;
 
-type Version = { version: string | null; migrations: number | null };
+type Version = { version: string | null; migrations: number | null; offers: Offers };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Cloudflare's own edge answers 409 for some of its errors too (1001, 1004, 1018), so only the object's word, `lost`, says another hub holds hex.
 type Lost = { error: string; lost: true };
 
-const json = (body: Reply | Version | Lost, status = 200) => Response.json(body, { status });
+type Other = { error: string; every: true; other: true };
+
+const json = (body: Reply | Version | Lost | Other, status = 200) =>
+  Response.json(body, { status });
+
 const bytes = new TextEncoder();
 
 const digest = async (text: string) =>
@@ -66,7 +72,11 @@ export class Records extends DurableObject<Env> {
 
     try {
       if (route === "version") {
-        return json({ version: this.env.VERSION ?? null, migrations: records.migrations() });
+        return json({
+          version: this.env.VERSION ?? null,
+          migrations: records.migrations(),
+          offers: OFFERS,
+        });
       }
 
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -80,7 +90,15 @@ export class Records extends DurableObject<Env> {
           ? json({ value: claimed.tenure })
           : "lost" in claimed
             ? json({ error: claimed.lost, lost: true }, 409)
-            : json({ error: claimed.empty, every: true }, 503);
+            : "other" in claimed
+              ? json({ error: claimed.other, every: true, other: true }, 503)
+              : json({ error: claimed.empty, every: true }, 503);
+      }
+
+      if (route === "lease/clear") {
+        records.unlease();
+
+        return json({ value: true });
       }
 
       const lost = records.lostTo(request.headers.get("hex-tenure") ?? undefined);

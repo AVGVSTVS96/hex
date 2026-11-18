@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { asked, messagesSince, open } from "./store.ts";
+import { asked, messagesSince, unclaimed } from "./store.ts";
 import type { Author, NewRow, Store } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
@@ -185,7 +185,7 @@ if (import.meta.main) {
   }
 
   const added = await importLogs(
-    open(join(home, "state")),
+    unclaimed(join(home, "state")),
     join(home, "log"),
     zoneOf(home) ?? Temporal.Now.timeZoneId(),
   );

@@ -95,10 +95,22 @@ beforeEach(() => {
   git("init", "-q", "-b", "main");
 });
 
+const leftIn = (folder: string) =>
+  Bun.spawnSync(["pgrep", "-f", folder]).stdout.toString().trim().split("\n").filter(Boolean);
+
 afterEach(async () => {
   loop?.kill("SIGTERM");
   await loop?.exited;
   loop = undefined;
+
+  for (const signal of ["TERM", "KILL"]) {
+    Bun.spawnSync(["pkill", `-${signal}`, "-f", home]);
+
+    for (let waited = 0; waited < 50 && leftIn(home).length > 0; waited += 1) {
+      await Bun.sleep(100);
+    }
+  }
+
   rmSync(home, { recursive: true, force: true });
   delete process.env.XDG_STATE_HOME;
 });
@@ -303,10 +315,10 @@ test("a hub that lost hex to another machine stays stopped: hex exits with its c
   const running = run({ HEX_STORE_LEASE: "7", PATH });
   expect(await running.exited).toBe(3);
   expect(await new Response(running.stderr).text()).toContain(
-    "another machine holds hex now, so its hub stays stopped here",
+    "its store gave hex to another hub, so it stays stopped here",
   );
   expect(read()).toContain("chat_id=-100");
-  expect(read()).toContain("another machine holds hex now");
+  expect(read()).toContain("its store gave hex to another hub");
   expect(hubs()).toEqual(["start lease=7"]);
   expect(git("rev-parse", "HEAD")).toBe(lost);
   expect(existsSync(join(home, "state/bad"))).toBe(false);
@@ -314,6 +326,53 @@ test("a hub that lost hex to another machine stays stopped: hex exits with its c
   expect(readFileSync(join(BIN, "../systemd/hex.service"), "utf-8")).toMatch(
     /^RestartPreventExitStatus=3$/mu,
   );
+
+  for (const lease of [{}, { HEX_STORE_LEASE: "7" }]) {
+    const restartedByASupervisor = run({ PATH, ...lease });
+    expect(await restartedByASupervisor.exited).toBe(3);
+  }
+
+  expect(hubs()).toHaveLength(1);
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub again");
+
+  const givenHexBackOnANewerLease = run({ PATH, HEX_STORE_LEASE: "8" });
+  await until(() => hubs().length === 2);
+  givenHexBackOnANewerLease.kill("SIGTERM");
+  expect(await givenHexBackOnANewerLease.exited).toBe(0);
+  expect(existsSync(join(home, "state/lost"))).toBe(false);
+
+  writeFileSync(join(home, "state/lost"), "9\nhex stopped here\n");
+  expect(Bun.spawnSync([join(hex, "bin/hex"), "start"]).exitCode).toBe(0);
+  await until(() => existsSync(join(home, "state/hub.pid")) && hubs().length === 4);
+  expect(hubs()[3]).toStartWith("start ");
+  expect(await Bun.spawn([join(hex, "bin/hex"), "stop"]).exited).toBe(0);
+});
+
+test("a machine hex was lost on pays what its hubs owed to the store, though no hub starts there", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  writeFileSync(
+    join(hex, "hub/paid.ts"),
+    `import { appendFileSync } from 'fs'\nappendFileSync(process.argv[2] + '/hubs', 'paid\\n')\n`,
+  );
+  writeFileSync(join(home, "state/lost"), "7\nhex stopped here\n");
+
+  expect(await run().exited).toBe(3);
+  expect(hubs()).toEqual([]);
+
+  writeFileSync(join(home, "state/owed.telegram.json"), "");
+  expect(await run().exited).toBe(3);
+  expect(hubs()).toEqual(["paid"]);
+});
+
+test("a HEX_STORE_LEASE that isn't a whole number stops hex as failed before any hub starts, and says so", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+
+  const running = run({ HEX_STORE_LEASE: "7x" });
+  expect(await running.exited).toBe(1);
+  expect(await new Response(running.stderr).text()).toContain(
+    "HEX_STORE_LEASE is 7x, not a whole number",
+  );
+  expect(hubs()).toEqual([]);
 });
 
 test("a restart in place starts the hub again even when the login shell leaves something behind", async () => {
@@ -406,7 +465,8 @@ test("where hex.service runs this folder's hex, a stop and a start go through it
 const MOVE_THAT_RUNS_UNTIL_TOLD = `import { appendFileSync, existsSync } from 'fs'
 const [state] = process.argv.slice(2)
 appendFileSync(state + '/hubs', 'moving\\n')
-while (!existsSync(state + '/moved')) await Bun.sleep(20)
+const giveUp = Date.now() + 60_000
+while (!existsSync(state + '/moved') && Date.now() < giveUp) await Bun.sleep(20)
 appendFileSync(state + '/hubs', 'moved\\n')
 `;
 
@@ -446,6 +506,33 @@ test("no hub starts on records that are moving, however hex starts, and no move 
   expect(refused.stderr.toString()).toContain("hex is running here: stop it first");
   expect(hubs()).toHaveLength(3);
 });
+
+test("on a store that answers, a commit whose hub can't start goes back to the last good one and runs there, with nobody at the machine", async () => {
+  const good = commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  writeFileSync(join(home, "state/good"), `${good}\n`);
+
+  const bad = commit("process.exit(1)\n", "a hub that crashes on a store it's newer than");
+
+  const store = Bun.serve({
+    port: 0,
+    fetch: () => Response.json({ version: "a newer store", migrations: 50, contract: "newer" }),
+  });
+
+  try {
+    writeFileSync(
+      join(home, "state/store.json"),
+      JSON.stringify({ url: store.url.origin, name: "hex", key: "k".repeat(40) }),
+    );
+
+    run();
+    await until(() => hubs().length === 1);
+    expect(git("rev-parse", "HEAD")).toBe(good);
+    expect(readFileSync(join(home, "state/bad"), "utf-8").trim()).toBe(bad);
+    expect(hubs()[0]).toMatch(/^start mark=1 loop=1 \d+$/u);
+  } finally {
+    await store.stop(true);
+  }
+}, 30_000);
 
 const curlThatRecordsWhatGeneralIsTold = () => {
   const bin = join(home, "fake-bin");

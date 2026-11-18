@@ -8,7 +8,8 @@ import { ahead } from "./ahead.ts";
 import { nightly } from "./backup.ts";
 import { besideOf } from "./beside.ts";
 import { clients, engine, free, listen, up } from "./hub.ts";
-import { answered, whenLost, whenMoved } from "./kept.ts";
+import { answered, payOwedFacts, takeOver, whenLost, whenMoved } from "./kept.ts";
+import { cantStart, tellOwner } from "./notice.ts";
 import { hexDir, open, stateDir, syncInBackground } from "./store.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -49,6 +50,11 @@ const hangUpSignOffAndExit = (signal: NodeJS.Signals | "lost") =>
         }),
       ),
     )
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // A hub refused before any hub of its own read its spool still lands what it owed as fact.
+    .then(async () =>
+      signal === "lost" ? await payOwedFacts(stateDir(), (why) => void tellOwner(why)) : true,
+    )
     .then(() => process.exit(signal === "lost" ? LOST_HEX : 0)));
 
 for (const signal of ["SIGHUP", "SIGTERM", "SIGINT"] as const) {
@@ -86,9 +92,14 @@ syncInBackground();
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The hub takes hex over before it takes any message: every hub that claimed the store before it is refused from then on.
-await answered(stateDir(), "this hub takes hex over", async (store) => {
-  await store.claim();
-});
+await answered(
+  stateDir(),
+  "this hub takes hex over",
+  async (store) => {
+    await takeOver(store);
+  },
+  { tell: cantStart(stateDir()) },
+);
 
 await listen();
 

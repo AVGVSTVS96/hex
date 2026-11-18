@@ -167,3 +167,62 @@ test("what a session's hooks can't keep while hex's store is unreachable goes to
     hub.close();
   }
 });
+
+test("a take of the words held for a turn whose answer was lost is asked again, and gives them", async () => {
+  const takes: string[] = [];
+
+  const object = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const call = await request.text();
+
+      if (!call.includes("takeHeld")) {
+        return Response.json({ value: null });
+      }
+
+      takes.push(call);
+
+      return takes.length === 1
+        ? new Response("lost on the way", { status: 502 })
+        : Response.json({
+            value: [{ key: "telegram:1:5", from: "plugin:telegram:telegram", body: "and the lid" }],
+          });
+    },
+  });
+
+  try {
+    writeFileSync(
+      join(dir, "store.json"),
+      JSON.stringify({ url: object.url.origin, name: "hex", key: "k".repeat(32) }),
+    );
+
+    const run = Bun.spawn([process.execPath, join(import.meta.dir, "held.ts")], {
+      stdin: new Blob([JSON.stringify({ session_id: "s", hook_event_name: "PostToolUse" })]),
+      stdout: "pipe",
+      env: { ...process.env, HEX_STORE: dir, HEX_THREAD: "dm", HEX_HUB: "" },
+    });
+
+    expect(await new Response(run.stdout).text()).toContain("and the lid");
+    expect(takes).toHaveLength(2);
+    expect(new Set(takes).size).toBe(1);
+  } finally {
+    await object.stop(true);
+  }
+});
+
+test("a tool call doesn't wait on a store that's down to give the words held for its turn", async () => {
+  writeFileSync(
+    join(dir, "store.json"),
+    JSON.stringify({ url: "http://127.0.0.1:1", name: "gone", key: "k".repeat(32) }),
+  );
+  const began = Date.now();
+
+  const run = Bun.spawn([process.execPath, join(import.meta.dir, "held.ts")], {
+    stdin: new Blob([JSON.stringify({ session_id: "s", hook_event_name: "PostToolUse" })]),
+    env: { ...process.env, HEX_STORE: dir, HEX_THREAD: "dm", HEX_HUB: "" },
+  });
+
+  expect(await run.exited).toBe(0);
+  expect(Date.now() - began).toBeLessThan(1500);
+});
