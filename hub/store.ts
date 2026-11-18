@@ -1,19 +1,32 @@
 import { Database } from "bun:sqlite";
-import { appendFileSync, closeSync, fsyncSync, mkdirSync, openSync, watch } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  watch,
+} from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 
 import { z } from "zod";
 
+import { onlyReading } from "./store/db.ts";
 import { domains, migrate } from "./store/domains.ts";
 import type { Domains } from "./store/domains.ts";
-import { remote } from "./store/remote.ts";
+import { MovedError } from "./store/errors.ts";
+import type { Row } from "./store/messages.ts";
+import { awayFile, remote } from "./store/remote.ts";
 import type { Home } from "./store/remote.ts";
 import { answering, client } from "./store/wire.ts";
 import type { Client } from "./store/wire.ts";
 
 export { awayFile } from "./store/remote.ts";
+
+export { LostError, MovedError, RefusedError, UnreachedError } from "./store/errors.ts";
 
 export type { MessageId } from "./store/db.ts";
 
@@ -134,18 +147,30 @@ export class File {
       dir,
     );
 
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // A move writes store.json before it locks hex.db's tables, so once it's there this file is no longer hex's store, for whatever opened it before.
+    const here = () => {
+      if (existsSync(awayFile(dir))) {
+        throw new MovedError(
+          `hex's records in ${dir} moved to a Durable Object since this process opened hex.db: open the store again`,
+        );
+      }
+    };
+
     const home: Home = {
       dir,
+      claim: () => Promise.resolve(),
       watch: (listener) => this.watch(listener),
       synced: () => this.synced(),
       // oxlint-disable-next-line typescript/require-await -- async so a query SQLite refuses rejects, as a home that is elsewhere does
       read: async (text, ...bound) => {
+        here();
         const reader = new Database(join(dir, "hex.db"), { strict: true });
         reader.run("pragma busy_timeout = 30000");
         reader.run("pragma query_only = on");
 
         try {
-          return reader.query(text).all(...bound);
+          return reader.query(onlyReading(text)).all(...bound);
         } finally {
           reader.close();
         }
@@ -159,7 +184,20 @@ export class File {
 
     const answer = answering(records);
 
-    this.store = { ...client((call) => Promise.resolve(JSON.stringify(answer(call)))), ...home };
+    this.store = {
+      // oxlint-disable-next-line typescript/require-await -- async so a moved folder rejects, as every call to a home does
+      ...client(async (call) => {
+        here();
+        const reply = answer(call);
+
+        if ("error" in reply) {
+          here();
+        }
+
+        return JSON.stringify(reply);
+      }),
+      ...home,
+    };
   }
 
   write<T>(fn: () => T): T {
@@ -322,6 +360,28 @@ export class File {
 
   private changes() {
     return ChangesRow.parse(this.db.query("select total_changes() as n").get()).n;
+  }
+}
+
+const MESSAGES_AT_ONCE = 500;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Every message after a time, oldest first, a page to a reply, since a home across the network can't answer with the whole log at once.
+export async function* messagesSince(store: Store, after = ""): AsyncGenerator<Row[]> {
+  for (let past = ""; ;) {
+    const page = await store.messages.since(after, past, MESSAGES_AT_ONCE);
+
+    if (page.length > 0) {
+      yield page;
+    }
+
+    const last = page.at(-1);
+
+    if (last === undefined || page.length < MESSAGES_AT_ONCE) {
+      return;
+    }
+
+    past = last.key;
   }
 }
 

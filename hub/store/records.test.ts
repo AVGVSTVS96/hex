@@ -114,6 +114,72 @@ inEachHome(
 );
 
 inEachHome(
+  "a message the hub held while the store didn't answer keeps the time it came and was taken, so the turn's memory pass finds it ($home)",
+  ({ open }) => {
+    const store = open(dir);
+    const came = "2026-11-17T10:00:00.000Z";
+    expect(store.messages.deliver({ ...message, at: came }, "s-1")).toBe(true);
+    expect(store.messages.get(message.key)).toMatchObject({
+      at: came,
+      taken: { by: "s-1", at: came },
+    });
+    const later = { ...message, key: "telegram:-100:43", at: came };
+    store.messages.deliver(later);
+    expect(store.messages.take(later.key, "s-1", "2026-11-17T10:00:01.000Z")).toBe(true);
+    expect(store.messages.get(later.key)?.taken).toEqual({
+      by: "s-1",
+      at: "2026-11-17T10:00:01.000Z",
+    });
+    expect(store.messages.observe("s-1", "2026-11-17T10:05:00.000Z").map((row) => row.key)).toEqual(
+      [message.key, later.key],
+    );
+  },
+);
+
+inEachHome(
+  "every message is read in time order through an index, so reading the log a page at a time costs the log once ($home)",
+  ({ open }) => {
+    const plan = JSON.stringify(
+      open(dir)
+        .db.query(
+          "explain query plan select * from messages where (at, n) > (?, ?) order by at, n limit ?",
+        )
+        .all("", 0, 500),
+    );
+
+    expect(plan).toContain("messages_in_time");
+    expect(plan).not.toContain("TEMP B-TREE");
+  },
+);
+
+inEachHome(
+  "a whole number keeps its type in either home, as a question's or a pin's message id ($home)",
+  ({ open }) => {
+    const store = open(dir);
+    store.questions.ask({
+      app: "telegram",
+      thread: "-100:7",
+      message: 50,
+      text: "Ship?",
+      options: ["Yes"],
+    });
+    store.pins.pinned({
+      app: "telegram",
+      thread: "-100:7",
+      message: 51,
+      text: "pinned",
+      note: undefined,
+    });
+    expect(store.db.query("select typeof(message) as type from questions").all()).toEqual([
+      { type: "integer" },
+    ]);
+    expect(store.db.query("select typeof(message) as type from pins").all()).toEqual([
+      { type: "integer" },
+    ]);
+  },
+);
+
+inEachHome(
   "a key has to start with its sender, so the keys hex makes stay its own ($home)",
   ({ open }) => {
     const store = open(dir);

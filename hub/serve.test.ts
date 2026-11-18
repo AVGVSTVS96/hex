@@ -158,3 +158,91 @@ test("a hub that systemd started ahead of its turn tells it it's ready as it say
   expect(readFileSync(file, "utf-8")).toBe("ready\n");
   expect(started.exitCode).toBeNull();
 });
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A store across the network the hub's state/store.json names: until up() it answers as one that can't be reached, then claims as claims says.
+function objectStore(claims: () => Response) {
+  let reachable = false;
+  const asked: string[] = [];
+
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request) => {
+      const route = new URL(request.url).pathname.split("/").slice(2).join("/");
+      asked.push(route);
+
+      if (!reachable) {
+        return new Response("down", { status: 503 });
+      }
+
+      return route === "claim" ? claims() : Response.json({ value: new Date().toISOString() });
+    },
+  });
+
+  mkdirSync(join(dir, "state"), { recursive: true });
+  writeFileSync(
+    join(dir, "state", "store.json"),
+    JSON.stringify({ url: server.url.origin, name: "hex", key: "k".repeat(32) }),
+    { mode: 0o600 },
+  );
+
+  return {
+    asked,
+    up: () => {
+      reachable = true;
+    },
+    stop: async () => {
+      await server.stop(true);
+    },
+  };
+}
+
+async function freePort() {
+  const free = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  const port = Number(free.port);
+  await free.stop(true);
+
+  return port;
+}
+
+test("a hub takes hex over before it starts its channels, waiting while its store can't be reached instead of exiting", async () => {
+  const object = objectStore(() => Response.json({ value: 1 }));
+  const port = await freePort();
+
+  try {
+    const { started, output } = serve(port);
+    await until(() => output.said.includes("this hub takes hex over") || started.exitCode !== null);
+    await Bun.sleep(1500);
+    expect(started.exitCode).toBeNull();
+    expect(output.said).not.toContain("TELEGRAM_BOT_TOKEN");
+
+    object.up();
+    await until(() => output.said.includes("TELEGRAM_BOT_TOKEN"));
+    expect(output.said.indexOf("answers again")).toBeLessThan(
+      output.said.indexOf("TELEGRAM_BOT_TOKEN"),
+    );
+    expect(object.asked.filter((route) => route === "claim").length).toBeGreaterThan(1);
+  } finally {
+    await object.stop();
+  }
+});
+
+test("a hub whose claim another machine's newer one refuses stops as one that lost hex, before it listens", async () => {
+  const object = objectStore(() =>
+    Response.json(
+      { error: "lease 1 is older than lease 2 the store has seen", lost: true },
+      { status: 409 },
+    ),
+  );
+
+  object.up();
+  const port = await freePort();
+
+  try {
+    const { started } = serve(port);
+    expect(await started.exited).toBe(3);
+  } finally {
+    await object.stop();
+  }
+});

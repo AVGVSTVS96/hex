@@ -1,5 +1,8 @@
 import { Database } from "bun:sqlite";
 
+import { z } from "zod";
+
+import { bare, eachVariable } from "./db.ts";
 import type { Storage } from "./storage.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -17,15 +20,77 @@ const REFUSED: [RegExp, string][] = [
   [/^\s*(attach|detach|vacuum)\b/iu, "not authorized: SQLITE_AUTH"],
 ];
 
-const SEVERAL_STATEMENTS = /;\s*\S/u;
+// The runtime's limits, as Cloudflare states them (https://developers.cloudflare.com/durable-objects/platform/limits/) and as the runtime hex deploys with keeps them: 100 variables in a statement, 100,000 bytes of statement, and 8 MiB in a value or a row.
+const MOST_VARIABLES = 100;
+const LONGEST_STATEMENT = 100_000;
+const LONGEST_ROW = 8 * 1024 * 1024;
 
-// A Durable Object's storage, as far as the store uses it, over a SQLite file, for tests: Cloudflare's runtime is the same SQLite behind this API (https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/), with foreign keys on.
+const ILLEGAL =
+  "Illegal invocation: function called with incorrect `this` reference. See https://developers.cloudflare.com/workers/observability/errors/#illegal-invocation-errors for details.";
+
+const Sized = z.union([z.string(), z.instanceof(Uint8Array)]);
+
+const bytes = (sized: z.infer<typeof Sized> | undefined) =>
+  sized === undefined
+    ? 0
+    : // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the two members of Sized
+      typeof sized === "string"
+      ? Buffer.byteLength(sized)
+      : sized.byteLength;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Where each statement of some SQL ends: at a semicolon outside its strings and comments, and a trigger's at the end of its body.
+function split(query: string): string[] {
+  const code = bare(query);
+  const statements: string[] = [];
+  let from = 0;
+
+  for (let at = code.indexOf(";"); at !== -1; at = code.indexOf(";", at + 1)) {
+    const statement = code.slice(from, at);
+
+    if (
+      !/^\s*create\s+(temp\s+|temporary\s+)?trigger\b/iu.test(statement) ||
+      /\bend\s*$/iu.test(statement)
+    ) {
+      statements.push(query.slice(from, at));
+      from = at + 1;
+    }
+  }
+
+  statements.push(query.slice(from));
+
+  return statements.filter((statement) => bare(statement).trim() !== "");
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The runtime binds every number as a double, as JavaScript holds it, and a boolean as its word: a statement here is given the same.
+function asTheRuntimeBinds(statement: string, bound: unknown[]): [string, unknown[]] {
+  const { text, most } = eachVariable(statement, (index) =>
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the members of what was bound that the runtime turns into doubles
+    typeof bound[index - 1] === "number" ? `cast(?${index} as real)` : `?${index}`,
+  );
+
+  if (most > MOST_VARIABLES) {
+    throw new Error(`too many SQL variables at offset ${statement.length}: SQLITE_ERROR`);
+  }
+
+  if (
+    bound.reduce<number>((sum, value) => sum + bytes(Sized.safeParse(value).data), 0) > LONGEST_ROW
+  ) {
+    throw new Error("string or blob too big: SQLITE_TOOBIG");
+  }
+
+  return [
+    text,
+    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the member of what was bound that the runtime turns into its word
+    bound.map((value) => (typeof value === "boolean" ? String(value) : value)),
+  ];
+}
+
+// A Durable Object's storage, as far as the store uses it, over a SQLite file, for tests: Cloudflare's runtime is the same SQLite behind this API (https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/), with foreign keys on, and refuses here what it refuses there.
 export function objectStorage(file = ":memory:"): Storage {
   const db = new Database(file, { create: true });
   db.run("pragma foreign_keys = on");
-
-  const ILLEGAL =
-    "Illegal invocation: function called with incorrect `this` reference. See https://developers.cloudflare.com/workers/observability/errors/#illegal-invocation-errors for details.";
 
   const sql: Storage["sql"] = {
     exec(query, ...bound) {
@@ -33,24 +98,40 @@ export function objectStorage(file = ":memory:"): Storage {
         throw new TypeError(ILLEGAL);
       }
 
-      for (const [refused, why] of REFUSED) {
-        if (refused.test(query)) {
-          throw new Error(why);
+      if (Buffer.byteLength(query) > LONGEST_STATEMENT) {
+        throw new Error("statement too long: SQLITE_TOOBIG");
+      }
+
+      const statements = split(query);
+
+      for (const statement of statements) {
+        for (const [refused, why] of REFUSED) {
+          if (refused.test(statement)) {
+            throw new Error(why);
+          }
         }
       }
 
-      if (bound.length === 0 && SEVERAL_STATEMENTS.test(query)) {
-        db.run(query);
+      const last = statements.pop() ?? "";
 
-        return { toArray: () => [], raw: () => [] };
+      if (bound.length > 0 && statements.length > 0) {
+        throw new Error(
+          "When executing multiple SQL statements in a single call, only the last statement can have parameters.",
+        );
       }
 
+      for (const statement of statements) {
+        db.run(statement);
+      }
+
+      const [text, values] = asTheRuntimeBinds(last, bound);
+
       // oxlint-disable-next-line anti-slop/no-unsafe-dictionary-type -- rows as SQLite gives them, which each domain parses where it reads them
-      const statement = db.query<Record<string, unknown>, never[]>(query);
-      // SAFETY: what the store binds is what SQLite takes
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- what the store binds is what SQLite takes
-      const values = bound as never[];
-      const rows = statement.all(...values);
+      const rows = db.query<Record<string, unknown>, never[]>(text).all(
+        // SAFETY: what the store binds is what SQLite takes
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- what the store binds is what SQLite takes
+        ...(values as never[]),
+      );
 
       return { toArray: () => rows, raw: () => rows.map((row) => Object.values(row)) };
     },

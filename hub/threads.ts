@@ -1,9 +1,10 @@
 import { existsSync } from "node:fs";
 
 import * as claude from "./claude.ts";
-import type { Keep } from "./kept.ts";
+import { answered, tracked } from "./kept.ts";
+import type { Owing } from "./kept.ts";
 import { present } from "./present.ts";
-import type { Kept, Store } from "./store.ts";
+import type { Kept } from "./store.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The choices a client offers for a thread's settings. Models are Claude Code's aliases, so a thread runs the newest model of the family it picked.
@@ -47,27 +48,31 @@ const FIELDS = Object.values({
 export type Threads = Awaited<ReturnType<typeof openThreads>>;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The app's open threads, from hex.db, and the session each is on. The hub starts only once it can read them, so no save closes threads it never loaded, and each change is saved as it's made, one save after another, so an earlier one never lands last.
+// The app's open threads, from hex.db, and the session each is on. The hub starts only once it can read them (answered), after what it owed the store from before a restart, so no save closes threads it never loaded or puts back what it changed since, and each change is saved as it's made, one save after another, so an earlier one never lands last.
 export async function openThreads({
   app,
-  db,
-  kept,
+  storeDir,
+  owing,
   hexDir,
   link,
 }: {
   app: string;
-  db: Store;
-  kept: Keep;
+  storeDir: string;
+  owing: Owing;
   hexDir: string;
   link: ((thread: string) => string | undefined) | undefined;
 }) {
+  const listed = await answered(storeDir, `the ${app} hub starts`, async (store) => {
+    await owing.settled();
+
+    return await store.threads.list({ app, open: true });
+  });
+
   const saved = new Map<string, Saved>(
-    (await db.threads.list({ app, open: true })).map(
-      ({ app: _app, open: _open, link: _link, thread, model, ...known }) => [
-        thread,
-        { ...known, ...(present(model) && { model: family(model) }) },
-      ],
-    ),
+    listed.map(({ app: _app, open: _open, link: _link, thread, model, ...known }) => [
+      thread,
+      { ...known, ...(present(model) && { model: family(model) }) },
+    ]),
   );
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -87,16 +92,22 @@ export async function openThreads({
     queued = true;
     const previous = saving;
 
-    saving = kept(async (store) => {
-      await previous;
-      queued = false;
-      await store.threads.keep(
-        app,
-        Object.fromEntries(
-          [...saved].map(([thread, known]) => [thread, { ...known, ...linkOf(thread) }]),
-        ),
-      );
-    }, undefined);
+    saving = tracked(
+      (async () => {
+        await previous;
+        queued = false;
+        await owing.must(
+          {
+            kind: "threads",
+            app,
+            threads: Object.fromEntries(
+              [...saved].map(([thread, known]) => [thread, { ...known, ...linkOf(thread) }]),
+            ),
+          },
+          undefined,
+        );
+      })(),
+    );
 
     return saving;
   }

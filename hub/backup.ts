@@ -26,13 +26,20 @@ export async function backup(
 
   mkdirSync(dir, { recursive: true });
   rmSync(part, { force: true });
-  await open(storeDir).copy(part);
-  const copy = new Database(part, { readonly: true });
-  const { quick_check } = QuickCheck.parse(copy.query("pragma quick_check").get());
-  copy.close();
 
-  if (quick_check !== "ok") {
-    throw new Error(`its copy fails SQLite's check: ${quick_check}`);
+  try {
+    await open(storeDir).copy(part);
+    const copy = new Database(part, { readonly: true });
+    const { quick_check } = QuickCheck.parse(copy.query("pragma quick_check").get());
+    copy.close();
+
+    if (quick_check !== "ok") {
+      throw new Error(`its copy fails SQLite's check: ${quick_check}`);
+    }
+  } catch (error) {
+    rmSync(part, { force: true });
+
+    throw error;
   }
 
   renameSync(part, join(dir, name));
@@ -117,15 +124,22 @@ export function nightly(storeDir: string, hexDir: string, main: string): () => v
       try {
         await backup(storeDir, day, process.env.HEX_COMPUTER);
       } catch (error) {
-        const body = `[backup] hex couldn't back up state/hex.db for ${day}: ${error instanceof Error ? error.message : String(error)}. The next try is at 3:00.`;
-        await open(storeDir).messages.deliver({
-          key: `backup:failed@${day}`,
-          to: besideOf(main),
-          from: "backup",
-          author: "prompt",
-          body,
-          meta: { user: "backup" },
-        });
+        const body = `[backup] hex couldn't back up its records for ${day}: ${error instanceof Error ? error.message : String(error)}. The next try is at 3:00.`;
+
+        // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+        // The store that couldn't be copied may not take the notice either, so it goes to the hub's log then.
+        try {
+          await open(storeDir).messages.deliver({
+            key: `backup:failed@${day}`,
+            to: besideOf(main),
+            from: "backup",
+            author: "prompt",
+            body,
+            meta: { user: "backup" },
+          });
+        } catch (error_) {
+          process.stderr.write(`${body} Telling the main thread failed too: ${String(error_)}\n`);
+        }
       }
     }
   };

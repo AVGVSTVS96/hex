@@ -10,4 +10,4 @@ Work on a branch and open a pull request to `main`. Say what it does and the dec
 bun run check   # bun run fix formats
 ```
 
-`check` checks the formatting ([oxfmt](https://oxc.rs/docs/guide/usage/formatter)), then runs `bin/check`, which builds every channel plugin and the hub and runs the tests, with [Bun](https://bun.sh) and `jq` installed. CI runs it on every pull request, and every hex runs `bin/check` again on `main` before `bin/update` takes a change.
+`check` checks the formatting ([oxfmt](https://oxc.rs/docs/guide/usage/formatter)), then runs `bin/check`, which builds every channel plugin and the hub and runs the tests, with [Bun](https://bun.sh) and `jq` installed. CI runs it on every pull request, and every hex runs `bin/check` again on `main` before `bin/update` takes a change. The store's object also has checks on Cloudflare's runtime, `bun test ./hub/store/workerd.ts`, which fetch workerd, so CI runs them and `bin/check` doesn't.

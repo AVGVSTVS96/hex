@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import type { Bound, Core } from "./db.ts";
+import { eachVariable, onlyReading } from "./db.ts";
+import type { Core } from "./db.ts";
 import { domains, migrate } from "./domains.ts";
 import type { Domains } from "./domains.ts";
 import { answering } from "./wire.ts";
@@ -19,7 +20,21 @@ export type Storage = {
 };
 /* oxlint-enable anti-slop/no-unsafe-dictionary-type -- end of SQLite's rows */
 
-const HomeRow = z.object({ version: z.number(), tenure: z.number() }).optional();
+const HomeRow = z
+  .object({ version: z.number(), tenure: z.number(), served: z.number(), lease: z.number() })
+  .optional();
+
+const Claim = z.object({
+  claimant: z.string().min(1).max(100),
+  lease: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+});
+
+const Claimed = z.object({ tenure: z.number() }).optional();
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The claims kept, so one that arrives again (a retry, or a request the network held back) is known by its claimant; older ones go.
+const CLAIMS_KEPT = 100;
+
 const Count = z.object({ n: z.number() });
 const Statements = z.object({ statements: z.array(z.string()) });
 
@@ -42,11 +57,60 @@ class UndoneError extends Error {
 
 type Called = { reply: Reply; wrote: boolean };
 
-const bind = (bound: Bound[]) =>
-  bound.map((value) =>
-    // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Bound is a closed union; this picks the two members a Durable Object's SQL refuses
-    typeof value === "boolean" || typeof value === "bigint" ? Number(value) : value,
+type Step = { id: string; step: number };
+
+type Moved =
+  | boolean
+  | number
+  | { arrived: boolean; served: boolean; version: number | null; moving: Step | null };
+
+const Moving = z.object({ id: z.string(), step: z.number() }).optional();
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A Durable Object binds every number as a double, where Bun binds a whole one as an integer, so a whole number is cast back, and a record keeps one type in either home: the move compares them.
+function bindable(text: string, values: unknown[]): [string, unknown[]] {
+  const { text: cast } = eachVariable(text, (index) =>
+    Number.isSafeInteger(values[index - 1]) ? `cast(?${index} as integer)` : `?${index}`,
   );
+
+  return [
+    cast,
+    values.map((value) =>
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- a closed union; this picks the two members a Durable Object's SQL refuses
+      typeof value === "boolean" || typeof value === "bigint" ? Number(value) : value,
+    ),
+  ];
+}
+
+const exec = (sql: Storage["sql"], text: string, values: unknown[]) => {
+  const [cast, bind] = bindable(text, values);
+
+  return values.length === 0 ? sql.exec(text) : sql.exec(cast, ...bind);
+};
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A step that arrives again, sent again after its answer was lost or held back by the network, has landed already.
+const landedBefore = (moving: Step | null, mark: Step | undefined) =>
+  mark !== undefined && moving?.id === mark.id && mark.step <= moving.step;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Each step of a move lands whole with the mark that says it did; foreign keys are set outside it, since SQLite ignores the pragma inside a transaction.
+function landingOf(storage: Storage, mark: Step | undefined) {
+  return <T>(work: () => T): T =>
+    storage.transactionSync(() => {
+      const done = work();
+
+      if (mark !== undefined) {
+        exec(
+          storage.sql,
+          "insert into _moving (one, id, step) values (1, ?, ?) on conflict (one) do update set id = excluded.id, step = excluded.step",
+          [mark.id, mark.step],
+        ).toArray();
+      }
+
+      return done;
+    });
+}
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The store's SQL over a Durable Object's: a statement's changes count the rows its triggers wrote, as Bun's do, and a write inside a write joins it.
@@ -60,16 +124,16 @@ export function sqlOver(storage: Storage): Core {
       query: (text) => ({
         run: (...bound) => {
           const before = count("total_changes()");
-          sql.exec(text, ...bind(bound)).toArray();
+          exec(sql, text, bound).toArray();
 
           return {
             changes: count("total_changes()") - before,
             lastInsertRowid: count("last_insert_rowid()"),
           };
         },
-        get: (...bound) => sql.exec(text, ...bind(bound)).toArray()[0] ?? null,
-        all: (...bound) => sql.exec(text, ...bind(bound)).toArray(),
-        values: (...bound) => [...sql.exec(text, ...bind(bound)).raw()],
+        get: (...values) => exec(sql, text, values).toArray()[0] ?? null,
+        all: (...values) => exec(sql, text, values).toArray(),
+        values: (...values) => [...exec(sql, text, values).raw()],
       }),
       run: (text) => {
         sql.exec(text).toArray();
@@ -99,8 +163,8 @@ export function recordsIn(storage: Storage, dir = "") {
   let records: Domains | undefined;
   let answer: ReturnType<typeof answering> | undefined;
 
-  const run = (text: string, ...bound: unknown[]) => sql.exec(text, ...bound).toArray();
-  const home = () => HomeRow.parse(run("select version, tenure from _home")[0]);
+  const run = (text: string, ...values: unknown[]) => exec(sql, text, values).toArray();
+  const home = () => HomeRow.parse(run("select version, tenure, served, lease from _home")[0]);
   const changes = () => Count.parse(run("select total_changes() as n")[0]).n;
 
   const ready = () => {
@@ -123,31 +187,91 @@ export function recordsIn(storage: Storage, dir = "") {
   };
 
   run(
-    "create table if not exists _home (one integer primary key check (one = 1), version integer not null, tenure integer not null default 0)",
+    "create table if not exists _home (one integer primary key check (one = 1), version integer not null, tenure integer not null default 0, served integer not null default 0, lease integer not null default 0)",
   );
+
+  run(
+    "create table if not exists _moving (one integer primary key check (one = 1), id text not null, step integer not null)",
+  );
+  run(
+    "create table if not exists _claims (claimant text primary key, tenure integer not null unique)",
+  );
+
+  for (const column of ["served", "lease"]) {
+    if (run("select 1 from pragma_table_info('_home') where name = ?", column).length === 0) {
+      run(`alter table _home add column ${column} integer not null default 0`);
+    }
+  }
 
   if (home() !== undefined) {
     ready();
   }
 
+  const drop = () => {
+    for (const { type, name } of Leftovers.parse(
+      run(
+        "select type, name from sqlite_master where name not like 'sqlite_%' and substr(name, 1, 1) <> '_' and type in ('table', 'trigger', 'index') and sql is not null order by type = 'table'",
+      ),
+    )) {
+      run(`drop ${type} if exists "${name}"`);
+    }
+
+    run("delete from _home");
+    records = undefined;
+    answer = undefined;
+  };
+
   return {
     core,
     records: () => records,
+    migrations: () => home()?.version ?? null,
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // A hub says which tenure of its lease it runs on. One on an older tenure than the object has seen lost hex to another machine, whether or not it knows yet, so nothing it sends is taken.
-    lostTo(tenure: number | undefined): string | undefined {
+    // A hub sends the tenure the object gave it when it claimed hex. Only the last one given holds: a hub on any other lost hex, whether or not it knows yet, so nothing it sends is taken. What isn't one the object gave is never kept.
+    lostTo(tenure: string | undefined): string | undefined {
       const seen = home()?.tenure ?? 0;
 
-      if (tenure === undefined || tenure === seen) {
+      if (tenure === undefined || tenure === String(seen)) {
         return;
       }
 
-      if (tenure < seen) {
-        return `tenure ${tenure} no longer holds hex: tenure ${seen} does`;
+      const said = JSON.stringify(tenure.slice(0, 20));
+
+      return /^\d{1,15}$/u.test(tenure) && Number(tenure) < seen
+        ? `tenure ${tenure} no longer holds hex: tenure ${seen} does`
+        : `tenure ${said} isn't one hex's store gave out: tenure ${seen} holds hex`;
+    },
+
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // A hub taking over gets the next tenure, so every hub that claimed before it is refused from then on. A process's claim that arrives again gets its tenure again while it still holds hex, and is refused once another has claimed since, so a claim the network held back never takes hex from a later one. A lease tool's number, when one passes hex between machines, can't go back: a hub on a lower lease than one seen is refused, one on the same lease (its machine's hub restarted) isn't. A hub with no lease runs hex outside any lease from then on, so a hex can stop using a lease tool.
+    claim(body: string): { tenure: number } | { lost: string } | { empty: string } {
+      const { claimant, lease } = Claim.parse(JSON.parse(body));
+      const now = home();
+
+      if (now === undefined || records === undefined) {
+        return { empty: "hex's store is empty: hex store move brings a hex.db into it" };
       }
 
-      run("update _home set tenure = ?", tenure);
+      const before = Claimed.parse(
+        run("select tenure from _claims where claimant = ?", claimant)[0],
+      );
+
+      if (before !== undefined) {
+        return before.tenure === now.tenure
+          ? { tenure: now.tenure }
+          : { lost: `tenure ${before.tenure} no longer holds hex: tenure ${now.tenure} does` };
+      }
+
+      if (lease !== undefined && lease < now.lease) {
+        return { lost: `lease ${lease} no longer holds hex: lease ${now.lease} does` };
+      }
+
+      const tenure = now.tenure + 1;
+      run("update _home set tenure = ?, lease = ?, served = 1", tenure, lease ?? 0);
+      run("insert into _claims (claimant, tenure) values (?, ?)", claimant, tenure);
+      run("delete from _claims where tenure <= ?", tenure - CLAIMS_KEPT);
+
+      return { tenure };
     },
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -155,9 +279,16 @@ export function recordsIn(storage: Storage, dir = "") {
     call(text: string): Called {
       if (answer === undefined) {
         return {
-          reply: { error: "hex's store is empty: hex store move brings a hex.db into it" },
+          reply: {
+            error: "hex's store is empty: hex store move brings a hex.db into it",
+            every: true,
+          },
           wrote: false,
         };
+      }
+
+      if (home()?.served === 0) {
+        run("update _home set served = 1");
       }
 
       const answered = answer;
@@ -187,11 +318,12 @@ export function recordsIn(storage: Storage, dir = "") {
     // A query whose every change is undone, so an agent can read the records with SQL and never write them.
     read(body: string): unknown[] {
       const { text, bound } = Query.parse(JSON.parse(body));
+      onlyReading(text);
       let rows: unknown[] = [];
 
       try {
         storage.transactionSync(() => {
-          rows = run(text, ...bound);
+          rows = sql.exec(text, ...bound).toArray();
 
           throw new UndoneError();
         });
@@ -205,30 +337,50 @@ export function recordsIn(storage: Storage, dir = "") {
     },
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // A hex.db arrives once, into an object that has no records: its tables, then their rows as they are, then its indexes and triggers, so no trigger fires on a row that was already written, and last the migration it had reached. Rows arrive table by table with foreign keys off, and arrived checks them all.
-    moved(step: string, body: string): boolean | number {
-      if (records !== undefined) {
-        throw new Error("hex's store has records already: a hex.db moves only into an empty one");
+    // A hex.db arrives in steps: its tables, then their rows as they are, then its indexes and triggers, so no trigger fires on a row that was already written, and last the migration it had reached. Rows arrive table by table with foreign keys off, and arrived checks them all. Until a hub has made a call, a move can start over (begin), or tell what it left (state), so one whose last reply was lost is finished by comparing again; after that nothing empties the object.
+    moved(step: string, body: string, mark?: Step): Moved {
+      const { served = 0, version } = home() ?? {};
+      const moving = Moving.parse(run("select id, step from _moving")[0]) ?? null;
+
+      if (step === "state") {
+        return {
+          arrived: records !== undefined,
+          served: served === 1,
+          version: version ?? null,
+          moving,
+        };
+      }
+
+      if (served === 1) {
+        throw new Error(
+          "hex's store has served a hub, so nothing moves into it: move into an object of a new name",
+        );
+      }
+
+      if (landedBefore(moving, mark)) {
+        return true;
+      }
+
+      const landing = landingOf(storage, mark);
+
+      if (step !== "begin" && records !== undefined) {
+        throw new Error("hex's store has records already: a move starts over from move/begin");
       }
 
       run("pragma foreign_keys = off");
 
       if (step === "begin") {
-        for (const { type, name } of Leftovers.parse(
-          run(
-            "select type, name from sqlite_master where name not like 'sqlite_%' and substr(name, 1, 1) <> '_' and type in ('table', 'trigger', 'index') and sql is not null order by type = 'table'",
-          ),
-        )) {
-          run(`drop ${type} if exists "${name}"`);
-        }
+        landing(drop);
 
         return true;
       }
 
       if (step === "schema") {
-        for (const statement of Statements.parse(JSON.parse(body)).statements) {
-          run(statement);
-        }
+        landing(() => {
+          for (const statement of Statements.parse(JSON.parse(body)).statements) {
+            run(statement);
+          }
+        });
 
         return true;
       }
@@ -237,7 +389,7 @@ export function recordsIn(storage: Storage, dir = "") {
         const { table, columns, rows } = Rows.parse(JSON.parse(body));
         const insert = `insert into "${table}" (${columns.map((column) => `"${column}"`).join(", ")}) values (${columns.map(() => "?").join(", ")})`;
 
-        storage.transactionSync(() => {
+        landing(() => {
           for (const row of rows) {
             run(insert, ...row);
           }
@@ -247,7 +399,7 @@ export function recordsIn(storage: Storage, dir = "") {
       }
 
       if (step === "arrived") {
-        const { version } = Arrived.parse(JSON.parse(body));
+        const { version: reached } = Arrived.parse(JSON.parse(body));
         run("pragma foreign_keys = on");
         const broken = run("pragma foreign_key_check");
 
@@ -257,7 +409,7 @@ export function recordsIn(storage: Storage, dir = "") {
           );
         }
 
-        run("insert into _home (one, version) values (1, ?)", version);
+        landing(() => run("insert into _home (one, version) values (1, ?)", reached));
         ready();
 
         return true;

@@ -126,6 +126,24 @@ function owner(list: List) {
   writeFileSync(join(home, "services.json"), JSON.stringify(list));
 }
 
+test("restore asks for flock first where the machine has none, as macOS doesn't, since hex runs one hub on a folder with it", () => {
+  const tools = join(root, "tools");
+  mkdirSync(tools);
+
+  for (const tool of ["dirname", "uname", "git", "curl", "jq", "python3"]) {
+    symlinkSync(Bun.which(tool) ?? tool, join(tools, tool));
+  }
+
+  const run = Bun.spawnSync([join(hex, "bin/hex"), "restore"], {
+    env: { HOME: root, PATH: tools },
+  });
+
+  expect(run.exitCode).toBe(1);
+  expect(run.stderr.toString()).toContain(
+    "restore: install flock with the system's package manager",
+  );
+});
+
 test("restore installs what's missing once, links the units of both lists, and enables those with an [Install] section", () => {
   mkdirSync(join(home, "services/hex.service.d"), { recursive: true });
   writeFileSync(

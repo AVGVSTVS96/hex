@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import * as claude from "./claude.ts";
+import { followed } from "./kept.ts";
 import { cut, holds, keysOf, owners, problems, quotesOf, verdict } from "./notes.ts";
-import { hexDir, open, replied, shown, stateDir } from "./store.ts";
-import type { Row, Store } from "./store.ts";
+import { hexDir, open, replied, shown, stateDir, UnreachedError } from "./store.ts";
+import type { NewRow, Row, Store } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
 export const PROFILE = 6500;
@@ -43,7 +44,11 @@ const ANSWER = z.object({ notes: z.array(z.string()), profile: z.string().nullab
 
 export type Answer = z.infer<typeof ANSWER>;
 
-const PASS = z.object({ session: z.string(), by: z.string(), thread: z.string().optional() });
+export const PASS = z.object({
+  session: z.string(),
+  by: z.string(),
+  thread: z.string().optional(),
+});
 
 export type Pass = z.infer<typeof PASS>;
 
@@ -440,13 +445,17 @@ export async function drain(
   }
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Rejects only when hex's store didn't answer, so whoever queued the pass can owe it.
 export async function queue(state: string, turn: Pass) {
   if (!given(process.env.MEMORY_DIR) || !existsSync(MEMO)) {
     return;
   }
 
   try {
-    await open(state).passes.wait(turn);
+    await followed(state, async (store) => {
+      await store.passes.wait(turn);
+    });
     const observeLog = openSync(join(state, "observe.log"), "a");
 
     try {
@@ -464,40 +473,63 @@ export async function queue(state: string, turn: Pass) {
       closeSync(observeLog);
     }
   } catch (error) {
+    if (error instanceof UnreachedError) {
+      throw error;
+    }
+
     process.stderr.write(`hex couldn't queue a turn for memories: ${String(error)}\n`);
   }
 }
 
-export async function ended(state: string, session: string, last?: string) {
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What of a turn's end hex's store didn't answer, for the hub to keep once it does.
+export type Unkept = { said?: { row: NewRow; by: string }; pass?: Pass };
+
+export async function ended(state: string, session: string, last?: string): Promise<Unkept> {
   const { HEX_THREAD, HEX_CHANNEL, HEX_BESIDE } = process.env;
   const t3 = HEX_CHANNEL?.startsWith("plugin:t3@") === true;
   const from = t3 ? "t3" : "terminal";
   const answer = last?.trim();
   const heldByAnotherApp = given(HEX_CHANNEL) && !t3;
 
-  try {
-    if (given(answer)) {
-      await open(state).messages.deliver(
-        {
-          key: `${from}:${crypto.randomUUID()}`,
-          to: given(HEX_BESIDE) ? HEX_BESIDE : (HEX_THREAD ?? session),
-          from,
-          author: "hex",
-          body: answer,
-          meta: { session, ...(heldByAnotherApp && { unsent: "true" }) },
-        },
-        session,
-      );
+  const owed: Unkept = {};
+
+  if (given(answer)) {
+    const row: NewRow = {
+      key: `${from}:${crypto.randomUUID()}`,
+      to: given(HEX_BESIDE) ? HEX_BESIDE : (HEX_THREAD ?? session),
+      from,
+      author: "hex",
+      body: answer,
+      meta: { session, ...(heldByAnotherApp && { unsent: "true" }) },
+      at: new Date().toISOString(),
+    };
+
+    try {
+      await followed(state, async (store) => await store.messages.deliver(row, session));
+    } catch (error) {
+      process.stderr.write(`hex couldn't keep this turn's answer: ${String(error)}\n`);
+
+      if (error instanceof UnreachedError) {
+        owed.said = { row, by: session };
+      }
     }
-  } catch (error) {
-    process.stderr.write(`hex couldn't keep this turn's answer: ${String(error)}\n`);
   }
 
-  await queue(state, {
+  const turn = {
     session,
     by: new Date().toISOString(),
     thread: given(HEX_BESIDE) ? HEX_BESIDE : HEX_THREAD,
-  });
+  };
+
+  try {
+    await queue(state, turn);
+  } catch (error) {
+    process.stderr.write(`hex couldn't queue a turn for memories: ${String(error)}\n`);
+    owed.pass = turn;
+  }
+
+  return owed;
 }
 
 export function record(memory: string | undefined, home = hexDir()) {

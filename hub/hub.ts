@@ -21,11 +21,12 @@ import { failedStarts } from "./failing.ts";
 import type { Failed } from "./failing.ts";
 import { sessionFiles } from "./files.ts";
 import { holding } from "./holds.ts";
-import { keeping, landed } from "./kept.ts";
+import { keeping, landed, OwedRow } from "./kept.ts";
+import type { Owing } from "./kept.ts";
 import { STARTUP } from "./loaded.ts";
 import { endpoint } from "./mcp.ts";
 import type { ChannelServer, Line, Permission, ToolArguments } from "./mcp.ts";
-import { queue } from "./observe.ts";
+import { PASS, queue } from "./observe.ts";
 import { ordered } from "./ordered.ts";
 import { sessionPauses } from "./pauses.ts";
 import { fileOnly, held as filesIn, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
@@ -124,6 +125,20 @@ const HubRequestLine = z.discriminatedUnion("type", [
     thread: z.string(),
     to: z.string(),
     where: z.string().optional(),
+  }),
+  z.object({ type: z.literal("tookHeld"), thread: z.string(), keys: z.array(z.string()) }),
+  z.object({
+    type: z.literal("owed"),
+    thread: z.string(),
+    said: z
+      .array(
+        z.object({
+          row: OwedRow,
+          by: z.string(),
+        }),
+      )
+      .optional(),
+    pass: PASS.optional(),
   }),
 ]);
 
@@ -503,6 +518,21 @@ function startupFiles(hex: string | undefined) {
 
 const ignore = (): void => undefined;
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What a session's hooks couldn't keep while hex's store didn't answer, which the hub keeps once it does.
+function owedByHooks(
+  owing: Owing,
+  { said = [], pass: turn }: Extract<HubRequest, { type: "owed" }>,
+) {
+  for (const { row, by } of said) {
+    owing.owe({ kind: "deliver", row, by });
+  }
+
+  if (turn) {
+    owing.owe({ kind: "pass", pass: turn });
+  }
+}
+
 export async function startHub({
   stateDir,
   storeDir = storeOf(stateDir),
@@ -574,9 +604,21 @@ export async function startHub({
   const plugin = channel.replace(/^plugin:/u, "");
   const path = `/${plugin.split("@")[0]}`;
   const app = path.slice(1);
-  const db = open(storeDir);
-  const kept = keeping(db, storeDir);
-  const threads = await openThreads({ app, db, kept, hexDir, link });
+  let started = false;
+
+  const owing = keeping(storeDir, {
+    spool: join(stateDir, `owed.${app}.json`),
+    letGo: (thread, rows) => {
+      if (started) {
+        heldLetGo(thread, rows);
+      }
+    },
+    queue: (turn) => queue(storeDir, turn),
+  });
+
+  const { kept, must } = owing;
+  const threads = await openThreads({ app, storeDir, owing, hexDir, link });
+  started = true;
   const turns = sessionTurns({ overdue: (thread) => void letHeldGo(thread) });
   const waiting = messagesWaiting({ runs, kept, waits });
 
@@ -992,16 +1034,14 @@ export async function startHub({
 
     const row: NewRow = { key, to: thread, from: app, author, body: content, meta };
 
-    const adding = kept(
-      (store) =>
-        along ? store.questions.told(app, thread, along, row) : store.messages.deliver(row),
-      along ? false : undefined,
-    );
+    const adding = along
+      ? must({ kind: "told", app, thread, change: along, row }, false)
+      : must({ kind: "deliver", row }, undefined);
 
     return await delivering(thread, async () => {
       const added = await adding;
 
-      if (added === false) {
+      if (added === false || owing.lost()) {
         return false;
       }
 
@@ -1032,10 +1072,8 @@ export async function startHub({
       meta,
     };
 
-    await kept(
-      (store) => store.messages.deliver(row, caller.getStore() ?? threads.current(thread) ?? "hub"),
-      false,
-    );
+    const by = caller.getStore() ?? threads.current(thread) ?? "hub";
+    await must({ kind: "deliver", row, by }, false);
   }
 
   function pass(thread: string, name: string, message: Message) {
@@ -1114,6 +1152,8 @@ export async function startHub({
 
     void (async () => {
       if (await kept((store) => store.messages.hold(key, session), false)) {
+        heldHere.set(thread, [...(heldHere.get(thread) ?? []), message]);
+
         return;
       }
 
@@ -1131,17 +1171,37 @@ export async function startHub({
   // Each thread's latest letting go of what was held for its turn, until what it let go has gone on.
   const releasing = new Map<string, Promise<unknown>>();
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // The owner's words this hub had the store hold for a turn, so a turn that ends while the store can't let them go still gives them first, from memory (goneOnFromMemory), before anything that came after them.
+  const heldHere = new Map<string, Message[]>();
+  const goneOnFromMemory = new Set<string>();
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // What a turn's end let go goes on: as it ends, or once the store answers again when it ended in an outage, less what went on from memory meanwhile.
+  function heldLetGo(thread: string, rows: Row[]) {
+    const name = threads.get(thread)?.name;
+
+    for (const row of rows) {
+      if (!goneOnFromMemory.delete(row.key) && name !== undefined) {
+        forward(thread, name, toMessageWithKeyFirstForTheHook(row), true);
+      }
+    }
+  }
+
   async function letHeldGo(thread: string) {
     const { promise, resolve } = Promise.withResolvers();
     releasing.set(thread, promise);
+    const remembered = heldHere.get(thread) ?? [];
+    heldHere.delete(thread);
 
     try {
-      const rows = await kept((store) => store.messages.letHeldGo(thread), []);
+      await must({ kind: "letHeldGo", thread }, false);
       const name = threads.get(thread)?.name;
 
-      if (name !== undefined) {
-        for (const row of rows) {
-          forward(thread, name, toMessageWithKeyFirstForTheHook(row), true);
+      if (owing.owes({ kind: "letHeldGo", thread }) && name !== undefined) {
+        for (const message of remembered) {
+          goneOnFromMemory.add(message.meta.key ?? "");
+          forward(thread, name, message, true);
         }
       }
     } finally {
@@ -1157,11 +1217,13 @@ export async function startHub({
   let rang = false;
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Messages kept outside this hub reach its threads as the bell rings, and at its start so do any that no session took before the hub stopped. One look at the store at a time, and one more after it when the bell rang meanwhile, so an older look never lands after a newer one.
+  // Messages kept outside this hub reach its threads as the bell rings, and at its start so do any that no session took before the hub stopped. One look at the store at a time, and one more after it when the bell rang meanwhile, so an older look never lands after a newer one. The bell also rings as a store across the network reconnects, so what the hub owes it goes first.
   function wake() {
     if (closed) {
       return;
     }
+
+    void owing.pay();
 
     if (waking) {
       rang = true;
@@ -1452,7 +1514,7 @@ export async function startHub({
       return;
     }
 
-    await Promise.all(keys.map((key) => kept((store) => store.messages.take(key, session), false)));
+    await Promise.all(keys.map((key) => must({ kind: "take", key, by: session }, false)));
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1629,7 +1691,7 @@ export async function startHub({
       open: (thread, line) => void welcome(thread, line),
       close: (thread, line) => void drop(thread, line),
     },
-    db,
+    open(storeDir),
     zone,
   );
 
@@ -1732,6 +1794,22 @@ export async function startHub({
           ...(request.key !== undefined && { key: request.key }),
           author: request.author,
         });
+
+        return;
+      }
+
+      case "tookHeld": {
+        const keys = new Set(request.keys);
+        heldHere.set(
+          request.thread,
+          (heldHere.get(request.thread) ?? []).filter(({ meta }) => !keys.has(meta.key ?? "")),
+        );
+
+        return;
+      }
+
+      case "owed": {
+        owedByHooks(owing, request);
 
         return;
       }
@@ -1892,7 +1970,7 @@ export async function startHub({
     // Once what this hub and every other in the process wrote can't be lost.
     synced: async () => {
       await landed();
-      await kept((store) => store.synced(), undefined);
+      await owing.synced();
     },
     renew: renewAsked,
     session: threads.current,
@@ -1902,7 +1980,10 @@ export async function startHub({
       const session = threads.current(thread);
 
       if (present(session)) {
-        await queue(storeDir, { session, by: new Date().toISOString(), thread });
+        await must(
+          { kind: "pass", pass: { session, by: new Date().toISOString(), thread } },
+          false,
+        );
       }
     },
     running: sessions.sessionOf,

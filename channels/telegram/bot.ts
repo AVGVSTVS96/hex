@@ -54,6 +54,7 @@ import { z } from "zod";
 import { HTML, Keeper } from "./board.ts";
 import type { State } from "./board.ts";
 import { server, tools } from "./channel.ts";
+import { confirmingWhatsKept } from "./confirmed.ts";
 
 // grammY 1.46 predates Bot API 10.4's widgets: https://core.telegram.org/bots/api#sendwidget
 type WidgetQuery = { id: string; from: User; chat?: Chat; message_id?: number; data: string };
@@ -2017,13 +2018,13 @@ const hub = await startHub({
 
 let attempt = 0;
 
-// Each getUpdates confirms to Telegram every update before its offset, so it waits until hex.db has them on disk: https://core.telegram.org/bots/api#getupdates
+bot.api.config.use(confirmingWhatsKept(hub.synced));
+
 bot.api.config.use(async (previous, method, payload, signal) => {
   if (method !== "getUpdates") {
     return await previous(method, payload, signal);
   }
 
-  await hub.synced();
   const updates = await previous(method, payload, signal);
 
   if (updates.ok) {

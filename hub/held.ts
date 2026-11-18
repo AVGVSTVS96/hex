@@ -1,10 +1,13 @@
+import { connect } from "node:net";
+
 import { z } from "zod";
 
+import type { HubLine } from "./hub.ts";
 import { local } from "./mcp.ts";
 import { open, stateDir } from "./store.ts";
 import type { Row } from "./store/messages.ts";
 
-const { HEX_THREAD } = process.env;
+const { HEX_THREAD, HEX_HUB } = process.env;
 
 const ToolUse = z.object({
   session_id: z.string().catch(""),
@@ -29,6 +32,28 @@ const { session_id, hook_event_name, agent_id } = ToolUse.parse(
 
 if (HEX_THREAD !== undefined && HEX_THREAD !== "" && session_id !== "" && agent_id === undefined) {
   const rows = await open(stateDir()).messages.takeHeld(HEX_THREAD, session_id);
+
+  if (rows.length > 0 && HEX_HUB !== undefined && HEX_HUB !== "") {
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // The hub keeps the words it had held in memory, for a turn that ends while the store can't let them go: these no longer wait.
+    const line: HubLine = {
+      type: "tookHeld",
+      thread: HEX_THREAD,
+      keys: rows.map(({ key }) => key),
+    };
+
+    const socket = connect(HEX_HUB);
+    await new Promise<void>((resolve) => {
+      socket
+        .on("connect", () => {
+          socket.end(`${JSON.stringify(line)}\n`, resolve);
+        })
+        .on("error", () => {
+          resolve();
+        });
+    });
+    socket.destroy();
+  }
 
   if (rows.length > 0) {
     const zone = Temporal.Now.timeZoneId();

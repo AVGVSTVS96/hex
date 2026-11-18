@@ -6,7 +6,7 @@ hex runs wherever Claude Code does, on a machine that stays on: a home server, a
 
 ## 1. Check what's there
 
-`git`, `curl`, `jq`, `unzip` and `python3` (for memory) must be on the `PATH`; install what's missing with the system package manager, after asking. Step 5 installs `bun` and Claude Code if they aren't there.
+`git`, `curl`, `jq`, `unzip`, `python3` (for memory) and `flock` (part of Linux; `brew install flock` on macOS) must be on the `PATH`; install what's missing with the system package manager, after asking. Step 5 installs `bun` and Claude Code if they aren't there.
 
 The person signs in to Claude Code by running `claude` once **(you)**, now or after step 5.
 
@@ -130,20 +130,24 @@ What else hex needs on their machines goes in `~/hex/services.json`, in the shap
 
 A hex that should run on whichever of their machines is up keeps its records where every one of them reaches: in a [Durable Object](https://developers.cloudflare.com/durable-objects/) on their own Cloudflare account, in place of `state/hex.db`. Cloudflare runs exactly one of it and answers a write once several of its machines have it, so nothing is copied when hex moves, and a `hex` command or a terminal session on any machine writes to the same place. It takes the Workers Paid plan ($5 a month): the free plan stops writes after 100,000 rows a day.
 
-1. Put `CLOUDFLARE_API_TOKEN` (the "Edit Cloudflare Workers" template) and `CLOUDFLARE_ACCOUNT_ID` in `~/hex/.env`, and run `~/hex/.hex/bin/hex store deploy`. It prints the Worker's address.
-2. Give it a key only they hold: `openssl rand -hex 32`, then `bunx wrangler@4 secret put KEY --config ~/hex/.hex/hub/store/wrangler.jsonc`.
-3. `~/hex/.hex/bin/hex stop`, then `HEX_STORE_KEY=<the key> ~/hex/.hex/bin/hex store move <the address>`. It sends every row of `hex.db`, compares each with what the object holds, then writes `state/store.json` (the address and the key), which is what points hex there, and renames `hex.db` to `hex.db.moved`. Start hex again.
-4. On each other machine, set hex up as above and copy `state/store.json` over in place of `state/hex.db`.
+1. Put `CLOUDFLARE_API_TOKEN` (the "Edit Cloudflare Workers" template) and `CLOUDFLARE_ACCOUNT_ID` in `~/hex/.env`, and run `~/hex/.hex/bin/hex store deploy`. It makes the key the store answers to, keeps it in `.env` as `HEX_STORE_KEY`, deploys the Worker with it, and prints the Worker's address once it answers. A Worker that answers to a key already keeps it: a machine without that key in its `.env` is refused.
+2. `~/hex/.hex/bin/hex stop`, then `~/hex/.hex/bin/hex store move <the address> hex`, where `hex` names the object the records go into. It sends every row of `hex.db`, compares each with what the object holds, then writes `state/store.json` (the address, the name and the key), which is what points hex there, and renames `hex.db` to `hex.db.moved`. A move that stopped partway finishes or starts over when run again, and while it runs no hub starts on this machine, however hex is started. Then `~/hex/.hex/bin/hex start`. Where hex runs as `hex.service`, `hex stop` and `hex start` stop and start the unit, so systemd doesn't bring hex back in between.
+3. On each other machine, set hex up as above, then copy over `state/store.json` in place of `state/hex.db`, and the three lines of `.env` above, so an update that runs there can deploy the store.
 
-`hex sql '<query>'` reads the records wherever they live, and can change nothing. `hex store copy <file>` writes them out as a SQLite file. To go back to a file: stop hex, `hex store copy ~/hex/state/hex.db`, delete `state/store.json`, start hex. A hub that runs under a lease that passes between machines sets `HEX_STORE_TENURE` to the lease's count, and the object refuses a hub on an older one.
+`hex sql '<query>'` reads the records wherever they live, and can change nothing. `hex store copy <file>` writes them out as a SQLite file. To go back to a file: stop hex, `hex store copy ~/hex/state/hex.db`, delete `state/store.json`, start hex. hex runs on one machine at a time: a hub that starts takes hex, and the one that had it stops at its next call and stays stopped (`hex.service` doesn't restart it), telling General why, until hex is started there again. Whatever passes hex between machines can give `hex run` the lease's number as `HEX_STORE_LEASE`, and the object then refuses a hub on an older lease, so a machine that comes back can't take hex back.
 
 ## Updating
 
-`.hex/bin/update` runs every morning from `schedules.json`. It pulls hex once `bin/check` passes on the new version, and restarts the hub and hex's sessions.
+`.hex/bin/update` runs every morning from `schedules.json`. It pulls hex once `bin/check` passes on the new version, and restarts the hub and hex's sessions. When the records are in a Durable Object, it first deploys the store the new version is built with, if it differs, and goes on only once the object `state/store.json` names answers as that store; if it doesn't within a minute, the store before it goes back and hex stays as it was. Nothing deploys over a store that doesn't answer, or that was built from a commit made after the new version's.
 
 ## Backups
 
-Every night at 3:00 on their clock, General's hub copies hex's records (`state/hex.db`, or what the Durable Object holds) to `state/backups/hex-<date>.db`, and to `~/hex-backups` on hex's computer when `HEX_COMPUTER` names one, keeping the last seven in each place. A night that fails tells General. To bring one back: `~/hex/.hex/bin/hex stop`, copy it over `~/hex/state/hex.db`, delete `hex.db-wal` and `hex.db-shm` beside it, then `~/hex/.hex/bin/hex start`.
+Every night at 3:00 on their clock, General's hub copies hex's records (`state/hex.db`, or what the Durable Object holds) to `state/backups/hex-<date>.db`, and to `~/hex-backups` on hex's computer when `HEX_COMPUTER` names one, keeping the last seven in each place. A night that fails tells General. To bring one back:
+
+1. `~/hex/.hex/bin/hex stop`, on every machine that runs hex.
+2. Copy the backup over `~/hex/state/hex.db`, and delete `hex.db-wal` and `hex.db-shm` beside it.
+3. With the records in a Durable Object, they go into a new one, and the one hex used stays as it was: delete `state/store.json`, run `~/hex/.hex/bin/hex store move <the address> <a name no object has had>`, and copy the new `state/store.json` to each other machine.
+4. `~/hex/.hex/bin/hex start`.
 
 ## Watching from outside (optional)
 

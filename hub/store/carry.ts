@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { rmSync } from "node:fs";
+import { renameSync, rmSync } from "node:fs";
 
 import { z } from "zod";
 
@@ -24,12 +24,31 @@ const quoted = (names: string[]) => names.map((name) => `"${name}"`).join(", ");
 const references = (sql: string, name: string) =>
   new RegExp(`references\\s+"?${name}"?\\s*\\(`, "iu").test(sql);
 
-const before = (a: { name: string; sql: string }, b: { name: string; sql: string }) =>
-  Number(references(b.sql, a.name) && a.name !== b.name) -
-  Number(references(a.sql, b.name) && a.name !== b.name);
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Tables in an order where each comes before every table it references, and otherwise as they were made. hex never deletes a row another names, so a row written while a copy is read names only rows of tables read after it.
+function referencingFirst<T extends { name: string; sql: string }>(made: T[]): T[] {
+  const ordered: T[] = [];
+  const left = [...made];
+
+  while (left.length > 0) {
+    const next =
+      left.find((table) =>
+        left.every((other) => other === table || !references(other.sql, table.name)),
+      ) ?? left[0];
+
+    if (next === undefined) {
+      break;
+    }
+
+    ordered.push(next);
+    left.splice(left.indexOf(next), 1);
+  }
+
+  return ordered;
+}
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A database's tables as they travel, a table before any it references, so a copy made while hex writes never holds a row naming one that came after its table was read. Rows keep their rowid, which words' and task_agents' triggers and every autoincrement count on.
+// A database's tables as they travel, each before the tables it references. Rows keep their rowid, which words' and task_agents' triggers and every autoincrement count on.
 export async function layout(read: Read) {
   const objects = Objects.parse(
     await read(
@@ -38,13 +57,9 @@ export async function layout(read: Read) {
   );
 
   const made = objects.filter(({ type }) => type === "table");
-  const names = made.map(({ name }) => name);
-
   const tables: Table[] = [];
 
-  for (const { name, sql } of made.toSorted(
-    (a, b) => before(a, b) || names.indexOf(a.name) - names.indexOf(b.name),
-  )) {
+  for (const { name, sql } of referencingFirst(made)) {
     if (/without\s+rowid/iu.test(sql)) {
       throw new Error(`${name} has no rowid, which rows travel by`);
     }
@@ -127,13 +142,14 @@ export function batches<T>(rows: T[]): T[][] {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Writes the records a store's home holds as a SQLite file a hex can run on: the nightly backup of a store that lives in an object, and the way back from one.
+// Writes the records a store's home holds as a SQLite file a hex can run on, or writes no file: the nightly backup of a store that lives in an object, and the way back from one. The counters are read after the rows, so none is behind a row it counted.
 export async function bring(read: Read, to: string) {
-  rmSync(to, { force: true });
-  const db = new Database(to, { create: true, strict: true });
+  const part = `${to}.part`;
+  rmSync(part, { force: true });
+  const db = new Database(part, { create: true, strict: true });
 
   try {
-    const { tables, indexesAndTriggers, setCounters } = await layout(read);
+    const { tables } = await layout(read);
 
     for (const { sql } of tables) {
       db.run(sql);
@@ -151,6 +167,8 @@ export async function bring(read: Read, to: string) {
       }
     }
 
+    const { indexesAndTriggers, setCounters } = await layout(read);
+
     for (const statement of [...setCounters, ...indexesAndTriggers]) {
       db.run(statement);
     }
@@ -166,7 +184,13 @@ export async function bring(read: Read, to: string) {
     if (broken.length > 0) {
       throw new Error(`${broken.length} rows of the copy name a row that isn't in it`);
     }
-  } finally {
+
     db.close();
+    renameSync(part, to);
+  } catch (error) {
+    db.close();
+    rmSync(part, { force: true });
+
+    throw error;
   }
 }

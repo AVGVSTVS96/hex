@@ -98,14 +98,13 @@ fi
 
 # A busy session would take the new hooks and rules mid-turn, so hex ships only between turns.
 [ "$mode" = --now ] || "$hex/bin/quiet"
-# Records kept in a Durable Object are answered by the store's code there, so it ships first: this hex can call a newer store, never an older one.
-if [ -e "$home/state/store.json" ] && ! git diff --quiet HEAD "$incoming" -- hub/store; then
-  if ! output=$("$check/bin/hex" store deploy 2>&1); then
-    printf '%s\n' "$output"
-    echo "not updated: the store hex $(git rev-parse --short "$incoming") needs didn't deploy"
-    [ "$mode" != --when-quiet ] || tell all "didn't ship: the store hex $(git rev-parse --short "$incoming") needs didn't deploy, so hex stays on $before; its output is in $home/state/jobs/hex-update.log"
-    exit 1
-  fi
+# Records kept in a Durable Object are answered by the store's code there, so it ships first: this hex can call a newer
+# store, never an older one. The deploy proves the object hex points at answers as the new store, or puts the old one back.
+if [ -e "$home/state/store.json" ] && ! output=$("$hex/bin/hex" store deploy "$check" 2>&1); then
+  printf '%s\n' "$output"
+  echo "not updated: the store hex $(git rev-parse --short "$incoming") needs didn't deploy"
+  [ "$mode" != --when-quiet ] || tell all "didn't ship: the store hex $(git rev-parse --short "$incoming") needs didn't deploy, so hex stays on $before; its output is in $home/state/jobs/hex-update.log"
+  exit 1
 fi
 git merge -q --ff-only "$incoming"
 bun install --cwd "$hex" --silent

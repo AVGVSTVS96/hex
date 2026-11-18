@@ -8,7 +8,8 @@ import { ahead } from "./ahead.ts";
 import { nightly } from "./backup.ts";
 import { besideOf } from "./beside.ts";
 import { clients, engine, free, listen, up } from "./hub.ts";
-import { hexDir, open, syncInBackground } from "./store.ts";
+import { answered, whenLost, whenMoved } from "./kept.ts";
+import { hexDir, open, stateDir, syncInBackground } from "./store.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Before the clients load: Telegram's bot module awaits its polling loop, which never ends. A restart (HUP) and a stop (TERM, INT) end the hub alike: live calls hang up, the clients sign off, a call that came in while they did hangs up too, and once each hub's store has what was written to it, it exits for bin/hex to start the next one, so two never run at once. A stop also ends a hub still waiting for the port, and the clients stop taking in messages first, since the next hub may already be running elsewhere, with a live call's caller told that nothing answers here meanwhile.
@@ -20,7 +21,11 @@ function tellACallAndDeafen() {
   return [...clients.values()].map(async (client) => await client.deafen?.());
 }
 
-const hangUpSignOffAndExit = (signal: NodeJS.Signals) =>
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A hub hex's store refused for an older tenure lost hex to another machine: it stops as for a stop, and exits with this, for bin/hex to leave it stopped.
+const LOST_HEX = 3;
+
+const hangUpSignOffAndExit = (signal: NodeJS.Signals | "lost") =>
   (stopping ??= Promise.allSettled(signal === "SIGHUP" ? [] : tellACallAndDeafen())
     .then(free)
     .then(() =>
@@ -34,15 +39,32 @@ const hangUpSignOffAndExit = (signal: NodeJS.Signals) =>
     .then(() =>
       Promise.allSettled(
         [...clients.values()].map(async (client) => {
-          await client.hub.synced();
+          try {
+            await client.hub.synced();
+          } catch (error) {
+            process.stderr.write(
+              `hub: exits with what hex's store didn't take: ${String(error)}\n`,
+            );
+          }
         }),
       ),
     )
-    .then(() => process.exit(0)));
+    .then(() => process.exit(signal === "lost" ? LOST_HEX : 0)));
 
 for (const signal of ["SIGHUP", "SIGTERM", "SIGINT"] as const) {
   process.on(signal, () => void hangUpSignOffAndExit(signal));
 }
+
+whenLost((why) => {
+  if (stopping === undefined) {
+    process.stderr.write(`hub: another machine holds hex now (${why}), so this hub stops\n`);
+    void hangUpSignOffAndExit("lost");
+  }
+});
+
+whenMoved(() => {
+  void hangUpSignOffAndExit("SIGHUP");
+});
 
 const hex = join(import.meta.dir, "..");
 const channels = join(hex, "channels");
@@ -61,6 +83,12 @@ if (waiting !== undefined && waiting !== "") {
 }
 
 syncInBackground();
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The hub takes hex over before it takes any message: every hub that claimed the store before it is refused from then on.
+await answered(stateDir(), "this hub takes hex over", async (store) => {
+  await store.claim();
+});
 
 await listen();
 
