@@ -4,7 +4,7 @@ import { eachVariable, onlyReading } from "./db.ts";
 import type { Core, Write } from "./db.ts";
 import { domains, migrate, OffersJson, unmet } from "./domains.ts";
 import type { Domains } from "./domains.ts";
-import { answering, ReplyJson } from "./wire.ts";
+import { answering, Refusal, REFUSALS_KEPT, ReplyJson } from "./wire.ts";
 import type { Reply } from "./wire.ts";
 
 // The part of a Durable Object's storage the store runs on: https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/
@@ -27,6 +27,7 @@ const HomeRow = z
     served: z.number(),
     lease: z.number(),
     hub: z.string(),
+    refused: z.string(),
   })
   .optional();
 
@@ -35,6 +36,7 @@ const Claim = z.object({
   needs: OffersJson.optional(),
   lease: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   hub: z.string().max(100).optional(),
+  refused: z.array(Refusal).max(REFUSALS_KEPT).optional(),
 });
 
 const Claimed = z.object({ tenure: z.number() }).optional();
@@ -145,10 +147,17 @@ type Run = (
 
 type HomeNow = NonNullable<z.infer<typeof HomeRow>>;
 
+const lines = (text: string) => text.split("\n").filter((line) => line !== "");
+
 function claimed(
   run: Run,
   now: HomeNow,
-  { claimant, lease, hub = "" }: Pick<z.infer<typeof Claim>, "claimant" | "lease" | "hub">,
+  {
+    claimant,
+    lease,
+    hub = "",
+    refused = [],
+  }: Pick<z.infer<typeof Claim>, "claimant" | "lease" | "hub" | "refused">,
 ) {
   const before = Claimed.parse(run("select tenure from _claims where claimant = ?", claimant)[0]);
 
@@ -169,7 +178,15 @@ function claimed(
   }
 
   const tenure = now.tenure + 1;
-  run("update _home set tenure = ?, lease = ?, served = 1, hub = ?", tenure, lease ?? 0, hub);
+  const kept = [...new Set([...lines(now.refused), ...refused])].slice(-REFUSALS_KEPT);
+
+  run(
+    "update _home set tenure = ?, lease = ?, served = 1, hub = ?, refused = ?",
+    tenure,
+    lease ?? 0,
+    hub,
+    kept.join("\n"),
+  );
   run("insert into _claims (claimant, tenure) values (?, ?)", claimant, tenure);
   run("delete from _claims where tenure <= ?", tenure - CLAIMS_KEPT);
 
@@ -282,6 +299,7 @@ function homeTables(run: Run) {
     ["served", "integer not null default 0"],
     ["lease", "integer not null default 0"],
     ["hub", "text not null default ''"],
+    ["refused", "text not null default ''"],
   ]) {
     if (run("select 1 from pragma_table_info('_home') where name = ?", column).length === 0) {
       run(`alter table _home add column ${column} ${kind}`);
@@ -298,7 +316,10 @@ export function recordsIn(storage: Storage, dir = "") {
   let answer: ReturnType<typeof answering> | undefined;
 
   const run = (text: string, ...values: unknown[]) => exec(sql, text, values).toArray();
-  const home = () => HomeRow.parse(run("select version, tenure, served, lease, hub from _home")[0]);
+
+  const home = () =>
+    HomeRow.parse(run("select version, tenure, served, lease, hub, refused from _home")[0]);
+
   const changes = () => Count.parse(run("select total_changes() as n")[0]).n;
 
   const own = ownWrites(core, changes);
@@ -351,6 +372,8 @@ export function recordsIn(storage: Storage, dir = "") {
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // The commit of hex's code that the hub holding hex said it runs as it claimed, which a machine about to take hex over brings its own code to: the store's own version names only the commit its code last changed in.
     hub: () => home()?.hub ?? "",
+
+    refused: () => lines(home()?.refused ?? ""),
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // A hub sends the tenure the object gave it when it claimed hex. Only the last one given holds: a hub on any other lost hex, whether or not it knows yet, so nothing it sends is taken. What isn't one the object gave is never kept.

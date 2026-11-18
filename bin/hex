@@ -25,16 +25,17 @@ running() {
   [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null
 }
 
-# store.json names the Durable Object that holds hex's records, when one does. answers prints the version of the store
-# code that the object named on its stdin runs, as the object itself says, and fails when it doesn't answer. The key
+# store.json names the Durable Object that holds hex's records, when one does. said prints what the object named on its
+# stdin says of itself, and answers the version of the store code it runs; each fails when it doesn't answer. The key
 # goes to curl on stdin, out of ps.
 store="$home/state/store.json"
 # Pinned, so one commit builds to one version wherever it deploys.
 wrangler="bunx wrangler@4.164.0"
-answers() {
+said() {
   jq -r '"url = \"\(.url | rtrimstr("/"))/\(.name)/version\"", "header = \"authorization: Bearer \(.key)\""' |
-    curl -sf -m 10 -K - | jq -er '.version | strings'
+    curl -sf -m 10 -K -
 }
+answers() { said | jq -er '.version | strings'; }
 
 # A service manager starts hex with a bare PATH, so hex takes the one the user's own shell builds,
 # rc files included, and sessions and jobs find what a terminal finds. A shell that hangs or fails leaves PATH as it is.
@@ -45,18 +46,52 @@ shell_path() {
   [ -z "$found" ] || PATH=$(printf '%s:%s' "$found" "$PATH" | tr : '\n' | awk 'NF && !seen[$0]++' | paste -sd: -)
 }
 
+described() { git -C "$hex" log -1 --format='%h ("%s")' "$1"; }
+
+# Whether bin/update, or a machine taking hex over, leaves a commit, and why: one hex rollback went back from, here
+# (state/refused) or on any machine whose hub told the store, or the one an automatic rollback left on this machine
+# (state/bad). Each line of the first is the newest commit refused, then the one hex went back to: every commit after
+# that one, up to the newest, is refused. Where the newest isn't here, every commit after the one gone back to is, since
+# none here can be past a commit this machine doesn't have.
+refused() {
+  sha=$(git -C "$hex" rev-parse -q --verify "$1^{commit}") || return 1
+  { cat "$home/state/refused" 2>/dev/null || :; [ ! -e "$store" ] || said < "$store" | jq -r '.refused // [] | .[]' 2>/dev/null || :; } |
+    while read -r newest to; do
+      [ "$sha" != "$to" ] && git -C "$hex" merge-base --is-ancestor "$to" "$sha" 2>/dev/null || continue
+      ! git -C "$hex" cat-file -e "$newest^{commit}" 2>/dev/null || git -C "$hex" merge-base --is-ancestor "$sha" "$newest" || continue
+      echo "hex rollback went back from $(git -C "$hex" rev-parse --short "$sha"), or from a commit it's built on"
+      break
+    done | grep . && return
+  [ "$(cat "$home/state/bad" 2>/dev/null)" = "$sha" ] && echo "hex $(git -C "$hex" rev-parse --short "$sha") couldn't start here"
+}
+
 # A hub that exits three times within a minute can't start. If hex changed since General last
 # connected (the hub writes that commit to state/good), hex goes back to it, bin/update won't take
-# the commit that failed (state/bad) again, and General hears why once it's back. Fails when there's
-# nothing to go back to.
+# the commit that failed (state/bad) again, and General hears why once it's back. Only ever back, so a commit hex
+# rollback went back from, which state/good may still name, never runs again this way; and on this machine alone, since
+# a hub may fail for the machine's own reasons. Fails when there's nothing to go back to.
 roll_back() {
   good=$(cat "$home/state/good" 2>/dev/null) || return 1
   bad=$(git -C "$hex" rev-parse HEAD)
-  [ -n "$good" ] && [ "$good" != "$bad" ] && git -C "$hex" reset -q --keep "$good" || return 1
+  [ -n "$good" ] && [ "$good" != "$bad" ] && git -C "$hex" merge-base --is-ancestor "$good" "$bad" && git -C "$hex" reset -q --keep "$good" || return 1
   echo "$bad" > "$home/state/bad"
   note="hex $(git -C "$hex" log -1 --format='%h ("%s")' "$bad") couldn't start: its hub exited three times within a minute. So hex went back to $(git -C "$hex" log -1 --format='%h ("%s")' "$good"), the last commit General connected on, and bin/update won't take $(git -C "$hex" rev-parse --short "$bad") again. What the failed starts printed is in the hub's log (state/hub.log, or the journal of the unit that runs hex)."
   echo "$note" >&2
   echo "$note" > "$home/state/rollback"
+}
+
+# While hex runs on another machine, a command runs there, as whoever ran it here.
+where_hex_runs() {
+  moved=0
+  where=$(elsewhere) || moved=$?
+  [ "$moved" != 2 ] || { echo "hex is moving between machines; try again in a minute" >&2; exit 1; }
+  [ "$moved" = 0 ] || return 0
+  set -- "$hex/bin/hex" "$@"
+  for name in HEX_OWNER HEX_THREAD HEX_CHANNEL HEX_MAIN HEX_BESIDE HEX_HELPER; do
+    eval "value=\${$name:-}"
+    [ -z "$value" ] || set -- "$name=$value" "$@"
+  done
+  exec ssh -o BatchMode=yes -o ConnectTimeout=5 "$where" "bash -c 'mapfile -d \"\" -t a < <(printf %s $(printf '%s\0' "$@" | base64 -w0) | base64 -d); exec env \"\${a[@]}\"'"
 }
 
 managed=/etc/claude-code/managed-settings.json
@@ -118,6 +153,21 @@ link_units() {
     fi
     [ "$link" != "$units_dir/$(basename "$file")" ] || ! grep -q '^\[Install\]' "$file" || enable="$enable $(basename "$file")"
   done
+}
+
+# The hub restarts onto the code on disk now, once no call is live. Given the commit hex was on, units the two differ on
+# are linked again, and hex.service restarts in the hub's place when it runs this folder's hex. A hub that isn't running
+# may be off on purpose, as on a machine that doesn't hold hex, so none starts, and this fails with 2.
+restart_hub() {
+  unit=$(systemctl --user show -P FragmentPath hex.service 2>/dev/null || :)
+  if [ -n "${1:-}" ] && [ -n "$unit" ] && [ "$(readlink -f "$unit")" = "$hex/systemd/hex.service" ] && ! git -C "$hex" diff --quiet "$1" HEAD -- systemd services.json; then
+    link_units && systemctl --user daemon-reload && systemctl --user restart --no-block hex.service
+  elif running; then
+    pkill -HUP -P "$(cat "$pidfile")" -f hub/serve.ts || :
+  else
+    echo "hex isn't running here, so nothing restarted; \`hex start\` starts it" >&2
+    return 2
+  fi
 }
 
 # The channels hex ships with a server of their own, for Claude Code's managed settings to allow.
@@ -305,12 +355,61 @@ case "${1:-}" in
     while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
     ;;
   restart)
-    # A hub that isn't running may be off on purpose, as on a machine that doesn't hold hex, so a restart starts none.
-    if running; then
-      pkill -HUP -P "$(cat "$pidfile")" -f hub/serve.ts || :
-    else
-      echo "hex isn't running here, so nothing restarted; \`hex start\` starts it" >&2
+    restart_hub "${2:-}" || [ $? = 2 ]
+    ;;
+  rollback)
+    # The way back for a commit that starts but misbehaves, in seconds: no check and no store deploy, since an older hex
+    # runs on a newer store, as every update already has it do for the minutes before it restarts.
+    where_hex_runs "$@"
+    [ -n "${2:-}" ] || { echo "usage: hex rollback <commit>, an earlier commit of hex to go back to" >&2; exit 2; }
+    to=$(git -C "$hex" rev-parse -q --verify "$2^{commit}") || { echo "hex rollback: hex has no commit $2 here" >&2; exit 1; }
+    left=$(git -C "$hex" rev-parse HEAD)
+    if [ "$to" != "$left" ]; then
+      git -C "$hex" merge-base --is-ancestor "$to" HEAD || { echo "hex rollback: hex goes back only to a commit it's built on, and $(described "$to") isn't one" >&2; exit 1; }
+      limit=
+      ! command -v timeout >/dev/null || limit="timeout 10"
+      $limit git -C "$hex" fetch -q origin main 2>/dev/null || echo "hex rollback: GitHub didn't answer, so what main built on the commit hex leaves is refused as of this machine's last fetch" >&2
+      # Under the lock bin/update merges under, so an update that asked before can't merge after. The refusal is
+      # written before hex moves, so hex never goes back with nothing refused, and taken out if hex can't move.
+      exec 9>"$home/state/checkout.lock"
+      flock 9
+      left=$(git -C "$hex" rev-parse HEAD)
+      newest=$left
+      ! git -C "$hex" merge-base --is-ancestor "$left" origin/main 2>/dev/null || newest=$(git -C "$hex" rev-parse origin/main)
+      printf '%s %s\n' "$newest" "$to" >> "$home/state/refused" || { echo "hex rollback: hex couldn't write what it refuses to state/refused, so it stays on $(described "$left")" >&2; exit 1; }
+      git -C "$hex" reset -q --keep "$to" 9>&- || { sed '$d' "$home/state/refused" > "$home/state/refused.new" && mv "$home/state/refused.new" "$home/state/refused"; exit 1; }
+      exec 9>&-
+      # As roll_back writes it, for an older hex's bin/update, so going back across this one holds too.
+      echo "$newest" > "$home/state/bad" || :
+      rm -f "$home/state/good"
+      echo "hex went back from $(described "$left") to $(described "$to") by \`hex rollback\`. bin/update won't take it, or what main had built on it, until main moves past them, on whichever machine runs hex." > "$home/state/rollback" || :
+    elif [ "$(cat "$home/state/good" 2>/dev/null)" = "$to" ] && running; then
+      echo "hex is on $(described "$to") already, and its hub runs it"
+      exit 0
     fi
+    # From here on, run again, it finishes a rollback that stopped half way: HEAD@{1} is the commit hex left.
+    was=$(! running || pgrep -P "$(cat "$pidfile")" -f hub/serve.ts || :)
+    restart_hub "$(git -C "$hex" rev-parse -q --verify 'HEAD@{1}')" || { echo "hex rollback: hex's code is on $(described "$to"), but no hub restarted on it (above). \`hex rollback $(git -C "$hex" rev-parse --short "$to")\` again finishes the rollback." >&2; exit 1; }
+    # A hub starts in seconds, and General connects to it in a few more; past two minutes, what's in the way is said.
+    waited=0
+    until [ "$(cat "$home/state/good" 2>/dev/null)" = "$to" ] && running; do
+      if [ "$waited" -ge "${HEX_ROLLBACK_WAIT:-120}" ]; then
+        if [ -n "$was" ] && kill -0 "$was" 2>/dev/null; then
+          why="the hub from before (pid $was) hasn't stopped: it waits for a live call to end, or its stop hangs, and \`kill $was\` ends it"
+        else
+          why="what its hub printed is in the hub's log (state/hub.log, or the journal of the unit that runs hex), and \`hex rollback <an earlier commit>\` goes further back"
+        fi
+        echo "hex rollback: hex's code is on $(described "$to"), but after ${waited}s no hub is up on it: $why. \`hex rollback $(git -C "$hex" rev-parse --short "$to")\` again finishes the rollback." >&2
+        exit 1
+      fi
+      sleep 1
+      waited=$((waited + 1))
+    done
+    echo "hex is back on $(described "$to"): a hub runs it, and General connected to it."
+    ;;
+  refused)
+    [ -n "${2:-}" ] || { echo "usage: hex refused <commit>" >&2; exit 2; }
+    refused "$2" || { echo "not refused: $2"; exit 1; }
     ;;
   acp)
     exec bun "$hex/channels/t3/acp.ts" "$home/state/t3/acp.sock"
@@ -616,22 +715,11 @@ case "${1:-}" in
     # Every other command is a file in hub/cli/, named in lowercase letters; anything else gets the usage, at once.
     case ${1:-} in '' | *[!a-z]*) command= ;; *) command=$1 ;; esac
     if [ -z "$command" ] || [ ! -f "$hex/hub/cli/$command.ts" ]; then
-      echo "usage: hex init|link|restore|start|stop|restart|status|doctor|run|acp|elsewhere|store deploy|store move|store back" >&2
+      echo "usage: hex init|link|restore|start|stop|restart|status|doctor|run|acp|elsewhere|rollback <commit>|refused <commit>|store deploy|store move|store back" >&2
       exec bun "$hex/hub/cli.ts" "$home/state"
     fi
     export MEMORY_DIR="${MEMORY_DIR:-$home/memory}"
-    # While hex runs on another machine, its commands run there, as whoever ran them here.
-    moved=0
-    where=$(elsewhere) || moved=$?
-    [ "$moved" != 2 ] || { echo "hex is moving between machines; try again in a minute" >&2; exit 1; }
-    if [ "$moved" = 0 ]; then
-      set -- "$hex/bin/hex" "$@"
-      for name in HEX_OWNER HEX_THREAD HEX_CHANNEL HEX_MAIN HEX_BESIDE HEX_HELPER; do
-        eval "value=\${$name:-}"
-        [ -z "$value" ] || set -- "$name=$value" "$@"
-      done
-      exec ssh -o BatchMode=yes -o ConnectTimeout=5 "$where" "bash -c 'mapfile -d \"\" -t a < <(printf %s $(printf '%s\0' "$@" | base64 -w0) | base64 -d); exec env \"\${a[@]}\"'"
-    fi
+    where_hex_runs "$@"
     exec bun "$hex/hub/cli.ts" "$home/state" "$@"
     ;;
 esac

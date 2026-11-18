@@ -99,13 +99,16 @@ const commit = Bun.spawnSync(["git", "-C", hex, "rev-parse", "-q", "--verify", "
   .stdout.toString()
   .trim();
 
+const wentBack = join(stateDir(), "refused");
+const refused = existsSync(wentBack) ? readFileSync(wentBack, "utf-8").split("\n") : [];
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The hub takes hex over before it takes any message: every hub that claimed the store before it is refused from then on, and the store says which commit this one runs.
 await answered(
   stateDir(),
   "this hub takes hex over",
   async (store) => {
-    await takeOver(store, commit);
+    await takeOver(store, commit, refused);
   },
   { tell: cantStart(stateDir()) },
 );

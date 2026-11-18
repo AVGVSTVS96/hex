@@ -261,15 +261,380 @@ test("a commit whose hub can't start goes back to the last one General connected
   await until(() => hubs().length === 1);
   expect(git("rev-parse", "HEAD")).toBe(good);
   expect(readFileSync(join(home, "state/bad"), "utf-8").trim()).toBe(bad);
+  expect(existsSync(join(home, "state/refused"))).toBe(false);
   expect(readFileSync(join(home, "state/rollback"), "utf-8")).toContain(
     `hex ${bad.slice(0, 7)} ("a hub that crashes") couldn't start`,
   );
   const update = Bun.spawnSync([join(hex, "bin/update")]);
   expect(update.exitCode).toBe(1);
   expect(update.stdout.toString()).toContain(
-    `not updated: hex ${bad.slice(0, 7)} couldn't start here`,
+    `not updated: hex ${bad.slice(0, 7)} couldn't start here, so hex stays on ${good.slice(0, 7)}`,
   );
   expect(git("rev-parse", "HEAD")).toBe(good);
+});
+
+const generalConnects = (hub: string) =>
+  `${hub}\nsetTimeout(() => require('fs').writeFileSync(process.env.HEX_DIR + '/state/good', Bun.spawnSync(['git', '-C', import.meta.dir + '/..', 'rev-parse', 'HEAD']).stdout.toString()), 300)\n`;
+
+const goodIs = (sha: string) =>
+  existsSync(join(home, "state/good")) &&
+  readFileSync(join(home, "state/good"), "utf-8") === `${sha}\n`;
+
+const named = (hub: string, name: string) => `${hub}export const name = ${JSON.stringify(name)}\n`;
+
+const GENERAL_CONNECTS = generalConnects(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS);
+
+const rollback = (to: string, env: Record<string, string> = {}) =>
+  Bun.spawnSync([join(hex, "bin/hex"), "rollback", to], { env: { ...process.env, ...env } });
+
+const isRefused = (sha: string) =>
+  Bun.spawnSync([join(hex, "bin/hex"), "refused", sha]).exitCode === 0;
+
+const asked = (...args: string[]) => Bun.spawn(args, { stdout: "pipe" });
+
+const withOrigin = () => {
+  Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", join(home, "origin")]);
+  git("remote", "add", "origin", join(home, "origin"));
+  git("push", "-q", "origin", "main");
+};
+
+test("hex rollback says hex went back only once a hub runs the earlier commit, and bin/update takes neither a commit hex went back from nor what main had built on it, until main moves past them", async () => {
+  const older = commit(named(GENERAL_CONNECTS, "an older hub"), "an older hub");
+  const before = commit(named(GENERAL_CONNECTS, "a hub"), "a hub");
+
+  const ship = commit(
+    named(GENERAL_CONNECTS.replace("'start mark='", "'ship mark='"), "a ship"),
+    "a ship",
+  );
+
+  const onTop = commit(
+    named(GENERAL_CONNECTS.replace("'start mark='", "'ship mark='"), "built on the ship"),
+    "built on the ship",
+  );
+
+  withOrigin();
+  git("reset", "-q", "--hard", ship);
+  run();
+  await until(() => goodIs(ship));
+
+  const rolled = rollback(before.slice(0, 7));
+  expect(rolled.stdout.toString()).toBe(
+    `hex is back on ${before.slice(0, 7)} ("a hub"): a hub runs it, and General connected to it.\n`,
+  );
+  expect(rolled.exitCode).toBe(0);
+  const [shipped, stopped, back] = hubs();
+  expect(shipped).toMatch(/^ship mark=1 /u);
+  expect(stopped).toBe(`stop ${shipped?.split(" ").at(-1)}`);
+  expect(back).toMatch(/^start mark=1 loop=1 \d+$/u);
+  expect(git("rev-parse", "HEAD")).toBe(before);
+
+  expect(readFileSync(join(home, "state/rollback"), "utf-8")).toContain(
+    `hex went back from ${ship.slice(0, 7)} ("a ship") to ${before.slice(0, 7)} ("a hub") by \`hex rollback\``,
+  );
+
+  const update = Bun.spawnSync([join(hex, "bin/update")]);
+  expect(update.exitCode).toBe(1);
+  expect(update.stdout.toString()).toContain(
+    `not updated: hex rollback went back from ${onTop.slice(0, 7)}, or from a commit it's built on`,
+  );
+  expect([ship, onTop, before, older].map(isRefused)).toEqual([true, true, false, false]);
+
+  expect(rollback(older).exitCode).toBe(0);
+  expect([ship, onTop, before, older].map(isRefused)).toEqual([true, true, true, false]);
+  expect(git("rev-parse", "HEAD")).toBe(older);
+  expect(Bun.spawnSync([join(hex, "bin/update"), "--now"]).exitCode).toBe(1);
+  expect(git("rev-parse", "HEAD")).toBe(older);
+
+  git("reset", "-q", "--hard", onTop);
+  const past = commit(named(GENERAL_CONNECTS, "a revert of the ship"), "a revert of the ship");
+  git("reset", "-q", "--hard", older);
+  expect(isRefused(past)).toBe(false);
+});
+
+test("a rollback whose old hub won't stop says so, and run again once it has, finishes", async () => {
+  const before = commit(named(GENERAL_CONNECTS, "a hub"), "a hub");
+
+  const deaf = commit(
+    generalConnects("process.on('SIGHUP', () => {})\nsetInterval(() => {}, 1000)\n"),
+    "a ship whose hub won't stop",
+  );
+
+  run();
+  await until(() => goodIs(deaf));
+
+  const stuck = Bun.spawnSync(["pgrep", "-f", join(hex, "hub/serve.ts")])
+    .stdout.toString()
+    .trim();
+
+  const first = rollback(before, { HEX_ROLLBACK_WAIT: "2" });
+  expect(first.exitCode).toBe(1);
+  expect(first.stdout.toString()).toBe("");
+  expect(first.stderr.toString()).toContain(`the hub from before (pid ${stuck}) hasn't stopped`);
+  expect(git("rev-parse", "HEAD")).toBe(before);
+
+  process.kill(Number(stuck), "SIGKILL");
+  const again = rollback(before);
+  expect(again.stdout.toString()).toMatch(/^hex (is back on|is on) /u);
+  expect(again.exitCode).toBe(0);
+  expect(hubs().at(-1)).toMatch(/^start mark=1 loop=1 \d+$/u);
+});
+
+test("a rollback across a change to hex's units links them and restarts hex.service, and run again after a link that failed, finishes", async () => {
+  mkdirSync(join(hex, "systemd"));
+  writeFileSync(join(hex, "services.json"), '{ "units": [] }\n');
+  writeFileSync(join(hex, "systemd/hex.service"), "[Service]\n");
+  const before = commit(named(GENERAL_CONNECTS, "a hub"), "a hub");
+  writeFileSync(join(hex, "systemd/hex.service"), "[Service]\nMemoryMax=1G\n");
+
+  const ship = commit(
+    named(GENERAL_CONNECTS, "a ship that changes hex.service"),
+    "a ship that changes hex.service",
+  );
+
+  run();
+  await until(() => goodIs(ship));
+
+  const fake = join(home, "fake-bin");
+  mkdirSync(fake);
+  writeFileSync(
+    join(fake, "systemctl"),
+    `#!/bin/sh
+echo "$*" >> "${home}/systemctl"
+case "$*" in
+  *FragmentPath*) echo "${hex}/systemd/hex.service" ;;
+  *daemon-reload*) [ ! -e "${home}/reload-fails" ] || exit 1 ;;
+  *"restart --no-block hex.service"*) pkill -HUP -P "$(cat "${home}/state/hub.pid")" -f hub/serve.ts ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  const PATH = `${fake}:${process.env.PATH}`;
+  writeFileSync(join(home, "reload-fails"), "");
+  expect(rollback(before, { PATH }).exitCode).not.toBe(0);
+  expect(git("rev-parse", "HEAD")).toBe(before);
+  expect(readFileSync(join(home, "systemctl"), "utf-8")).not.toContain(
+    "restart --no-block hex.service",
+  );
+
+  rmSync(join(home, "reload-fails"));
+  const again = rollback(before, { PATH });
+  expect(again.stdout.toString()).toStartWith(`hex is back on ${before.slice(0, 7)}`);
+  expect(readFileSync(join(home, "systemctl"), "utf-8")).toContain(
+    "--user restart --no-block hex.service",
+  );
+});
+
+test("when the commit hex went back to can't start, hex stays down and says so, and never goes forward to one it went back from", async () => {
+  const crashing = commit("process.exit(1)\n", "a hub that can't start");
+  const ship = commit(named(GENERAL_CONNECTS, "a ship"), "a ship");
+  const running = run();
+  await until(() => goodIs(ship));
+
+  const rolled = rollback(crashing, { HEX_ROLLBACK_WAIT: "20" });
+  expect(rolled.exitCode).toBe(1);
+  expect(rolled.stderr.toString()).toContain(
+    "no hub is up on it: what its hub printed is in the hub's log",
+  );
+  expect(await running.exited).toBe(1);
+  expect(await new Response(running.stderr).text()).toContain(
+    "there's no earlier hex to go back to",
+  );
+  expect(git("rev-parse", "HEAD")).toBe(crashing);
+  expect(isRefused(ship)).toBe(true);
+
+  writeFileSync(join(home, "state/good"), `${ship}\n`);
+  expect(await run().exited).toBe(1);
+  expect(git("rev-parse", "HEAD")).toBe(crashing);
+});
+
+test("a machine that takes hex over refuses what the store says another machine went back from, even past a newest commit it hasn't seen and can't fetch", async () => {
+  const before = commit(named(GENERAL_CONNECTS, "a hub"), "a hub");
+  const ship = commit(named(GENERAL_CONNECTS, "a ship"), "a ship");
+  withOrigin();
+  const elsewhere = join(home, "elsewhere");
+  Bun.spawnSync(["git", "clone", "-q", join(home, "origin"), elsewhere]);
+  writeFileSync(join(elsewhere, "on-top"), "");
+  Bun.spawnSync(["git", "-C", elsewhere, "add", "-A"]);
+  Bun.spawnSync([
+    "git",
+    "-C",
+    elsewhere,
+    "-c",
+    "user.name=t",
+    "-c",
+    "user.email=t@t",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "-qm",
+    "merged on top",
+  ]);
+  Bun.spawnSync(["git", "-C", elsewhere, "push", "-q", "origin", "main"]);
+
+  const onTop = Bun.spawnSync(["git", "-C", elsewhere, "rev-parse", "HEAD"])
+    .stdout.toString()
+    .trim();
+
+  expect(Bun.spawnSync(["git", "-C", hex, "cat-file", "-e", onTop]).exitCode).not.toBe(0);
+
+  const store = Bun.serve({
+    port: 0,
+    fetch: () => Response.json({ version: "v", hub: before, refused: [`${onTop} ${before}`] }),
+  });
+
+  try {
+    writeFileSync(
+      join(home, "state/store.json"),
+      JSON.stringify({ url: store.url.origin, name: "hex", key: "k".repeat(40) }),
+    );
+    git("remote", "set-url", "origin", join(home, "nowhere"));
+    expect(await asked(join(hex, "bin/hex"), "refused", ship).exited).toBe(0);
+    expect(await asked(join(hex, "bin/hex"), "refused", before).exited).toBe(1);
+    git("remote", "set-url", "origin", join(home, "origin"));
+    git("reset", "-q", "--hard", before);
+    const update = asked(join(hex, "bin/update"));
+    expect(await new Response(update.stdout).text()).toContain(
+      `not updated: hex rollback went back from ${onTop.slice(0, 7)}`,
+    );
+    expect(git("rev-parse", "HEAD")).toBe(before);
+  } finally {
+    await store.stop(true);
+  }
+});
+
+test("an update that asked before a rollback asks again just before it merges, so it never takes hex forward past one", async () => {
+  writeFileSync(join(hex, "bin/check"), "#!/bin/sh\n", { mode: 0o755 });
+  writeFileSync(
+    join(hex, "bin/quiet"),
+    `#!/bin/sh\ntouch "${home}/waiting"\nwhile [ ! -e "${home}/go" ]; do sleep 0.1; done\n`,
+    { mode: 0o755 },
+  );
+  const before = commit(named(GENERAL_CONNECTS, "a hub"), "a hub");
+  const ship = commit(named(GENERAL_CONNECTS, "a ship"), "a ship");
+  const onTop = commit(named(GENERAL_CONNECTS, "merged on top"), "merged on top");
+  withOrigin();
+  git("reset", "-q", "--hard", ship);
+  run();
+  await until(() => goodIs(ship));
+
+  const update = Bun.spawn([join(hex, "bin/update")], {
+    env: { ...process.env, XDG_CACHE_HOME: join(home, "cache") },
+    stdout: "pipe",
+  });
+
+  await until(() => existsSync(join(home, "waiting")));
+  expect(rollback(before).exitCode).toBe(0);
+  writeFileSync(join(home, "go"), "");
+  expect(await update.exited).toBe(1);
+  expect(await new Response(update.stdout).text()).toContain(
+    `not updated: hex rollback went back from ${onTop.slice(0, 7)}, or from a commit it's built on, so hex stays on ${before.slice(0, 7)}`,
+  );
+  expect(git("rev-parse", "HEAD")).toBe(before);
+});
+
+test("an update a rollback takes hex back past while it installs says it didn't update", async () => {
+  writeFileSync(join(hex, "package.json"), "{}\n");
+
+  for (const stub of ["check", "migrate"]) {
+    writeFileSync(join(hex, "bin", stub), "#!/bin/sh\n", { mode: 0o755 });
+  }
+
+  writeFileSync(
+    join(hex, "bin/optmem"),
+    `#!/bin/sh\ntouch "${home}/installing"\nwhile [ ! -e "${home}/go" ]; do sleep 0.1; done\n`,
+    { mode: 0o755 },
+  );
+  const before = commit(named(GENERAL_CONNECTS, "a hub"), "a hub");
+  const ship = commit(named(GENERAL_CONNECTS, "a ship"), "a ship");
+  const onTop = commit(named(GENERAL_CONNECTS, "merged on top"), "merged on top");
+  withOrigin();
+  git("reset", "-q", "--hard", ship);
+  run();
+  await until(() => goodIs(ship));
+
+  const update = Bun.spawn([join(hex, "bin/update"), "--now"], {
+    env: { ...process.env, XDG_CACHE_HOME: join(home, "cache") },
+    stdout: "pipe",
+  });
+
+  await until(() => existsSync(join(home, "installing")));
+  expect(git("rev-parse", "HEAD")).toBe(onTop);
+  expect(rollback(before).exitCode).toBe(0);
+  writeFileSync(join(home, "go"), "");
+  expect(await update.exited).toBe(1);
+  expect(await new Response(update.stdout).text()).toContain(
+    `not updated: hex rollback took hex back to ${before.slice(0, 7)} while hex ${onTop.slice(0, 7)} installed`,
+  );
+  expect(git("rev-parse", "HEAD")).toBe(before);
+});
+
+test("a rollback that can't write what it refuses doesn't go back, so hex never goes back with nothing refused", async () => {
+  const before = commit(named(GENERAL_CONNECTS, "a hub"), "a hub");
+  const ship = commit(named(GENERAL_CONNECTS, "a ship"), "a ship");
+  run();
+  await until(() => goodIs(ship));
+  mkdirSync(join(home, "state/refused"));
+  const rolled = rollback(before);
+  expect(rolled.exitCode).toBe(1);
+  expect(rolled.stderr.toString()).toContain(
+    `hex rollback: hex couldn't write what it refuses to state/refused, so it stays on ${ship.slice(0, 7)}`,
+  );
+  expect(git("rev-parse", "HEAD")).toBe(ship);
+  expect(goodIs(ship)).toBe(true);
+  expect(existsSync(join(home, "state/bad"))).toBe(false);
+});
+
+test("hex rollback goes back only to a commit hex is built on, keeps changes made in its folder, and runs where hex runs", () => {
+  const before = commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  git("checkout", "-q", "-b", "side");
+  const side = commit("process.exit(1)\n", "a commit hex isn't built on");
+  git("checkout", "-q", "main");
+  const ship = commit("process.exit(2)\n", "a ship");
+
+  const usage = Bun.spawnSync([join(hex, "bin/hex"), "rollback"]);
+  expect(usage.exitCode).toBe(2);
+  expect(usage.stderr.toString()).toStartWith("usage: hex rollback <commit>");
+  expect(rollback("nosuch").stderr.toString()).toBe(
+    "hex rollback: hex has no commit nosuch here\n",
+  );
+  expect(rollback(ship).stderr.toString()).toContain(
+    "hex isn't running here, so nothing restarted",
+  );
+  expect(rollback(side).stderr.toString()).toContain("isn't one");
+
+  writeFileSync(join(hex, "hub/serve.ts"), "an edit nobody committed\n");
+  expect(rollback(before).exitCode).toBe(1);
+  expect(readFileSync(join(hex, "hub/serve.ts"), "utf-8")).toBe("an edit nobody committed\n");
+  expect(git("rev-parse", "HEAD")).toBe(ship);
+  expect(existsSync(join(home, "state/bad"))).toBe(false);
+  expect(readFileSync(join(home, "state/refused"), "utf-8")).toBe("");
+  git("checkout", "--", "hub/serve.ts");
+
+  const fake = join(home, "fake-bin");
+  mkdirSync(fake);
+  writeFileSync(
+    join(fake, "ssh"),
+    `#!/bin/sh\nfor last; do :; done\necho "$last" > "${home}/ssh"\n`,
+    {
+      mode: 0o755,
+    },
+  );
+  mkdirSync(join(home, "xdg-state/hex"), { recursive: true });
+  writeFileSync(join(home, "xdg-state/hex/elsewhere"), "the-other-machine\n");
+  expect(rollback(before, { PATH: `${fake}:${process.env.PATH}` }).exitCode).toBe(0);
+  const sent = /printf %s (\S+) \| base64 -d/u.exec(readFileSync(join(home, "ssh"), "utf-8"))?.[1];
+
+  const there = Buffer.from(sent ?? "", "base64")
+    .toString()
+    .split("\0");
+
+  expect(there.slice(there.indexOf(join(hex, "bin/hex")))).toEqual([
+    join(hex, "bin/hex"),
+    "rollback",
+    before,
+    "",
+  ]);
+  expect(git("rev-parse", "HEAD")).toBe(ship);
 });
 
 test("a hub that keeps exiting while the store holding its records doesn't answer isn't taken for a bad commit: hex stays on it and keeps starting the hub", async () => {

@@ -1,5 +1,5 @@
 #!/bin/sh
-# A PreToolUse hook: refuses edits to the memory folder and to hex's own checkout (only bin/update changes it, and
+# A PreToolUse hook: refuses edits to the memory folder and to hex's own checkout (only bin/update and hex rollback change it, and
 # an edit there stops every update; worktrees under it are their own checkouts), and memo in a subagent, whose
 # notes would arrive duplicated. Bash can still write past it; this catches the edit tools and the memo call.
 hex=$(cd "$(dirname "$0")/.." && pwd -P)
@@ -34,7 +34,7 @@ case $path/ in
     dir=$path
     while [ ! -d "$dir" ]; do dir=$(dirname "$dir"); done
     if [ "$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" = "$hex" ]; then
-      echo "$hex is hex itself: only .hex/bin/update changes it, since an edit there stops every update. Change hex in a clone or worktree of its own and land it by pull request." >&2
+      echo "$hex is hex itself: only .hex/bin/update and \`hex rollback\` change it, since an edit there stops every update. Change hex in a clone or worktree of its own and land it by pull request." >&2
       exit 2
     fi
     ;;

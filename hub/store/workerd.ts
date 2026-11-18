@@ -673,6 +673,19 @@ test("the object says what its store offers, the migrations and methods this che
   expect(answer.offers).toEqual(OFFERS);
 });
 
+test("a hub's claim says the commit it runs and what its machine went back from, which the object says to a machine that takes hex over", async () => {
+  const dir = await movedInto("went-back");
+  const ship = "b".repeat(40);
+  const before = "a".repeat(40);
+  await remote(dir, QUICK)?.claim(before, [`${ship} ${before}`, "not a commit", ""]);
+
+  const answer = z
+    .object({ hub: z.string(), refused: z.array(z.string()) })
+    .parse(await (await fetch(`${url}/went-back/version`, { headers: auth })).json());
+
+  expect(answer).toEqual({ hub: before, refused: [`${ship} ${before}`] });
+});
+
 const claimNeeding = async (claimant: string, needs: typeof OFFERS) =>
   await fetch(`${url}/contracts/claim`, {
     method: "POST",

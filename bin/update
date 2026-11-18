@@ -50,11 +50,16 @@ if [ "$(git rev-parse HEAD)" = "$incoming" ]; then
   [ "$deployed" = 0 ] || { printf '%s\n' "$output"; [ "$deployed" = 2 ] || { echo "but the store hex $before needs didn't deploy"; exit 1; }; }
   exit 0
 fi
-if [ "$incoming" = "$(cat "$home/state/bad" 2>/dev/null || :)" ]; then
-  echo "not updated: hex $(git rev-parse --short "$incoming") couldn't start here, so hex stays on $before"
-  [ "$mode" != --when-quiet ] || tell all "didn't ship: hex $(git rev-parse --short "$incoming") couldn't start here, so hex stays on $before"
+# A commit hex went back from stays away until main moves past it. Asked again just before the merge, under the lock
+# hex rollback moves the checkout under, since a rollback may come while the check runs or sessions finish.
+leave_if_refused() {
+  why=$("$hex/bin/hex" refused "$incoming") || return 0
+  why="$why, so hex stays on $(git rev-parse --short HEAD) until main moves past it"
+  echo "not updated: $why"
+  [ "$mode" != --when-quiet ] || tell all "didn't ship: $why"
   exit 1
-fi
+}
+leave_if_refused
 
 # From a hex session, which is busy itself until its turn ends, the update goes on as one job at a time,
 # which tells each asking thread as what it asked for ships; run by hand, it goes on here.
@@ -116,20 +121,24 @@ if [ "$deployed" != 0 ]; then
   [ "$mode" != --when-quiet ] || tell all "didn't ship: the store hex $(git rev-parse --short "$incoming") needs $why, so hex stays on $before; its output is in $home/state/jobs/hex-update.log"
   exit 1
 fi
-git merge -q --ff-only "$incoming"
+exec 7>"$home/state/checkout.lock"
+flock 7
+leave_if_refused
+# git's cleanup after the merge runs on, without the lock.
+git merge -q --ff-only "$incoming" 7>&-
+exec 7>&-
 bun install --cwd "$hex" --silent
 "$hex/bin/optmem"
 "$hex/bin/migrate"
 # The new code, or a new memo, may write the wake differently.
 (. "$hex/bin/settings"; wake) || :
 
-unit=$(systemctl --user show -P FragmentPath hex.service 2>/dev/null || :)
-if [ -n "$unit" ] && [ "$(readlink -f "$unit")" = "$hex/systemd/hex.service" ] && ! git diff --quiet "$before" HEAD -- systemd services.json; then
-  "$hex/bin/hex" link
-  systemctl --user restart --no-block hex.service
-else
-  "$hex/bin/hex" restart
+# A hex rollback while this installed took hex back past it, and restarts the hub itself.
+if [ "$(git rev-parse HEAD)" != "$incoming" ]; then
+  echo "not updated: hex rollback took hex back to $(git rev-parse --short HEAD) while hex $(git rev-parse --short "$incoming") installed"
+  exit 1
 fi
+"$hex/bin/hex" restart "$before"
 echo "updated hex $before..$(git rev-parse --short HEAD); the hub restarts on it once no call is live, and each session at its next rest"
 tell "$(printf "$live" "$(git rev-parse --short HEAD)")"
 # What merged meanwhile ships next.

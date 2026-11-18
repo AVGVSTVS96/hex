@@ -4,6 +4,10 @@ import { METHODS } from "./domains.ts";
 import type { Domains } from "./domains.ts";
 import { RefusedError, UnreachedError } from "./errors.ts";
 
+export const Refusal = z.string().regex(/^[0-9a-f]{40,64} [0-9a-f]{40,64}$/u);
+
+export const REFUSALS_KEPT = 100;
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // One call to a store, as it crosses to the store's home and back. JSON has no undefined, so an argument left out to take its default travels as a place in `absent`.
 const CallJson = z.object({
