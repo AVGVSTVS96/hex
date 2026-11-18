@@ -966,7 +966,7 @@ test("the phone's audio blinking tells the voice nothing, and a pause that holds
   ).toEqual(["paused", "resumed"]);
 });
 
-test("an app that starts a call on its questions has the voice open on them, and Claude walk them in order", async () => {
+test("an app that starts a call on its questions has the voice and Claude open on them", async () => {
   await using engine = await appCall();
 
   const opened = await fetch(`${engine.base}/session`, {
