@@ -135,16 +135,23 @@ export function messagesWaiting({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // What a thread's next session gets: every message no session has taken, and any the store couldn't keep.
+  // What a thread's next session gets: every message no session has taken, and any the store couldn't keep. A store that didn't answer said nothing of which are taken, so all that waits here counts.
   async function forNext(thread: string): Promise<Message[]> {
-    const rows = await kept((store) => store.messages.untaken(thread), []);
-    const read = new Set(rows.map((row) => row.key));
+    const rows = await kept<Row[] | undefined>(
+      (store) => store.messages.untaken(thread),
+      undefined,
+    );
+
+    const read = new Set(rows?.map((row) => row.key));
 
     return [
-      ...rows.map(toMessageWithKeyFirstForTheHook),
+      ...(rows ?? []).map(toMessageWithKeyFirstForTheHook),
       ...waiting
         .of(thread)
-        .queue.filter((message) => keptOnlyHere(message) && !read.has(message.meta.key ?? "")),
+        .queue.filter(
+          (message) =>
+            !read.has(message.meta.key ?? "") && (rows === undefined || keptOnlyHere(message)),
+        ),
     ];
   }
 
@@ -178,13 +185,17 @@ export function messagesWaiting({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // What a session that connected on line is given is read from the store while its line takes nothing new: a message that comes meanwhile waits in the queue (catchingUp), and connected gives it after what was read.
+  // What a session that connected on line is given is read from the store while its line takes nothing new: a message that comes meanwhile waits in the queue (catchingUp), and connected gives it after what was read. rows: none when the store didn't answer.
   async function catchUp(thread: string, line: Line) {
     const box = waiting.of(thread);
     box.catching = line;
     const before = box.queue.length;
     await kept((store) => store.messages.letHeldGo(thread), []);
-    const rows = await kept((store) => store.messages.untaken(thread), []);
+
+    const rows = await kept<Row[] | undefined>(
+      (store) => store.messages.untaken(thread),
+      undefined,
+    );
 
     return { rows, before };
   }
@@ -194,22 +205,23 @@ export function messagesWaiting({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // What was read, then what came while it was: of what waited before, only what the store doesn't keep, since what it keeps and didn't give is taken.
+  // What was read, then what came while it was: of what waited before, only what the store doesn't keep, since what it keeps and didn't give is taken. A store that didn't answer said nothing of the kind, so all that waited is given.
   function connected(
     thread: string,
     line: Line,
     { rows, before }: Awaited<ReturnType<typeof catchUp>>,
   ): Message[] {
     const box = waiting.of(thread);
-    const read = new Set(rows.map((row) => row.key));
+    const read = new Set(rows?.map((row) => row.key));
 
     const given = [
-      ...rows.map(toMessageWithKeyFirstForTheHook),
+      ...(rows ?? []).map(toMessageWithKeyFirstForTheHook),
       ...box.queue
         .splice(0)
         .filter(
           (message, at) =>
-            !read.has(message.meta.key ?? "") && (at >= before || keptOnlyHere(message)),
+            !read.has(message.meta.key ?? "") &&
+            (rows === undefined || at >= before || keptOnlyHere(message)),
         ),
     ];
 
