@@ -9,23 +9,28 @@ trap 'rm -rf "$out"' EXIT
 build="bun build --target bun --external ffmpeg-static"
 bun install --silent
 bunx tsc
-jq -e 'all(.plugins[]; .source == "./\(.name)")' channels/.claude-plugin/marketplace.json >/dev/null
-for plugin in $(jq -r '.plugins[].name' channels/.claude-plugin/marketplace.json); do
-  bunx tsc -p "channels/$plugin"
-  $build "channels/$plugin/bot.ts" --outdir "$out/$plugin" >/dev/null
-  [ ! -e "channels/$plugin/.mcp.json" ] || jq -e --arg plugin "$plugin" '.mcpServers[$plugin].type == "http"' "channels/$plugin/.mcp.json" >/dev/null
+# A workspace package with a tsconfig of its own is checked against it; given some, the check is theirs alone.
+for package in ${*:-$(jq -r '.workspaces.packages[]' package.json)}; do
+  [ ! -f "$package/tsconfig.json" ] || bunx tsc -p "$package"
 done
-$build channels/buzz/provider.ts --outdir "$out/provider" >/dev/null
-$build hub/serve.ts --outdir "$out/hub" >/dev/null
-# The store's object, built for the Workers runtime, which has none of Bun's own modules. Its runtime checks need
-# workerd, which only CI fetches: `bun test ./hub/store/workerd.ts` runs them.
-bun build hub/store/object.ts --format=esm --target=browser --external 'cloudflare:workers' --external 'node:*' --outfile "$out/store/object.mjs" >/dev/null
+if [ $# = 0 ]; then
+  jq -e 'all(.plugins[]; .source == "./\(.name)")' channels/.claude-plugin/marketplace.json >/dev/null
+  for plugin in $(jq -r '.plugins[].name' channels/.claude-plugin/marketplace.json); do
+    $build "channels/$plugin/bot.ts" --outdir "$out/$plugin" >/dev/null
+    [ ! -e "channels/$plugin/.mcp.json" ] || jq -e --arg plugin "$plugin" '.mcpServers[$plugin].type == "http"' "channels/$plugin/.mcp.json" >/dev/null
+  done
+  $build channels/buzz/provider.ts --outdir "$out/provider" >/dev/null
+  $build hub/serve.ts --outdir "$out/hub" >/dev/null
+  # The store's object, built for the Workers runtime, which has none of Bun's own modules. Its runtime checks need
+  # workerd, which only CI fetches: `bun test ./hub/store/workerd.ts` runs them.
+  bun build hub/store/object.ts --format=esm --target=browser --external 'cloudflare:workers' --external 'node:*' --outfile "$out/store/object.mjs" >/dev/null
+fi
 # A test's hex is one it makes in a temp folder (tools/sandbox.ts): the folder beside this checkout is where a hex that
 # runs from it keeps its records, so a test that makes one there would write to a live hex's.
 beside=$(dirname "$hex")/state
 [ ! -e "$beside" ] || live=1
 # The one time limit on tests, so a test fails on time only when it hangs: on a busy server one that takes a second here took 32.
-bun test --parallel --timeout 300000 plugin/tests hub channels
+bun test --parallel --timeout 300000 "$@"
 # The hub's tests again on a store that answers late, as a home across the network does: there a write lands after the call, not at it.
-bun test --isolate --timeout 300000 --preload ./hub/late.ts hub/hub.test.ts
+[ $# -gt 0 ] || bun test --isolate --timeout 300000 --preload ./hub/late.ts hub/hub.test.ts
 [ -n "${live:-}" ] || [ ! -e "$beside" ] || { echo "a test wrote to $beside: give what it starts a hex folder of its own (HEX_DIR, or HEX_STORE)" >&2; exit 1; }
