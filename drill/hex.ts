@@ -94,6 +94,12 @@ export function place(name: string) {
   return dir;
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// For a drill that ends in a process that goes on: bun test stops what a test file left running, the leash included, as the file ends.
+export function removeSandbox() {
+  rmSync(root, { recursive: true, force: true });
+}
+
 const copyOfHex = async (to: string) => {
   const files = (
     await sh(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: repo })

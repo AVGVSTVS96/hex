@@ -1,10 +1,10 @@
-import { test } from "bun:test";
+import { afterAll, test } from "bun:test";
 import { appendFileSync, copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { until } from "../hub/until.ts";
 import { cloudflare } from "./cloudflare.ts";
-import { folder, place } from "./hex.ts";
+import { folder, place, removeSandbox } from "./hex.ts";
 import type { Folder } from "./hex.ts";
 import { telegram } from "./telegram.ts";
 
@@ -177,6 +177,8 @@ function once(chat: Chat, store: Store, key: string, words: string) {
     `the store holds the answer to "${words}" ${sent(store, words)} times, not once`,
   );
 }
+
+afterAll(removeSandbox);
 
 scenario(
   "the owner's message starts a session, whose answer reaches Telegram, and the store holds both",
