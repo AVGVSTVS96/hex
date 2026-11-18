@@ -55,6 +55,7 @@ import { HTML, Keeper } from "./board.ts";
 import type { State } from "./board.ts";
 import { server, tools } from "./channel.ts";
 import { confirmingWhatsKept } from "./confirmed.ts";
+import { paced } from "./paced.ts";
 
 // grammY 1.46 predates Bot API 10.4's widgets: https://core.telegram.org/bots/api#sendwidget
 type WidgetQuery = { id: string; from: User; chat?: Chat; message_id?: number; data: string };
@@ -563,6 +564,10 @@ async function dmTopic(owner: string, thread: string): Promise<number | undefine
   }
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A status post's edit answers its session in seconds: one Telegram holds back longer fails, and the post keeps its old text until its next change.
+const STATUS_EDIT_WITHIN = 15_000;
+
 const ledger = new Ledger(STATE_DIR, "telegram", (note) => hub.noted(note));
 
 const post: Post = {
@@ -590,13 +595,18 @@ const post: Post = {
   },
   edit: async (thread, message, text) => {
     try {
-      await paced(() =>
-        bot.api.editMessageText(
-          target(thread).chat_id,
-          Number(message),
-          { markdown: keepLines(text) },
-          { link_preview_options: { is_disabled: true } },
-        ),
+      await paced(
+        (signal) =>
+          bot.api.editMessageText(
+            target(thread).chat_id,
+            Number(message),
+            { markdown: keepLines(text) },
+            { link_preview_options: { is_disabled: true } },
+            // SAFETY: grammY types its signal as the abort-controller package's, and takes any with addEventListener, as Bun's has: https://github.com/grammyjs/grammY/blob/main/src/core/client.ts
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the two AbortSignal types share nothing to narrow through
+            signal as Parameters<typeof bot.api.editMessageText>[4],
+          ),
+        STATUS_EDIT_WITHIN,
       );
     } catch (error) {
       if (String(error).includes("message is not modified")) {
@@ -848,26 +858,6 @@ async function place(name: string, _where?: string, about?: string) {
     thread,
     link: `https://t.me/c/${chat_id.replace(/^-100/u, "")}/${topic.message_thread_id}`,
   };
-}
-
-// A backfill, or many questions redrawn at once, is more than Telegram lets a bot send in a minute, so each call waits out the limit Telegram names. https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this
-async function paced<T>(send: () => Promise<T>): Promise<T> {
-  for (;;) {
-    try {
-      return await send();
-    } catch (error) {
-      const wait =
-        error instanceof GrammyError && error.error_code === 429
-          ? error.parameters.retry_after
-          : undefined;
-
-      if (wait === undefined) {
-        throw error;
-      }
-
-      await Bun.sleep(wait * 1000);
-    }
-  }
 }
 
 const VIDEO_EXTS = new Set([".mp4", ".mov", ".m4v"]);

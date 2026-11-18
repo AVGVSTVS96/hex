@@ -256,7 +256,12 @@ export async function unlease(dir: string) {
 // shared: whether this client tells the folder's other processes when the object stops answering, and hears them; a backup's slow page or a lost hub paying what it owed keeps that to itself.
 const alone = { say: (_why: string) => null, heard: (): string | null => null, clear: () => null };
 
-export function remote(dir: string, times = TIMES, shared = true): (Client & Home) | undefined {
+export function remote(
+  dir: string,
+  times = TIMES,
+  shared = true,
+  inOrder = true,
+): (Client & Home) | undefined {
   const named = awayFile(dir);
 
   if (!existsSync(named)) {
@@ -387,10 +392,30 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
     }
   };
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Calls sent at once fail at once, so they share one probe, and the first to hear it failed starts the one line of probes after it.
+  let checking: Promise<boolean> | undefined;
+
   const fell = async (error: Error) => {
     if (error instanceof LostError) {
       lost ??= error;
-    } else if (error instanceof UnreachedError && down === undefined && !(await answers())) {
+
+      return;
+    }
+
+    if (!(error instanceof UnreachedError) || down !== undefined) {
+      return;
+    }
+
+    checking ??= (async () => {
+      try {
+        return await answers();
+      } finally {
+        checking = undefined;
+      }
+    })();
+
+    if (!(await checking) && down === undefined) {
       down = error;
       elsewhere.say(error.message);
       probeLater();
@@ -425,10 +450,14 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
   };
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A process's calls reach the object one at a time, so they are answered in the order it made them, as a file answers them.
+  // A process's calls reach the object one at a time, so they are answered in the order it made them, as a file answers them. A client that only reads sends each at once instead: a call costs a round trip to Cloudflare, so in a line, a status post's few reads wait out a board's hundred.
   let last: Promise<unknown> = Promise.resolve();
 
   const inTurn = <T>(call: () => Promise<T>) => {
+    if (!inOrder) {
+      return call();
+    }
+
     const answered = last.then(call);
     last = answered.catch(() => null);
 

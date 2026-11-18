@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { asking, Ledger } from "./ledger.ts";
 import type { Post } from "./ledger.ts";
-import { File, file, open, stateDir } from "./store.ts";
+import { File, file, open, reading, stateDir, UnreachedError } from "./store.ts";
 import { answering } from "./store/wire.ts";
 import { until } from "./until.ts";
 
@@ -443,6 +443,135 @@ test("a status post is rebuilt when its own thread's questions change, not on ev
   await until(() => edited.includes("-100:9"));
   expect(rendered).toEqual(["-100:9"]);
   stop();
+});
+
+test("rewrites asked for while one is slow join into one that runs after it with the newest note, so they never pile up behind it", async () => {
+  const ledger = new Ledger(dir, "telegram");
+  const edited: string[] = [];
+  let release: (() => void) | undefined;
+
+  const post: Post = {
+    room: 4096,
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- a Link returns string | undefined, which () => {} doesn't
+    link: () => undefined,
+    send: () => Promise.resolve(1),
+    edit: async (_, __, text) => {
+      edited.push(text);
+
+      if (edited.length === 1) {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      }
+
+      return true;
+    },
+    pin: () => Promise.resolve(),
+    unpin: () => Promise.resolve(),
+  };
+
+  await ledger.post("-100:8", "Desk", post);
+
+  const slow = ledger.rewrite("-100:8", post, "First", 1);
+  await until(() => release !== undefined);
+
+  const after = ["Second", "Third", "Fourth"].map(async (note) => {
+    await ledger.rewrite("-100:8", post, note, 1);
+  });
+
+  const kept = ledger.rewrite("-100:8", post);
+
+  release?.();
+  await Promise.all([slow, ...after, kept]);
+
+  expect(edited).toEqual(["First", "Fourth"]);
+  expect(await ledger.pin("-100:8")).toMatchObject({ note: "Fourth" });
+});
+
+test("a status post's reads go out beside the store's other bulk reads, not in a line behind them", async () => {
+  const records = file(join(dir, "object"));
+  const answer = answering(records);
+  records.pins.pinned({
+    app: "telegram",
+    thread: "-100:7",
+    message: 1,
+    text: "old",
+    note: "Working",
+  });
+  const { promise: boardMayAnswer, resolve: answerTheBoard } = Promise.withResolvers<undefined>();
+
+  const object = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const call = await request.text();
+
+      if (call.includes('"threads"')) {
+        await boardMayAnswer;
+      }
+
+      return Response.json(answer(call));
+    },
+  });
+
+  writeFileSync(
+    join(stateDir(dir), "store.json"),
+    JSON.stringify({ url: object.url.origin, name: "hex", key: "k".repeat(32) }),
+  );
+
+  const post: Post = {
+    room: 4096,
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- a Link returns string | undefined, which () => {} doesn't
+    link: () => undefined,
+    send: () => Promise.resolve(2),
+    edit: () => Promise.resolve(true),
+    pin: () => Promise.resolve(),
+    unpin: () => Promise.resolve(),
+  };
+
+  const board = Array.from({ length: 20 }, async () => await reading(stateDir(dir)).threads.list());
+
+  try {
+    await new Ledger(dir, "telegram").rewrite("-100:7", post);
+  } finally {
+    answerTheBoard(undefined);
+    await Promise.allSettled(board);
+    await object.stop(true);
+  }
+});
+
+test("reads sent at once to a store that stopped answering share one probe of it", async () => {
+  const probes = new Set<string>();
+
+  const object = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      if ((await request.text()).includes('"clock"')) {
+        probes.add(request.headers.get("hex-call") ?? "");
+      }
+
+      return new Response("", { status: 500 });
+    },
+  });
+
+  writeFileSync(
+    join(stateDir(dir), "store.json"),
+    JSON.stringify({ url: object.url.origin, name: "hex", key: "k".repeat(32) }),
+  );
+
+  try {
+    const failed = await Promise.allSettled(
+      Array.from({ length: 50 }, async () => await reading(stateDir(dir)).threads.list()),
+    );
+
+    expect(
+      failed.every((each) => each.status === "rejected" && each.reason instanceof UnreachedError),
+    ).toBe(true);
+    expect(probes.size).toBe(1);
+  } finally {
+    await object.stop(true);
+  }
 });
 
 test("status posts read hex's store through a client of their own, so a message lands and the store syncs without waiting out their reads", async () => {

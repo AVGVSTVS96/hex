@@ -29,12 +29,15 @@ export type Post = {
   /* oxlint-enable anti-slop/no-unknown-returns -- end of the awaited-only calls */
 };
 
+type Rewrite = { post: Post; note?: string | undefined; message?: MessageId | undefined };
+
 export class Ledger {
   private readonly store: Store;
   private readonly reads: Store;
   private readonly app: string;
   private readonly note: (note: Note) => Promise<void>;
   private readonly turns = new Map<string, Promise<unknown>>();
+  private readonly waiting = new Map<string, { asked: Rewrite; done: Promise<void> }>();
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // note: how what hex said is noted (ask, said), which follows words the owner already has, so a hub owes it to a store that doesn't answer (hub.noted) instead of failing the tool that sent them.
@@ -76,51 +79,81 @@ export class Ledger {
     });
   }
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A rewrite asked for while another waits its turn joins it, with the newest note, so a thread's rewrites never pile up behind a slow one: whatever is asked waits for at most the one running and its own.
   rewrite(thread: string, post: Post, note?: string, message?: MessageId): Promise<void> {
-    return this.turn(thread, async () => {
-      const pin = await this.pin(thread);
+    const waiting = this.waiting.get(thread);
 
-      if (message !== undefined && String(pin?.message) !== String(message)) {
-        throw new Error("that message is no longer the status post");
+    if (waiting !== undefined) {
+      waiting.asked.post = post;
+
+      if (note !== undefined) {
+        waiting.asked.note = note;
+        waiting.asked.message = message;
       }
 
-      if (!pin) {
-        return;
+      return waiting.done;
+    }
+
+    const asked: Rewrite = { post, note, message };
+
+    const done = this.turn(thread, async () => {
+      if (this.waiting.get(thread)?.asked === asked) {
+        this.waiting.delete(thread);
       }
 
-      const said = note === undefined ? pin.note : above(note);
-      const text = await this.render(thread, said, post);
-
-      if (text === pin.text && said === pin.note) {
-        return;
-      }
-
-      const shown = text === pin.text || (await post.edit(thread, pin.message, text));
-
-      if (shown === null) {
-        await this.store.pins.unpinned(this.app, thread, pin.message);
-      }
-
-      if (shown === null || shown === false) {
-        if (note !== undefined) {
-          throw new Error(
-            shown === null
-              ? "the status post is gone; post a new one with pin"
-              : "the thread is closed, so its status post can't change now",
-          );
-        }
-
-        return;
-      }
-
-      await this.store.pins.repinned(
-        { app: this.app, thread, message: pin.message, text, note: said },
-        pin.note,
-      );
+      await this.rewritten(thread, asked);
     });
+
+    this.waiting.set(thread, { asked, done });
+
+    return done;
+  }
+
+  private async rewritten(thread: string, { post, note, message }: Rewrite) {
+    const pin = await this.pin(thread);
+
+    if (message !== undefined && String(pin?.message) !== String(message)) {
+      throw new Error("that message is no longer the status post");
+    }
+
+    if (!pin) {
+      return;
+    }
+
+    const said = note === undefined ? pin.note : above(note);
+    const text = await this.render(thread, said, post);
+
+    if (text === pin.text && said === pin.note) {
+      return;
+    }
+
+    const shown = text === pin.text || (await post.edit(thread, pin.message, text));
+
+    if (shown === null) {
+      await this.store.pins.unpinned(this.app, thread, pin.message);
+    }
+
+    if (shown === null || shown === false) {
+      if (note !== undefined) {
+        throw new Error(
+          shown === null
+            ? "the status post is gone; post a new one with pin"
+            : "the thread is closed, so its status post can't change now",
+        );
+      }
+
+      return;
+    }
+
+    await this.store.pins.repinned(
+      { app: this.app, thread, message: pin.message, text, note: said },
+      pin.note,
+    );
   }
 
   private turn<T>(thread: string, change: () => T | Promise<T>): Promise<T> {
+    this.waiting.delete(thread);
     const next = (this.turns.get(thread) ?? Promise.resolve()).catch(() => null).then(change);
 
     this.turns.set(thread, next);
