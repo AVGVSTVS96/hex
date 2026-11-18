@@ -203,7 +203,7 @@ test("migrate links hex's units where hex runs as hex.service from this hex, and
     });
 
     expect(ran.stderr.toString()).toBe("");
-    expect(read("state/migrated")).toBe("8\n");
+    expect(read("state/migrated")).toBe("9\n");
   };
 
   run(join(home, "elsewhere/hex.service"));
@@ -211,4 +211,20 @@ test("migrate links hex's units where hex runs as hex.service from this hex, and
 
   run(join(hex, "systemd/hex.service"));
   expect(read("linked")).toBe("link\n");
+});
+
+test("migrate refuses pkill -f in the user's permissions once, and leaves the rest of their settings", () => {
+  mkdirSync(join(home, ".claude"));
+  wrote(
+    ".claude/settings.json",
+    JSON.stringify({ model: "opus", permissions: { deny: ["Read(./.env)"] } }),
+  );
+  wrote("state/migrated", "8\n");
+  migrate();
+  migrate();
+
+  expect(JSON.parse(read(".claude/settings.json"))).toEqual({
+    model: "opus",
+    permissions: { deny: ["Read(./.env)", "Bash(pkill -f *)"] },
+  });
 });

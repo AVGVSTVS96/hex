@@ -8,6 +8,7 @@
       "Read(./.env)",
       "Read(./state/*/.env)",
       "Edit(./state/**)",
+      "Bash(pkill -f *)",
       "Artifact",
       "AskUserQuestion",
       "ReportFindings"

@@ -6,7 +6,7 @@ hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
 done="$home/state/migrated"
 
-steps=8
+steps=9
 
 step1() {
   [ -f "$home/schedules.json" ] || return 0
@@ -63,6 +63,14 @@ step8() {
   unit=$(systemctl --user show -P FragmentPath hex.service 2>/dev/null) || return 0
   [ -n "$unit" ] && [ "$(readlink -f "$unit")" = "$hex/systemd/hex.service" ] || return 0
   "$hex/bin/hex" link
+}
+
+# pkill -f matches its own shell's command line too. Claude Code's permissions refuse it now, where a hook on every command once did.
+step9() {
+  settings="$home/.claude/settings.json"
+  [ -f "$settings" ] || return 0
+  jq -e '.permissions.deny // [] | index("Bash(pkill -f *)")' "$settings" > /dev/null && return 0
+  jq '.permissions.deny += ["Bash(pkill -f *)"]' "$settings" > "$settings.new" && mv "$settings.new" "$settings"
 }
 
 n=$(cat "$done" 2>/dev/null) || n=0

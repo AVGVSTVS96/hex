@@ -212,8 +212,8 @@ export class Turns {
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // What the owner said to a session since its last turn ended, when it outnumbers the replies the session sent since: Claude Code passes on a chat message that arrives mid-turn as one from outside, not the user, so the turn can end without answering it.
-  unanswered(session: string, more = 0): Row[] {
+  // What the owner said to a session since its last turn ended, when it outnumbers the replies the session sent since.
+  unanswered(session: string): Row[] {
     const { handled } = this.get(session);
 
     if (handled === undefined) {
@@ -236,7 +236,7 @@ export class Turns {
         .get(session, handled),
     );
 
-    return owners.length > replies + more ? owners : [];
+    return owners.length > replies ? owners : [];
   }
 
   get(session: string): { began?: string; ended?: string; handled?: string } {
