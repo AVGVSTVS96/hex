@@ -33,4 +33,4 @@ console.log(`a scratch hex runs in ${hex.dir}
   its commands               (. ${env}; ${join(hex.hex, "bin/hex")} threads)
   its hub's log              ${join(hex.dir, "state/hub.log")}
 
-Ctrl-C stops it and removes it.`);
+It's removed when this ends: Ctrl-C, or \`kill\` this process.`);
