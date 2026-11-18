@@ -59,7 +59,7 @@ function objectIn(state: string) {
 const Call = z.object({ domain: z.string(), method: z.string(), args: z.array(z.unknown()) });
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A store every machine reaches, as a folder's store.json names one: the object's own code over a database in memory. ring: what its watchers hear when it answers again. net: what the way to it does to a call, by the call's name: drop it, take a while over it, or have the store refuse more of a file for want of room, which calls about transcripts it was asked, and how many calls were on their way at once.
+// A store every machine reaches, as a folder's store.json names one: the object's own code over a database in memory. ring: what its watchers hear when it answers again. net: what the way to it does to a call, by the call's name: drop it, take a while over it, or have the store refuse more of a file for want of room, which calls about transcripts it was asked, and how many calls were on their way at once: of any kind, about one file's copy, and about every copy.
 function storeElsewhere() {
   const state = join(dir, "state");
   mkdirSync(state, { recursive: true });
@@ -75,14 +75,27 @@ function storeElsewhere() {
     full: false,
     out: 0,
     mostOut: 0,
+    outOf: new Map<string, number>(),
+    mostOfOne: 0,
+    mostOfAll: 0,
   };
 
   const store: Store = {
     ...client(async (text) => {
       const { domain, method, args } = Call.parse(JSON.parse(text));
 
+      const one = domain === "transcripts" ? z.string().safeParse(args[0]).data : undefined;
       net.out += 1;
       net.mostOut = Math.max(net.mostOut, net.out);
+
+      if (one !== undefined) {
+        net.outOf.set(one, (net.outOf.get(one) ?? 0) + 1);
+        net.mostOfOne = Math.max(net.mostOfOne, net.outOf.get(one) ?? 0);
+        net.mostOfAll = Math.max(
+          net.mostOfAll,
+          [...net.outOf.values()].reduce((a, b) => a + b),
+        );
+      }
 
       try {
         if (net.takes > 0) {
@@ -90,6 +103,10 @@ function storeElsewhere() {
         }
       } finally {
         net.out -= 1;
+
+        if (one !== undefined) {
+          net.outOf.set(one, (net.outOf.get(one) ?? 1) - 1);
+        }
       }
 
       if (domain === "transcripts") {
@@ -794,30 +811,6 @@ test("a machine holding an older file resumes nothing from it when the store doe
   expect(twin.setAside()).toEqual([]);
 });
 
-test("one call the store doesn't answer, of those that bring a copy, is asked again", async () => {
-  const { store, net } = storeElsewhere();
-  const server = machine("server", store);
-  const twin = machine("twin", store);
-  writeFileSync(server.path(), line("the plants are in the hall"));
-  await server.hub();
-  await until(async () => (await copyIn(store)) === server.written());
-
-  for (const dropped of ["transcripts.end", "transcripts.since"]) {
-    let once = true;
-
-    net.drops = (call) => {
-      const drops = once && call === dropped;
-      once &&= !drops;
-
-      return drops;
-    };
-
-    rmSync(twin.path(), { force: true });
-    expect(await twin.hub()).toBe(true);
-    expect(twin.written()).toBe(server.written());
-  }
-});
-
 test("a store with no room left is still told how long a transcript has grown, so its copy is resumed nowhere else", async () => {
   const { store, net } = storeElsewhere();
   const server = machine("server", store);
@@ -842,7 +835,7 @@ test("a store with no room left is still told how long a transcript has grown, s
   expect(existsSync(twin.path())).toBe(false);
 });
 
-test("the store's other calls wait behind one piece of a long transcript, not the whole send, which a hub that stops waits for", async () => {
+test("the store's other calls don't wait for a long transcript's send, which a hub that stops waits for", async () => {
   const { store, net } = storeElsewhere();
   const server = machine("server", store);
   writeFileSync(server.path(), line("x".repeat(100_000)).repeat(40));
@@ -1002,7 +995,38 @@ test("two starts that bring one copy at once beside a file with lines of its own
   ).toEqual([older]);
 });
 
-test("a session's start takes no turn behind the sends: its call leaves while a send's is still on its way", async () => {
+function agreed(session: string) {
+  try {
+    return readFileSync(join(dir, "state", "copies", "server", `${session}.agreed`), "utf-8");
+  } catch {
+    return "";
+  }
+}
+
+test("conversations are sent side by side, each one's calls one after another", async () => {
+  const { store, net } = storeElsewhere();
+  const one = machine("server", store);
+  const other = machine("server", store, { app: "t3", session: OTHER });
+  writeFileSync(one.path(), line("x".repeat(100_000)).repeat(20));
+  writeFileSync(other.path(OTHER), line("y".repeat(100_000)).repeat(20));
+  net.takes = 5;
+
+  await Promise.all([one.started(), other.started()]);
+
+  await until(
+    () =>
+      agreed(SESSION).startsWith(`${Buffer.byteLength(one.written())} `) &&
+      agreed(OTHER).startsWith(`${Buffer.byteLength(other.written(OTHER))} `),
+  );
+  await sent();
+
+  expect(net.mostOfAll).toBe(2);
+  expect(net.mostOfOne).toBe(1);
+  expect(await copyIn(store)).toBe(one.written());
+  expect(await copyIn(store, OTHER)).toBe(other.written(OTHER));
+});
+
+test("a session's start waits behind no send: its call leaves while a send's is still on its way", async () => {
   const { store, net } = storeElsewhere();
   const server = machine("server", store);
   writeFileSync(server.path(), line("x".repeat(100_000)).repeat(40));

@@ -1027,6 +1027,51 @@ test("a call whose connection drops is sent again and lands once, whether the st
   }
 });
 
+test("calls about a conversation's copy leave at once, beside the process's other calls, which reach the object one at a time", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage);
+  const go = Promise.withResolvers<null>();
+  let [held, out, most] = [false, 0, 0];
+
+  const object = served(storage, undefined, async (_route, answer) => {
+    out += 1;
+    most = Math.max(most, out);
+
+    try {
+      if (held) {
+        await go.promise;
+      }
+
+      return await answer();
+    } finally {
+      out -= 1;
+    }
+  });
+
+  pointedAt(dir, object.url);
+
+  try {
+    const hub = remote(dir, quick);
+    await hub?.claim();
+    held = true;
+
+    const asked = [
+      hub?.threads.list(),
+      hub?.threads.list(),
+      hub?.transcripts.end("one"),
+      hub?.transcripts.end("another"),
+    ];
+
+    await until(() => out === 3);
+    held = false;
+    go.resolve(null);
+    await Promise.all(asked.map(async (answer) => await answer));
+    expect(most).toBe(3);
+  } finally {
+    await object.stop();
+  }
+});
+
 test("a call answered with a page in the object's place, like the empty 500 of an object Cloudflare reset, is sent again and lands once; a 429 page isn't sent again", async () => {
   const storage = objectStorage();
   startedEmpty(storage);

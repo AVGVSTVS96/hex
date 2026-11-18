@@ -463,8 +463,11 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
   const read = async (text: string, ...bound: Bound[]) =>
     z.array(z.unknown()).parse(decode(await guarded("sql", JSON.stringify({ text, bound }))));
 
+  const atOnce = client(async (call) => await guarded("call", call));
+
   return {
     ...client(async (call) => await inTurn(async () => await guarded("call", call))),
+    transcripts: atOnce.transcripts,
     dir,
     claim,
     watch: socket.watch,

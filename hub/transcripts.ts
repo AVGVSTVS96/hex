@@ -210,25 +210,7 @@ function isItsFile(path: string, { of, last }: End) {
   }
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Every hub in the process sends through the one client, whose calls reach the store one at a time, so their sends take turns here: the hub's other calls then wait behind one piece of them at most, and behind one page for each session that is starting, which takes no turn here.
-let line: Promise<unknown> = Promise.resolve();
-
-function inLine<T>(call: () => Promise<T>): Promise<T> {
-  const answered = line.then(call);
-  line = answered.catch(() => null);
-
-  return answered;
-}
-
 type Ask = <T>(use: (store: Store) => Promise<T>) => Promise<T | undefined>;
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A call can go unanswered alone, on a network that drops one request, so what a session's start depends on is asked a second time before it counts as not there.
-const twice =
-  (ask: Ask): Ask =>
-  async (use) =>
-    (await ask(use)) ?? (await ask(use));
 
 type Saw = { ino: number; size: number; mtimeMs: number };
 
@@ -237,10 +219,9 @@ type Saw = { ino: number; size: number; mtimeMs: number };
 type Seen = Saw & { end: End; hash: Hash };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a hub knows of the copies, and how it asks the store: a send in turn with every other send in the process (ask), a session's start with no turn among them (first), since a thread waits on it and a hub's start has every channel's sends ahead of it. root: where this machine keeps, for each file, the last state in which the file and its copy were the same, which says which of the two changed since. heard: where the store last said each transcript stands. there: the files beside each transcript that the store holds, and where each stands. written: the sessions whose transcript changed on this machine under this hub, which holds hex, so no other machine has more of them. beside: watches the files beside a transcript.
+// What a hub knows of the copies, and how it asks the store (ask), whose client lets a conversation's calls leave at once: each conversation's sends go one after another, so the conversations send side by side, and a session's start waits behind none of them. root: where this machine keeps, for each file, the last state in which the file and its copy were the same, which says which of the two changed since. heard: where the store last said each transcript stands. there: the files beside each transcript that the store holds, and where each stands. written: the sessions whose transcript changed on this machine under this hub, which holds hex, so no other machine has more of them. beside: watches the files beside a transcript.
 type Known = {
   ask: Ask;
-  first: Ask;
   machine: string;
   root: string;
   seen: Map<string, Seen>;
@@ -975,8 +956,7 @@ function watching() {
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Whether this machine holds a session's whole conversation, as new as the store's, for which its file is read whole. A file the copy is newer than, or longer than, gets what it lacks from the copy before the session starts; one that is the newer stays, and is sent behind the start. A store that holds nothing of a session says nothing against the file here. One that doesn't answer leaves what it last said of the session to this hub, or that the session wrote here under this hub: without either, the file here may be an older one, and isn't resumed. A copy still short of the file it is of completes nothing.
 async function brought(known: Known, session: string, to: string) {
-  const { machine, heard, written } = known;
-  const ask = twice(known.first);
+  const { ask, machine, heard, written } = known;
   const end = (await ask((store) => store.transcripts.end(session))) ?? heard.get(session);
   const file: Copy = [session, existsSync(to) ? to : (claude.transcriptOf(session) ?? to)];
 
@@ -1079,8 +1059,7 @@ export function sessionTranscripts({
   }
 
   const known: Known = {
-    ask: (use) => inLine(() => kept(use, undefined)),
-    first: (use) => kept(use, undefined),
+    ask: (use) => kept(use, undefined),
     machine,
     root: "",
     seen: new Map(),
