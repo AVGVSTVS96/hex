@@ -44,10 +44,46 @@ const Claimed = z.object({ tenure: z.number() }).optional();
 const CLAIMS_KEPT = 100;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The replies kept of calls that wrote, so one sent again after its reply was lost is answered from them, not run twice; a client sends again at once, so older ones go.
-const CALLS_KEPT = 1000;
+// The reply of a call that wrote is kept, so the call sent again after its reply was lost is answered from it, not run twice. A client sends a call again within its own wait for it, seconds, so a reply goes ten minutes on. One is kept in parts of at most 1.5 MiB however it's encoded, so a reply as large as a value can be (8 MiB) is kept too.
+const CALLS_KEPT_FOR = 10 * 60_000;
+const PART = 512 * 1024;
 
-const Kept = z.object({ reply: z.string() }).optional();
+const KeptParts = z.array(z.object({ reply: z.string() }));
+
+function partsOf(text: string): string[] {
+  const parts: string[] = [];
+
+  for (let from = 0; from < text.length;) {
+    const cut = Math.min(from + PART, text.length);
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // A part never ends between the two halves of a character, which SQLite's UTF-8 would replace.
+    const end = cut < text.length && /[\uD800-\uDBFF]/u.test(text.charAt(cut - 1)) ? cut - 1 : cut;
+    parts.push(text.slice(from, end));
+    from = end;
+  }
+
+  return parts;
+}
+
+function keptReplies(run: Run) {
+  return {
+    of: (id: string): Reply | undefined => {
+      const parts = KeptParts.parse(run("select reply from _calls where id = ? order by part", id));
+
+      return parts.length === 0
+        ? undefined
+        : ReplyJson.parse(JSON.parse(parts.map(({ reply }) => reply).join("")));
+    },
+    keep: (id: string, reply: Reply) => {
+      const at = Date.now();
+      run("delete from _calls where at < ?", at - CALLS_KEPT_FOR);
+
+      for (const [part, said] of partsOf(JSON.stringify(reply)).entries()) {
+        run("insert into _calls (id, part, at, reply) values (?, ?, ?, ?)", id, part, at, said);
+      }
+    },
+  };
+}
 
 const Count = z.object({ n: z.number() });
 const Statements = z.object({ statements: z.array(z.string()) });
@@ -239,7 +275,7 @@ function homeTables(run: Run) {
     "create table if not exists _claims (claimant text primary key, tenure integer not null unique)",
   );
   run(
-    "create table if not exists _calls (n integer primary key, id text not null unique, reply text not null)",
+    "create table if not exists _calls (id text not null, part integer not null, at integer not null, reply text not null, primary key (id, part))",
   );
 
   for (const [column, kind] of [
@@ -266,6 +302,7 @@ export function recordsIn(storage: Storage, dir = "") {
   const changes = () => Count.parse(run("select total_changes() as n")[0]).n;
 
   const own = ownWrites(core, changes);
+  const replies = keptReplies(run);
 
   const ready = () => {
     const made = domains(core, own.quiet);
@@ -376,13 +413,10 @@ export function recordsIn(storage: Storage, dir = "") {
         run("update _home set served = 1");
       }
 
-      const kept =
-        id === undefined
-          ? undefined
-          : Kept.parse(run("select reply from _calls where id = ?", id)[0]);
+      const kept = id === undefined ? undefined : replies.of(id);
 
       if (kept !== undefined) {
-        return { reply: ReplyJson.parse(JSON.parse(kept.reply)), wrote: false, again: true };
+        return { reply: kept, wrote: false, again: true };
       }
 
       const answered = answer;
@@ -399,10 +433,8 @@ export function recordsIn(storage: Storage, dir = "") {
           }
 
           if (id !== undefined && changes() !== all) {
-            const said = JSON.stringify(reply);
             own.quiet(() => {
-              run("insert into _calls (id, reply) values (?, ?)", id, said);
-              run("delete from _calls where n <= last_insert_rowid() - ?", CALLS_KEPT);
+              replies.keep(id, reply);
             });
           }
         });

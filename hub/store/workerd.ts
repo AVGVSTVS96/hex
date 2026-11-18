@@ -673,19 +673,6 @@ test("the object says what its store offers, the migrations and methods this che
   expect(answer.offers).toEqual(OFFERS);
 });
 
-test("words a lost reply took mid-turn come back when the take is made again with the same time", async () => {
-  const store = remote(await movedInto("held"), QUICK);
-  const at = "2026-11-17T10:00:00.000Z";
-
-  await store?.messages.deliver(message);
-  await store?.messages.hold(message.key, "s-1");
-  await store?.messages.takeHeld(message.to, "s-1", at);
-
-  expect((await store?.messages.takeHeld(message.to, "s-1", at))?.map((row) => row.key)).toEqual([
-    message.key,
-  ]);
-});
-
 const claimNeeding = async (claimant: string, needs: typeof OFFERS) =>
   await fetch(`${url}/contracts/claim`, {
     method: "POST",

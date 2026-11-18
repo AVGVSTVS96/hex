@@ -1005,6 +1005,76 @@ test("a call whose connection drops is sent again and lands once, whether the st
   }
 });
 
+test("a call answered with a page in the object's place, like the empty 500 of an object Cloudflare reset, is sent again and lands once; a 429 page isn't sent again", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage);
+  const object = served(storage);
+  let page: { status: number; body: string } | undefined;
+  let calls = 0;
+
+  const front = Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      calls += 1;
+      const answer = await fetch(new URL(new URL(request.url).pathname, object.url), {
+        method: request.method,
+        headers: request.headers,
+        body: await request.text(),
+      });
+      const instead = page;
+      page = undefined;
+
+      return instead === undefined
+        ? answer
+        : new Response(instead.body, { status: instead.status });
+    },
+  });
+
+  pointedAt(dir, front.url.origin);
+
+  try {
+    const hub = remote(dir, quick);
+    await hub?.claim();
+    expect(await hub?.messages.deliver(message)).toBe(true);
+    const task = { title: "Fix it", message: message.key, owner: "-100:7" };
+
+    page = { status: 500, body: "" };
+    expect((await hub?.tasks.create(task))?.id).toBe("t-1");
+    expect((await hub?.tasks.list())?.map(({ id }) => id)).toEqual(["t-1"]);
+
+    page = { status: 429, body: "<html>Too many requests</html>" };
+    const sent = calls;
+    expect(await thrown(hub?.tasks.create(task) ?? never)).toBeInstanceOf(UnreachedError);
+    expect(calls - sent).toBe(2);
+  } finally {
+    await front.stop(true);
+    await object.stop();
+  }
+});
+
+test("a call that wrote is answered again from its kept reply, a reply as large as a value can be included, and one that only read runs again", () => {
+  const object = startedEmpty();
+  const large = "a".repeat(4.5 * 1024 * 1024);
+
+  for (const [key, body] of [
+    ["telegram:-100:42", large],
+    ["telegram:-100:43", `${large}🙂`],
+  ]) {
+    object.call(raw("messages", "deliver", [{ ...message, key, body }]));
+    object.call(raw("messages", "hold", [key, "s-1"]));
+  }
+
+  const take = raw("messages", "takeHeld", [message.to, "s-1"]);
+  const first = object.call(take, "take-1");
+  expect(first.wrote).toBe(true);
+  expect(object.call(take, "take-1")).toEqual({ ...first, wrote: false, again: true });
+  expect(object.call(take, "take-2").reply).toEqual({ value: [] });
+
+  const read = raw("messages", "untaken");
+  expect(object.call(read, "read-1").again).toBeUndefined();
+  expect(object.call(read, "read-1").again).toBeUndefined();
+});
+
 test("a process that finds the object not answering tells the next, which fails at once as unasked instead of waiting out its own time, and a client that keeps to itself asks", async () => {
   let reached = 0;
   let hang = true;
