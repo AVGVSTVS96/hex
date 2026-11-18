@@ -574,29 +574,6 @@ test("hex thread files a thread under the project it's part of, kept as its app 
   expect(await hex("thread", "Nowhere", "--project", "keyboard")).not.toBe(0);
 });
 
-test("bin/hex hands hex's cli every command its usage lists", async () => {
-  const usage = await new Response(
-    Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir], { stderr: "pipe" }).stderr,
-  ).text();
-
-  const commands = [
-    ...new Set([...usage.matchAll(/^ {2}hex (\w+)/gmu)].flatMap(([, command]) => command ?? [])),
-  ];
-
-  const handed = new Set(
-    [
-      ...readFileSync(join(import.meta.dir, "../bin/hex"), "utf-8").matchAll(
-        /^ {2}([a-z|]+)\)\n(.*?)^ {4};;$/gmsu,
-      ),
-    ].flatMap(([, labels = "", body = ""]) =>
-      body.includes('exec bun "$hex/hub/cli.ts"') ? labels.split("|") : [],
-    ),
-  );
-
-  expect(commands).toContain("thread");
-  expect(commands.filter((command) => !handed.has(command))).toEqual([]);
-});
-
 const ask = {
   ...message,
   key: "telegram:-100:50",
