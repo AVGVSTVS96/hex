@@ -3,8 +3,10 @@ import { connect } from "node:net";
 import { z } from "zod";
 
 import type { HubLine } from "./hub.ts";
+import { followed } from "./kept.ts";
 import { local } from "./mcp.ts";
-import { open, stateDir } from "./store.ts";
+import { stateDir, UnaskedError, unclaimed, UnreachedError } from "./store.ts";
+import type { Store } from "./store.ts";
 import type { Row } from "./store/messages.ts";
 
 const { HEX_THREAD, HEX_HUB } = process.env;
@@ -26,12 +28,37 @@ function tag(row: Row, zone: string) {
   return `<channel source="${row.from}"${meta}>\n${row.body.replaceAll("</channel>", "<\\/channel>")}\n</channel>`;
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The store marks what it gives taken before it answers, so a take that went out and got no answer is asked again at once under the same time, through a client of its own, which gives what that take took; a store already known down fails it at once, unasked (UnaskedError), so a tool call never waits on it. What the store still doesn't answer is left to the hub, which gives what it held from memory once the turn ends.
+async function takeHeld(thread: string, session: string) {
+  const at = new Date().toISOString();
+  const take = async (store: Store) => await store.messages.takeHeld(thread, session, at);
+
+  try {
+    try {
+      return await followed(stateDir(), take);
+    } catch (error) {
+      if (error instanceof UnreachedError && !(error instanceof UnaskedError)) {
+        return await take(unclaimed(stateDir()));
+      }
+
+      throw error;
+    }
+  } catch (error) {
+    process.stderr.write(
+      `hex couldn't give this session the words held for it: ${String(error)}\n`,
+    );
+
+    return [];
+  }
+}
+
 const { session_id, hook_event_name, agent_id } = ToolUse.parse(
   JSON.parse((await Bun.stdin.text()) || "{}"),
 );
 
 if (HEX_THREAD !== undefined && HEX_THREAD !== "" && session_id !== "" && agent_id === undefined) {
-  const rows = await open(stateDir()).messages.takeHeld(HEX_THREAD, session_id);
+  const rows = await takeHeld(HEX_THREAD, session_id);
 
   if (rows.length > 0 && HEX_HUB !== undefined && HEX_HUB !== "") {
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show

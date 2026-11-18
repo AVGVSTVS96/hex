@@ -12,6 +12,7 @@ const Counters = z.array(z.object({ name: z.string().regex(/^\w+$/u), seq: z.num
 const Version = z.object({ version: z.number().int() });
 const Cell = z.union([z.string(), z.number(), z.null()]);
 const Rows = z.array(z.record(z.string(), Cell));
+const Sizes = z.array(z.object({ rowid: z.number(), size: z.number() }));
 
 export type Read = (text: string) => Promise<unknown[]>;
 
@@ -94,14 +95,43 @@ export async function layout(read: Read) {
   };
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A page is up to 500 rows and about 4 MB, its sizes read first, so a table of large rows never comes back in one reply too big to answer in time.
 async function page(read: Read, { name, columns }: Table, after: number) {
-  const rows = Rows.parse(
+  const sizes = Sizes.parse(
     await read(
-      `select ${columns.map((column) => (column === "rowid" ? 'rowid as "rowid"' : `"${column}"`)).join(", ")} from "${name}" where rowid > ${after} order by rowid limit ${ROWS_AT_ONCE}`,
+      `select rowid as "rowid", ${columns
+        .filter((column) => column !== "rowid")
+        .map((column) => `coalesce(length(cast("${column}" as blob)), 0)`)
+        .join(
+          " + ",
+        )} as size from "${name}" where rowid > ${after} order by rowid limit ${ROWS_AT_ONCE}`,
     ),
   );
 
-  return { rows, last: z.number().optional().parse(rows.at(-1)?.rowid) };
+  let bytes = 0;
+  let upTo: number | undefined;
+
+  for (const { rowid, size } of sizes) {
+    if (upTo !== undefined && bytes + size > BYTES_AT_ONCE) {
+      break;
+    }
+
+    bytes += size;
+    upTo = rowid;
+  }
+
+  if (upTo === undefined) {
+    return { rows: [], last: undefined };
+  }
+
+  const rows = Rows.parse(
+    await read(
+      `select ${columns.map((column) => (column === "rowid" ? 'rowid as "rowid"' : `"${column}"`)).join(", ")} from "${name}" where rowid > ${after} and rowid <= ${upTo} order by rowid`,
+    ),
+  );
+
+  return { rows, last: upTo };
 }
 
 export async function* pages(read: Read, table: Table) {
@@ -192,5 +222,56 @@ export async function bring(read: Read, to: string) {
     rmSync(part, { force: true });
 
     throw error;
+  }
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// How one copy of hex's records differs from another, in words, or nothing when every table, row, column type and autoincrement counter is the same.
+export async function difference(
+  here: Read,
+  there: Read,
+  say: (line: string) => void,
+): Promise<string | undefined> {
+  const mine = await layout(here);
+  const theirs = await layout(there);
+
+  const schema = ({ tables, indexesAndTriggers }: typeof mine) =>
+    JSON.stringify([tables.map(({ sql }) => sql), indexesAndTriggers]);
+
+  if (schema(mine) !== schema(theirs)) {
+    return "the tables, indexes or triggers differ";
+  }
+
+  for (const table of mine.tables) {
+    let same = 0;
+    const its = pages(there, table);
+
+    for await (const rows of pages(here, table)) {
+      const theirRows = await its.next();
+
+      if (JSON.stringify(rows) !== JSON.stringify(theirRows.value)) {
+        return `${table.name} differs after ${same} rows`;
+      }
+
+      same += rows.length;
+    }
+
+    if ((await its.next()).done !== true) {
+      return `${table.name} has more rows in one than the other`;
+    }
+
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // JSON reads 7 and 7.0 alike, so each column's types are counted too.
+    const types = `select ${table.columns.map((column) => `typeof("${column}")`).join(" || ',' || ")} as types, count(*) as n from "${table.name}" group by 1 order by 1`;
+
+    if (JSON.stringify(await here(types)) !== JSON.stringify(await there(types))) {
+      return `${table.name} holds values of other types`;
+    }
+
+    say(`${table.name}: ${same} rows the same`);
+  }
+
+  if (JSON.stringify(mine.counters) !== JSON.stringify(theirs.counters)) {
+    return "the autoincrement counters differ";
   }
 }

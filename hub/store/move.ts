@@ -1,11 +1,12 @@
 import { Database } from "bun:sqlite";
-import { existsSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { z } from "zod";
 
-import { batches, carriedOf, layout, pages } from "./carry.ts";
+import { batches, carriedOf, difference, layout, pages } from "./carry.ts";
 import type { Read } from "./carry.ts";
+import { OFFERS, OffersJson, unmet } from "./domains.ts";
 import { UnreachedError } from "./errors.ts";
 import { appendOnlyMigrations } from "./migrations.ts";
 import { at, awayFile, StoreJson } from "./remote.ts";
@@ -24,6 +25,10 @@ type Posted =
   | { statements: string[] }
   | { table: string; columns: string[]; rows: unknown[][] }
   | { version: number };
+
+const CHECKPOINT_WITHIN = 2000;
+
+const TheirOffers = z.object({ offers: OffersJson });
 
 const MoveState = z.object({
   arrived: z.boolean(),
@@ -59,7 +64,7 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // One request, answered by the object, or rejected with UnreachedError when the answer isn't the object's own (none, a page of Cloudflare's, a 5xx or 429).
-  const once = async (route: string, body?: Posted, mark?: string) => {
+  const reply = async (route: string, body?: Posted, mark?: string) => {
     let response: Response;
     let text: string;
 
@@ -82,8 +87,11 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
       throw new UnreachedError(`the object answered ${response.status}: ${text.slice(0, 200)}`);
     }
 
-    return decode(text);
+    return text;
   };
+
+  const once = async (route: string, body?: Posted, mark?: string) =>
+    decode(await reply(route, body, mark));
 
   const waitedOut = async <T>(work: () => Promise<T>): Promise<T> => {
     const started = Date.now();
@@ -131,50 +139,10 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
   const there: Read = async (text) => z.array(z.unknown()).parse(await post("sql", { text }));
   const here = reader(db);
 
-  const differs = async () => {
-    const mine = await layout(here);
-    const theirs = await layout(there);
-
-    const schema = ({ tables, indexesAndTriggers }: typeof mine) =>
-      JSON.stringify([tables.map(({ sql }) => sql), indexesAndTriggers]);
-
-    if (schema(mine) !== schema(theirs)) {
-      return "the object's tables, indexes or triggers differ from the file's";
-    }
-
-    for (const table of mine.tables) {
-      let same = 0;
-      const its = pages(there, table);
-
-      for await (const rows of pages(here, table)) {
-        const theirRows = await its.next();
-
-        if (JSON.stringify(rows) !== JSON.stringify(theirRows.value)) {
-          return `${table.name} differs in the object after ${same} rows`;
-        }
-
-        same += rows.length;
-      }
-
-      if ((await its.next()).done !== true) {
-        return `the object has rows of ${table.name} the file doesn't`;
-      }
-
-      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-      // JSON reads 7 and 7.0 alike, so each column's types are counted too.
-      const types = `select ${table.columns.map((column) => `typeof("${column}")`).join(" || ',' || ")} as types, count(*) as n from "${table.name}" group by 1 order by 1`;
-
-      if (JSON.stringify(await here(types)) !== JSON.stringify(await there(types))) {
-        return `${table.name} holds values of other types in the object`;
-      }
-
-      say(`${table.name}: ${same} rows the same in the object`);
-    }
-
-    if (JSON.stringify(mine.counters) !== JSON.stringify(theirs.counters)) {
-      return "the object's autoincrement counters differ from the file's";
-    }
-  };
+  const differs = async () =>
+    await difference(here, there, (line) => {
+      say(`${line} in the object`);
+    });
 
   db.run("begin immediate");
 
@@ -189,6 +157,15 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
       );
     }
 
+    const { offers } = TheirOffers.parse(JSON.parse(await waitedOut(() => reply("version"))));
+    const lacking = unmet(OFFERS, offers);
+
+    if (lacking !== undefined) {
+      throw new Error(
+        `the Worker runs an older hex's store than this one: ${lacking}. Deploy this checkout's with hex store deploy, then move`,
+      );
+    }
+
     const before = await state();
 
     if (before.served) {
@@ -199,31 +176,30 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
 
     const done =
       before.arrived && before.version === version
-        ? await differs().then((difference) => {
+        ? await differs().then((differing) => {
             say(
-              difference === undefined
+              differing === undefined
                 ? `the object ${away.name} has every row from a move whose last reply was lost`
-                : `the object ${away.name} holds another move (${difference}): it starts over`,
+                : `the object ${away.name} holds another move (${differing}): it starts over`,
             );
 
-            return difference === undefined;
+            return differing === undefined;
           })
         : false;
 
     if (!done) {
       await send(step, here, version, say);
-      const difference = await differs();
+      const differing = await differs();
 
-      if (difference !== undefined) {
-        throw new Error(
-          `${difference}: nothing points hex there, and the next move starts it over`,
-        );
+      if (differing !== undefined) {
+        throw new Error(`${differing}: nothing points hex there, and the next move starts it over`);
       }
 
       await step("move/arrived", { version });
     }
 
-    writeFileSync(awayFile(dir), `${JSON.stringify(away, null, 2)}\n`, { mode: 0o600 });
+    writeFileSync(`${awayFile(dir)}.part`, `${JSON.stringify(away, null, 2)}\n`, { mode: 0o600 });
+    renameSync(`${awayFile(dir)}.part`, awayFile(dir));
 
     for (const { name } of (await layout(here)).tables) {
       for (const event of ["insert", "update", "delete"]) {
@@ -234,9 +210,18 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
     }
 
     db.run("commit");
+    db.run(`pragma busy_timeout = ${CHECKPOINT_WITHIN}`);
     db.run("pragma wal_checkpoint(truncate)");
     db.close();
+    setAside(dir);
     renameSync(file, join(dir, MOVED));
+
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // A process that still reads hex.db, like a backup streaming it, keeps the last writes from reaching the file, so they go with it in its WAL.
+    if (existsSync(`${file}-wal`) && statSync(`${file}-wal`).size > 0) {
+      renameSync(`${file}-wal`, join(dir, `${MOVED}-wal`));
+    }
+
     say(
       `hex's records are in the object ${away.name} at ${away.url}; ${awayFile(dir)} points hex there, and hex.db is kept as ${MOVED}`,
     );
@@ -246,6 +231,24 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
 
     throw error;
   }
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A file kept from an earlier move stays, its WAL with it, under the time this move set it aside, and its shared-memory index goes: a kept file read through another's WAL breaks both.
+function setAside(dir: string) {
+  const kept = join(dir, MOVED);
+  const stamp = new Date().toISOString().replaceAll(/\D/gu, "").slice(0, 14);
+
+  for (const [from, to] of [
+    [kept, `${kept}.${stamp}`],
+    [`${kept}-wal`, `${kept}.${stamp}-wal`],
+  ] as const) {
+    if (existsSync(from)) {
+      renameSync(from, to);
+    }
+  }
+
+  rmSync(`${kept}-shm`, { force: true });
 }
 
 async function send(

@@ -447,15 +447,17 @@ export async function drain(
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Rejects only when hex's store didn't answer, so whoever queued the pass can owe it.
-export async function queue(state: string, turn: Pass) {
+export async function queue(state: string, turn: Pass, through?: Store) {
   if (!given(process.env.MEMORY_DIR) || !existsSync(MEMO)) {
     return;
   }
 
   try {
-    await followed(state, async (store) => {
-      await store.passes.wait(turn);
-    });
+    await (through === undefined
+      ? followed(state, async (store) => {
+          await store.passes.wait(turn);
+        })
+      : through.passes.wait(turn));
     const observeLog = openSync(join(state, "observe.log"), "a");
 
     try {

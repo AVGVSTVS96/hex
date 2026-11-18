@@ -1,8 +1,10 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   utimesSync,
@@ -13,15 +15,27 @@ import { join } from "node:path";
 
 import type { DurableObject, Namespace } from "cloudflare:workers";
 
-import { File, messagesSince, open } from "../store.ts";
+import { backup } from "../backup.ts";
+import { File, file as fileIn, messagesSince, open, unclaimed } from "../store.ts";
 import type { NewRow } from "../store.ts";
 import { until } from "../until.ts";
-import { bring, layout } from "./carry.ts";
+import { back as backHome } from "./back.ts";
+import { bring, layout, pages } from "./carry.ts";
 import type { Read } from "./carry.ts";
+import { OFFERS } from "./domains.ts";
 import { objectStorage } from "./fake.ts";
 import { appendOnlyMigrations } from "./migrations.ts";
 import { move, MOVED } from "./move.ts";
-import { LostError, MovedError, RefusedError, remote, UnreachedError } from "./remote.ts";
+import {
+  LostError,
+  MovedError,
+  OtherStoreError,
+  RefusedError,
+  remote,
+  UnaskedError,
+  UnreachedError,
+  unlease,
+} from "./remote.ts";
 import { recordsIn } from "./storage.ts";
 import type { Storage } from "./storage.ts";
 import { answering, client } from "./wire.ts";
@@ -220,7 +234,7 @@ test("a claim that arrives again gets its tenure while it holds hex, and one the
   expect(object.lostTo("2")).toBeUndefined();
 });
 
-test("a lease tool's number never goes back: a hub on the same lease claims again, one on a lower lease is refused, and a hub with no lease runs hex outside any", () => {
+test("a lease tool's number never goes back: a hub on the same lease claims again, one on a lower lease or none is refused, until the owner ends the lease", () => {
   const object = startedEmpty();
   expect(object.claim(by("a", 6))).toEqual({ tenure: 1 });
   expect(object.claim(by("b", 6))).toEqual({ tenure: 2 });
@@ -230,8 +244,16 @@ test("a lease tool's number never goes back: a hub on the same lease claims agai
   expect(object.lostTo("2")).toBeUndefined();
   expect(object.claim(by("d", 7))).toEqual({ tenure: 3 });
   expect(object.lostTo("2")).toBe("tenure 2 no longer holds hex: tenure 3 does");
+  expect(object.claim(by("plain"))).toEqual({
+    lost: "hex runs under lease 7: start it with HEX_STORE_LEASE, or end the lease with hex store lease clear",
+  });
+  expect(object.lostTo("3")).toBeUndefined();
+  object.unlease();
   expect(object.claim(by("plain"))).toEqual({ tenure: 4 });
   expect(object.claim(by("e", 1))).toEqual({ tenure: 5 });
+  expect(object.claim(by("again"))).toEqual({
+    lost: "hex runs under lease 1: start it with HEX_STORE_LEASE, or end the lease with hex store lease clear",
+  });
   expect(() => object.claim(by("f", -1))).toThrow();
   expect(() => object.claim('{"claimant": "g", "lease": 1e999}')).toThrow();
 });
@@ -567,7 +589,7 @@ test("the object answers only its owner's key, never without one, and refuses a 
           headers: { authorization: `Bearer ${KEY}` },
         })
       ).json(),
-    ).toEqual({ version: "v7", migrations: appendOnlyMigrations.length });
+    ).toEqual({ version: "v7", migrations: appendOnlyMigrations.length, offers: OFFERS });
     expect(await (await post("/hex/claim", by("a"))).json()).toEqual({ value: 1 });
     expect(await (await post("/hex/claim", by("b"))).json()).toEqual({ value: 2 });
     expect((await post("/hex/call", "{}", { "hex-tenure": "2" })).status).toBe(200);
@@ -921,7 +943,6 @@ test("a copy reads each table before the tables it references, so rows written w
   await bring(writing, to);
   const copy = new File(join(dir, "copy-dir"));
   copy.db.close();
-  const { Database } = await import("bun:sqlite");
   const db = new Database(to, { readonly: true });
   expect(db.query("pragma foreign_key_check").all()).toEqual([]);
   db.close();
@@ -942,10 +963,10 @@ test("a copy reads each table before the tables it references, so rows written w
 
 test("every message is read a page to a reply", async () => {
   const file = filled(dir);
-  const pages = await Array.fromAsync(messagesSince(file.store));
-  expect(pages.map((page) => page.length)).toEqual([500, 500, 202]);
-  expect(pages.flat()).toEqual(file.messages.since());
-  const later = pages[1]?.[0]?.at ?? "";
+  const read = await Array.fromAsync(messagesSince(file.store));
+  expect(read.map((page) => page.length)).toEqual([500, 500, 202]);
+  expect(read.flat()).toEqual(file.messages.since());
+  const later = read[1]?.[0]?.at ?? "";
   expect((await Array.fromAsync(messagesSince(file.store, later))).flat()).toEqual(
     file.messages.since(later),
   );
@@ -1024,7 +1045,7 @@ test("a file home whose records moved since it opened says so on every call, so 
   }
 });
 
-test("a process that finds the object not answering tells the next, which fails at once instead of waiting out its own time", async () => {
+test("a process that finds the object not answering tells the next, which fails at once as unasked instead of waiting out its own time, and a client that keeps to itself asks", async () => {
   let reached = 0;
   let hang = true;
 
@@ -1045,15 +1066,23 @@ test("a process that finds the object not answering tells the next, which fails 
 
   try {
     const first = remote(dir, quick);
-    expect(await thrown(first?.clock.now() ?? never)).toBeInstanceOf(UnreachedError);
+    const asked = await thrown(first?.clock.now() ?? never);
+    expect(asked).toBeInstanceOf(UnreachedError);
+    expect(asked).not.toBeInstanceOf(UnaskedError);
     expect(existsSync(join(dir, "store.down"))).toBe(true);
 
     const hook = remote(dir, quick);
     const started = performance.now();
     const sent = reached;
-    expect(await thrown(hook?.clock.now() ?? never)).toBeInstanceOf(UnreachedError);
+    expect(await thrown(hook?.clock.now() ?? never)).toBeInstanceOf(UnaskedError);
+    expect(await thrown(first?.clock.now() ?? never)).toBeInstanceOf(UnaskedError);
     expect(performance.now() - started).toBeLessThan(50);
     expect(reached).toBe(sent);
+
+    const fresh = await thrown(remote(dir, quick, false)?.clock.now() ?? never);
+    expect(fresh).toBeInstanceOf(UnreachedError);
+    expect(fresh).not.toBeInstanceOf(UnaskedError);
+    expect(String(fresh)).toContain("didn't answer");
 
     hang = false;
     await until(() => !existsSync(join(dir, "store.down")));
@@ -1153,6 +1182,50 @@ test("a 409 that isn't the object's word, like Cloudflare's edge sends for its o
     await until(async () => (await thrown(store?.claim() ?? never)) === "it didn't throw");
     expect(await store?.messages.deliver(message)).toBe(true);
     await store?.synced();
+  } finally {
+    await front.stop(true);
+    await object.stop();
+  }
+});
+
+test("a page Cloudflare's edge answers in place of the Worker, as it does for minutes after a deploy, is asked again and never counts as the store not answering", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage);
+  const object = served(storage);
+  let calls = 0;
+  let stray = 0;
+
+  const front = Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      calls += 1;
+
+      if (calls % 2 === 1) {
+        stray += 1;
+
+        return new Response("<!DOCTYPE html><html>There is nothing here yet</html>", {
+          status: 404,
+        });
+      }
+
+      return await fetch(new URL(new URL(request.url).pathname, object.url), {
+        method: request.method,
+        headers: request.headers,
+        body: await request.text(),
+      });
+    },
+  });
+
+  pointedAt(dir, front.url.origin);
+
+  try {
+    const store = remote(dir, quick);
+    await store?.claim();
+    expect(await store?.messages.deliver(message)).toBe(true);
+    expect((await store?.messages.untaken())?.length).toBe(1);
+    await store?.synced();
+    expect(stray).toBeGreaterThan(2);
+    expect(existsSync(join(dir, "store.down"))).toBe(false);
   } finally {
     await front.stop(true);
     await object.stop();
@@ -1286,4 +1359,381 @@ test("a move rides out pages that aren't the object's own, and never sends again
   } finally {
     await object.stop();
   }
+});
+
+test("a folder whose hex.db carries a move's triggers but no store.json isn't a home: it says what the folder is missing", async () => {
+  filled(dir).db.close();
+  const object = served();
+
+  try {
+    await move(dir, { url: object.url, name: "hex", key: KEY }, hear);
+    const twin = join(dir, "twin");
+    mkdirSync(twin);
+    writeFileSync(join(twin, "hex.db"), readFileSync(join(dir, MOVED)));
+    expect(() => open(twin)).toThrow(MovedError);
+    expect(() => fileIn(twin)).toThrow("store.json, which says which, isn't here");
+  } finally {
+    await object.stop();
+  }
+});
+
+test("a move keeps every last write with the file it leaves, even while another process reads it", async () => {
+  const file = filled(dir);
+  file.db.close();
+  const reader = new Database(join(dir, "hex.db"), { readonly: true });
+  reader.run("begin");
+  reader.query("select count(*) from messages").get();
+  const object = served();
+
+  try {
+    await move(dir, { url: object.url, name: "hex", key: KEY }, hear);
+  } finally {
+    reader.run("commit");
+    reader.close();
+    await object.stop();
+  }
+
+  const kept = new Database(join(dir, MOVED), { readonly: true });
+  expect(kept.query("select count(*) as n from messages").get()).toEqual({ n: 1202 });
+  expect(
+    kept.query("select count(*) as n from sqlite_master where name glob 'moved_*'").get(),
+  ).toEqual({
+    n:
+      3 *
+      (await layout(async (text) => await Promise.resolve(kept.query(text).all()))).tables.length,
+  });
+  kept.close();
+});
+
+const offering = (offers: typeof OFFERS) =>
+  served(objectStorage(), undefined, async (route, answer) => {
+    const answered = await answer();
+
+    return route === "version" ? Response.json({ ...(await answered.json()), offers }) : answered;
+  });
+
+test("hex store back brings every row home into hex.db, claiming hex first, and only then stops pointing at the object", async () => {
+  filled(dir).db.close();
+  const object = served();
+
+  try {
+    await move(dir, { url: object.url, name: "hex", key: KEY }, hear);
+    const hub = remote(dir, quick, false);
+    await hub?.claim();
+    await hub?.messages.deliver({ ...message, key: "telegram:-100:9", body: "only in the object" });
+    writeFileSync(join(dir, "hex.db"), "a hex.db a killed move left");
+
+    await backHome(dir, hear);
+
+    expect(
+      await thrown(hub?.messages.deliver({ ...message, key: "telegram:-100:10" }) ?? never),
+    ).toBeInstanceOf(LostError);
+  } finally {
+    await object.stop();
+  }
+
+  expect(existsSync(join(dir, "store.json"))).toBe(false);
+  expect(JSON.parse(readFileSync(join(dir, "store.json.back"), "utf-8"))).toMatchObject({
+    name: "hex",
+  });
+  const kept = readdirSync(dir).filter((name) => /^hex\.db\.\d{14}$/u.test(name));
+  expect(kept.map((name) => readFileSync(join(dir, name), "utf-8"))).toEqual([
+    "a hex.db a killed move left",
+  ]);
+
+  const home = open(dir);
+  expect(await home.messages.get("telegram:-100:9")).toMatchObject({ body: "only in the object" });
+  expect((await Array.fromAsync(messagesSince(home))).flat()).toHaveLength(1203);
+
+  await backHome(dir, hear);
+  expect(heard.at(-1)).toContain("hex runs on");
+});
+
+test("hex store back that finds its copy differs from the object leaves hex on the object, and run again it finishes", async () => {
+  filled(dir).db.close();
+  let spoiled = false;
+
+  const object = served(objectStorage(), undefined, async (route, answer, request) => {
+    const asked = await request.clone().text();
+
+    return spoiled && route === "sql" && asked.includes("typeof(")
+      ? Response.json({ value: [] })
+      : await answer();
+  });
+
+  try {
+    await move(dir, { url: object.url, name: "hex", key: KEY }, hear);
+    spoiled = true;
+    expect(await failure(backHome(dir, hear))).toContain("hex stays on the object");
+    expect(existsSync(join(dir, "store.json"))).toBe(true);
+    expect(existsSync(join(dir, "hex.db"))).toBe(false);
+
+    spoiled = false;
+    await backHome(dir, hear);
+    expect(existsSync(join(dir, "store.json"))).toBe(false);
+    expect((await Array.fromAsync(messagesSince(open(dir)))).flat()).toHaveLength(1202);
+  } finally {
+    await object.stop();
+  }
+});
+
+test("a move refuses a Worker older than this hex, and goes into one newer", async () => {
+  filled(dir).db.close();
+  const older = offering({ ...OFFERS, methods: OFFERS.methods.slice(1) });
+
+  try {
+    const refused = await failure(move(dir, { url: older.url, name: "hex", key: KEY }, hear));
+    expect(refused).toContain("the Worker runs an older hex's store");
+    expect(refused).toContain(`it has no ${OFFERS.methods[0]}`);
+    expect(existsSync(join(dir, "store.json"))).toBe(false);
+  } finally {
+    await older.stop();
+  }
+
+  const newer = offering({
+    migrations: OFFERS.migrations + 1,
+    methods: [...OFFERS.methods, "messages.later"],
+  });
+
+  try {
+    await move(dir, { url: newer.url, name: "hex", key: KEY }, hear);
+    expect(existsSync(join(dir, "store.json"))).toBe(true);
+  } finally {
+    await newer.stop();
+  }
+});
+
+const mark = (step: number) => ({ id: "m-1", step });
+
+const rows = (ids: number[]) =>
+  JSON.stringify({ table: "t", columns: ["id"], rows: ids.map((id) => [id]) });
+
+test("the object takes a move's step once: one sent again, or held back past a later one, changes nothing", () => {
+  const object = recordsIn(objectStorage());
+
+  object.moved("begin", "{}", mark(1));
+  object.moved("schema", JSON.stringify({ statements: ["create table t (id integer)"] }), mark(2));
+  expect(object.moved("rows", rows([1, 2]), mark(3))).toBe(2);
+  expect(object.moved("rows", rows([1, 2]), mark(3))).toBe(true);
+  expect(object.moved("rows", rows([3]), mark(4))).toBe(1);
+  expect(object.moved("rows", rows([1, 2]), mark(3))).toBe(true);
+  expect(object.read(sql("select count(*) as n from t"))).toEqual([{ n: 3 }]);
+  expect(object.moved("rows", rows([4]), { id: "m-2", step: 3 })).toBe(1);
+});
+
+test("a hex that stops using a lease tool ends the lease with hex store lease clear, and a lease that isn't a whole number is refused", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage);
+  const object = served(storage);
+  pointedAt(dir, object.url);
+
+  try {
+    process.env.HEX_STORE_LEASE = "7";
+    await remote(dir, quick)?.claim();
+    const plain = remote(dir, quick);
+    expect(await thrown(plain?.claim() ?? never)).toBeInstanceOf(LostError);
+    await unlease(dir);
+    expect(await remote(dir, quick)?.claim()).toBe(2);
+    process.env.HEX_STORE_LEASE = "seven";
+    const malformed = await thrown(remote(dir, quick)?.claim() ?? never);
+    expect(malformed).toBeInstanceOf(LostError);
+    expect(String(malformed)).toContain('HEX_STORE_LEASE is "seven", not a whole number');
+    expect(await unclaimed(dir).messages.deliver(message)).toBe(true);
+  } finally {
+    delete process.env.HEX_STORE_LEASE;
+    await object.stop();
+  }
+});
+
+test("a table of large rows is read a page of about 4 MB at a time", async () => {
+  const db = new Database(":memory:");
+  db.run("create table big (id integer primary key, body text)");
+
+  for (let n = 1; n <= 12; n += 1) {
+    db.query("insert into big (id, body) values (?, ?)").run(n, "a".repeat(1_000_000));
+  }
+
+  const read: Read = async (text) => await Promise.resolve(db.query(text).all());
+  const [table] = (await layout(read)).tables;
+
+  if (table === undefined) {
+    throw new Error("no table");
+  }
+
+  const sizes = (await Array.fromAsync(pages(read, table))).map((page) => page.length);
+  expect(sizes).toEqual([3, 3, 3, 3]);
+});
+
+test("a hub on a store older than its hex is told so at its claim, apart from an outage, and an older hex claims a newer store and runs", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage);
+
+  const claimOf = (claimant: string, needs: typeof OFFERS) =>
+    JSON.stringify(recordsIn(storage, dir).claim(JSON.stringify({ claimant, needs })));
+
+  expect(claimOf("newer", { ...OFFERS, migrations: OFFERS.migrations + 1 })).toContain(
+    `this hex needs ${OFFERS.migrations + 1}`,
+  );
+  expect(claimOf("newer", { ...OFFERS, methods: [...OFFERS.methods, "messages.later"] })).toContain(
+    "it has no messages.later",
+  );
+  expect(claimOf("older", { migrations: 1, methods: OFFERS.methods.slice(1) })).toEqual(
+    JSON.stringify({ tenure: 1 }),
+  );
+
+  const object = served(storage);
+
+  const front = (needs: typeof OFFERS) =>
+    Bun.serve({
+      port: 0,
+      fetch: async (request) => {
+        const { pathname } = new URL(request.url);
+        const body = await request.text();
+
+        return await fetch(new URL(pathname, object.url), {
+          method: request.method,
+          headers: request.headers,
+          body: pathname.endsWith("/claim") ? JSON.stringify({ ...JSON.parse(body), needs }) : body,
+        });
+      },
+    });
+
+  const newer = front({ ...OFFERS, migrations: OFFERS.migrations + 1 });
+  const older = front({ migrations: 1, methods: OFFERS.methods.slice(1) });
+
+  try {
+    pointedAt(dir, newer.url.origin);
+    const refused = await thrown(remote(dir, quick)?.claim() ?? never);
+    expect(refused).toBeInstanceOf(OtherStoreError);
+    expect(refused).toBeInstanceOf(UnreachedError);
+    expect(String(refused)).toContain("Deploy this hex's with hex store deploy");
+
+    pointedAt(dir, older.url.origin);
+    const store = remote(dir, quick, false);
+    expect(await store?.claim()).toBe(2);
+    expect(await store?.messages.deliver(message)).toBe(true);
+  } finally {
+    await newer.stop(true);
+    await older.stop(true);
+    await object.stop();
+  }
+});
+
+test("a file whose schema lacks what this hex's SQL names refuses the call, so a hex that doesn't fit its hex.db stops and is rolled back rather than waiting", async () => {
+  const file = new File(dir);
+  file.db.run("drop index if exists untaken");
+  file.db.run("alter table messages drop column held_for");
+  await file.store.messages.deliver(message);
+  const refused = await thrown(file.store.messages.hold(message.key, "s-1"));
+  expect(refused).toBeInstanceOf(RefusedError);
+  expect(refused).not.toBeInstanceOf(UnreachedError);
+  expect(String(refused)).toContain("held_for");
+});
+
+test("an object whose store's code doesn't fit its own records can take nothing, so a hub waits for a deploy and sets no row aside as bad", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage);
+  storage.sql.exec("drop index if exists untaken");
+  storage.sql.exec("alter table messages drop column held_for");
+  const object = served(storage);
+  pointedAt(dir, object.url);
+
+  try {
+    const store = remote(dir, quick, false);
+    await store?.claim();
+    await store?.messages.deliver(message);
+    const failed = await thrown(store?.messages.hold(message.key, "s-1") ?? never);
+    expect(failed).toBeInstanceOf(UnreachedError);
+    expect(String(failed)).toContain("held_for");
+  } finally {
+    await object.stop();
+  }
+});
+
+test("a second move sets the file an earlier one kept aside with its WAL, and each reads whole", async () => {
+  const first = filled(dir);
+  first.db.close();
+  let reader = new Database(join(dir, "hex.db"), { readonly: true });
+  reader.run("begin");
+  reader.query("select count(*) from messages").get();
+  const object = served();
+
+  try {
+    await move(dir, { url: object.url, name: "hex", key: KEY }, hear);
+    reader.run("commit");
+    reader.close();
+    expect(existsSync(join(dir, `${MOVED}-wal`))).toBe(true);
+
+    rmSync(join(dir, "store.json"));
+    const again = new File(join(dir, "again"));
+    again.messages.deliver({ ...message, key: "telegram:-100:7", body: "only in the second" });
+    again.db.close();
+    writeFileSync(join(dir, "hex.db"), readFileSync(join(dir, "again", "hex.db")));
+    reader = new Database(join(dir, "hex.db"), { readonly: true });
+    reader.run("begin");
+    reader.query("select count(*) from messages").get();
+    await move(dir, { url: object.url, name: "restored", key: KEY }, hear);
+  } finally {
+    reader.close();
+    await object.stop();
+  }
+
+  const aside = readdirSync(dir).filter((name) => /^hex\.db\.moved\.\d{14}$/u.test(name));
+  expect(aside).toHaveLength(1);
+
+  const count = (name: string) => {
+    const kept = new Database(join(dir, name), { readonly: true });
+
+    const read = [
+      kept.query("pragma integrity_check").get(),
+      kept.query("select count(*) as n from messages").get(),
+      kept.query("select count(*) > 0 as moved from sqlite_master where name glob 'moved_*'").get(),
+    ];
+
+    kept.close();
+
+    return read;
+  };
+
+  expect(existsSync(join(dir, `${aside[0] ?? ""}-wal`))).toBe(true);
+  expect(count(aside[0] ?? "")).toEqual([{ integrity_check: "ok" }, { n: 1202 }, { moved: 1 }]);
+  expect(count(MOVED)).toEqual([{ integrity_check: "ok" }, { n: 1 }, { moved: 1 }]);
+});
+
+test("every message is read in pages of about 4 MB, so a log of large messages never comes back in one reply", async () => {
+  const file = new File(dir);
+
+  for (let n = 0; n < 10; n += 1) {
+    file.messages.deliver({ ...message, key: `telegram:-100:${n}`, body: "a".repeat(1_000_000) });
+  }
+
+  const read = await Array.fromAsync(messagesSince(file.store));
+  expect(read.map((page) => page.length)).toEqual([3, 3, 3, 1]);
+  expect(read.flat().map((row) => row.key)).toEqual(file.messages.since().map((row) => row.key));
+});
+
+test("a backup reads through a client of its own: another process's word that the object is down doesn't stop it, and its own failure tells no one", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage).call(raw("messages", "deliver", [message]));
+  const object = served(storage);
+  pointedAt(dir, object.url);
+  writeFileSync(join(dir, "store.down"), "another process found it down\n");
+
+  try {
+    expect(await thrown(remote(dir, quick)?.messages.untaken() ?? never)).toBeInstanceOf(
+      UnreachedError,
+    );
+    await backup(dir, "2026-11-17");
+    const copy = new Database(join(dir, "backups", "hex-2026-11-17.db"), { readonly: true });
+    expect(copy.query("select key from messages").all()).toEqual([{ key: message.key }]);
+    copy.close();
+  } finally {
+    await object.stop();
+  }
+
+  rmSync(join(dir, "store.down"));
+  const gone = join(dir, "gone");
+  pointedAt(gone, "http://127.0.0.1:9");
+  expect(await thrown(unclaimed(gone).messages.untaken())).toBeInstanceOf(UnreachedError);
+  expect(existsSync(join(gone, "store.down"))).toBe(false);
 });

@@ -54,6 +54,8 @@ const MessageRow = z
 export const MessageRows = z.array(MessageRow);
 
 const Cursor = z.object({ at: z.string(), n: z.number() }).nullable();
+const Sized = z.array(z.object({ at: z.string(), n: z.number(), size: z.number() }));
+const PAGE_BYTES = 4_000_000;
 
 const RunRows = z.array(z.object({ at: z.string(), said: z.string() }));
 
@@ -150,9 +152,9 @@ export class Messages {
     );
   }
 
-  takeHeld(thread: string, session: string): Row[] {
-    const at = now();
-
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Called again with the same at, as after a lost reply, it answers with every row it took under that at, so none is taken and never seen.
+  takeHeld(thread: string, session: string, at = now()): Row[] {
     return this.write(() => {
       this.db
         .query(
@@ -190,17 +192,45 @@ export class Messages {
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Messages after a time, oldest first: at most `most` of them, starting after the message keyed `past`, so whatever reads every message reads them a page at a time.
+  // Messages after a time, oldest first, starting after the message keyed `past`: at most `most` of them, and, when there's a most, about 4 MB, so whatever reads every message reads them a page at a time and no page is too big for a reply. A page may be shorter than `most`; only an empty one ends the log.
   since(after = "", past = "", most = -1): Row[] {
     const { at, n } = Cursor.parse(
       this.db.query("select at, n from messages where key = ?").get(past),
     ) ?? { at: after, n: Number.MAX_SAFE_INTEGER };
 
-    return MessageRows.parse(
+    if (most < 0) {
+      return MessageRows.parse(
+        this.db.query("select * from messages where (at, n) > (?, ?) order by at, n").all(at, n),
+      );
+    }
+
+    let bytes = 0;
+    let upTo: { at: string; n: number } | undefined;
+
+    for (const row of Sized.parse(
       this.db
-        .query("select * from messages where (at, n) > (?, ?) order by at, n limit ?")
+        .query(
+          "select at, n, length(cast(body as blob)) + coalesce(length(cast(meta as blob)), 0) as size from messages where (at, n) > (?, ?) order by at, n limit ?",
+        )
         .all(at, n, most),
-    );
+    )) {
+      if (upTo !== undefined && bytes + row.size > PAGE_BYTES) {
+        break;
+      }
+
+      bytes += row.size;
+      upTo = { at: row.at, n: row.n };
+    }
+
+    return upTo === undefined
+      ? []
+      : MessageRows.parse(
+          this.db
+            .query(
+              "select * from messages where (at, n) > (?, ?) and (at, n) <= (?, ?) order by at, n",
+            )
+            .all(at, n, upTo.at, upTo.n),
+        );
   }
 
   latest(key: string): Row | null {
