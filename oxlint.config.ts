@@ -1,6 +1,9 @@
+import landmines from "@interfere/landmines/configs/recommended.json" with { type: "json" };
 import { defineConfig } from "oxlint";
 import antiSlop from "ultracite/oxlint/anti-slop";
 import core from "ultracite/oxlint/core";
+
+import allowances from "./tools/oxlint/allowances.json" with { type: "json" };
 
 const functionLines = (
   max: number,
@@ -32,17 +35,30 @@ const bunMocksIn = {
   "hub/store/object.testing.ts": 1,
 };
 
+const doublesIn = [
+  "channels/discord/bot.test.ts",
+  "channels/telegram/bot.test.ts",
+  "hub/failing.hub.test.ts",
+  "hub/sessions.hub.test.ts",
+];
+
 export default defineConfig({
-  extends: [core, antiSlop],
+  extends: [core, antiSlop, landmines],
   ignorePatterns: [...(core.ignorePatterns ?? []), "site/**", "media/**", "watch/**"],
   jsPlugins: [
     { name: "no-comments", specifier: "./tools/oxlint/no-comments.ts" },
     { name: "no-bun-mocks", specifier: "./tools/oxlint/no-bun-mocks.ts" },
   ],
-  overrides: Object.entries(longestFunctionIn).map(([file, lines]) => ({
-    files: [file],
-    rules: { "eslint/max-lines-per-function": functionLines(lines) },
-  })),
+  overrides: [
+    ...Object.entries(longestFunctionIn).map(([file, lines]) => ({
+      files: [file],
+      rules: { "eslint/max-lines-per-function": functionLines(lines) },
+    })),
+    {
+      files: doublesIn,
+      rules: { "landmines-testing/no-test-doubles": "off" },
+    },
+  ],
   options: { reportUnusedDisableDirectives: "error", typeAware: true },
   rules: {
     "eslint/complexity": "off",
@@ -67,6 +83,11 @@ export default defineConfig({
     "unicorn/no-await-expression-member": "off",
     "import/no-cycle": "error",
     "no-bun-mocks/no-bun-mocks": ["error", { allow: bunMocksIn }],
+    "landmines-style/no-comments": "off",
+    "landmines-testing/no-fixed-sleep": ["error", { allow: allowances.sleeps }],
+    "landmines-testing/no-flake-masking": ["error", { allow: allowances.flakes }],
+    "landmines-types/no-explicit-return-types": "off",
+    "no-comments/most": ["error", { allow: allowances.comments }],
     "no-comments/no-comments": "error",
     "oxc/no-accumulating-spread": "error",
   },
