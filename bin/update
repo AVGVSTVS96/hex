@@ -50,11 +50,15 @@ if [ "$(git rev-parse HEAD)" = "$incoming" ]; then
   [ "$deployed" = 0 ] || { printf '%s\n' "$output"; [ "$deployed" = 2 ] || { echo "but the store hex $before needs didn't deploy"; exit 1; }; }
   exit 0
 fi
-if "$hex/bin/hex" refused "$incoming" >/dev/null; then
+# A commit hex went back from stays away until main moves past it. Asked again just before the merge, under the lock
+# hex rollback moves the checkout under, since a rollback may come while the check runs or sessions finish.
+leave_if_refused() {
+  "$hex/bin/hex" refused "$incoming" >/dev/null || return 0
   echo "not updated: hex went back from $(git rev-parse --short "$incoming"), or from a commit it's built on, so hex stays on $before until main moves past it"
   [ "$mode" != --when-quiet ] || tell all "didn't ship: hex went back from $(git rev-parse --short "$incoming"), or from a commit it's built on, so hex stays on $before until main moves past it"
   exit 1
-fi
+}
+leave_if_refused
 
 # From a hex session, which is busy itself until its turn ends, the update goes on as one job at a time,
 # which tells each asking thread as what it asked for ships; run by hand, it goes on here.
@@ -116,7 +120,11 @@ if [ "$deployed" != 0 ]; then
   [ "$mode" != --when-quiet ] || tell all "didn't ship: the store hex $(git rev-parse --short "$incoming") needs $why, so hex stays on $before; its output is in $home/state/jobs/hex-update.log"
   exit 1
 fi
+exec 7>"$home/state/checkout.lock"
+flock 7
+leave_if_refused
 git merge -q --ff-only "$incoming"
+exec 7>&-
 bun install --cwd "$hex" --silent
 "$hex/bin/optmem"
 "$hex/bin/migrate"

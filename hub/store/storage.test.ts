@@ -219,11 +219,11 @@ test("the store keeps every commit a hub's machine went back from, as each hub s
   object.claim(JSON.stringify({ claimant: "a", refused: [`${ship} ${before}`] }));
   expect(object.refused()).toEqual([`${ship} ${before}`]);
   object.claim(by("b"));
-  object.claim(JSON.stringify({ claimant: "c", refused: [`${ship} ${before}`, older] }));
-  expect(object.refused()).toEqual([`${ship} ${before}`, older]);
-  expect(() =>
-    object.claim(JSON.stringify({ claimant: "d", refused: ["not a commit"] })),
-  ).toThrow();
+  object.claim(
+    JSON.stringify({ claimant: "c", refused: [`${ship} ${before}`, `${before} ${older}`] }),
+  );
+  expect(object.refused()).toEqual([`${ship} ${before}`, `${before} ${older}`]);
+  expect(() => object.claim(JSON.stringify({ claimant: "d", refused: [ship] }))).toThrow();
 });
 
 test("a claim that arrives again gets its tenure while it holds hex, and one the network held back past a later claim takes nothing from it", () => {
