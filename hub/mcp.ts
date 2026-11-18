@@ -187,10 +187,10 @@ export function endpoint(
     return thread === null || thread === "" ? undefined : thread;
   }
 
-  const active = new Map<string, Promise<Result>>();
+  const active = new Map<string, { input: string; answer: Promise<Result> }>();
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Each operation's begins in this process, one at a time, and a call that begins is under way (active) before its begin is answered. So a repeat joins the call this hub is still running, whatever the store says or can't say of it.
+  // Each operation's begins in this process, one at a time, and a call that begins is under way (active) before its begin is answered. So a repeat joins the call this hub is still running, and a different call under its id is told so, whatever the store says or can't say of it.
   const beginning = ordered();
   const tools = new Map<string, Tool>(server.tools.map((each) => [each.name, each]));
   const list = toolList(server.tools);
@@ -239,9 +239,7 @@ export function endpoint(
           active.delete(key);
         });
 
-      active.set(key, answer);
-
-      return answer;
+      return active.set(key, { input, answer }).get(key);
     };
 
     const { kept, running } = await beginning(key, async () => {
@@ -250,7 +248,7 @@ export function endpoint(
       return { kept: begun, running: active.get(key) ?? (begun.fresh ? run() : undefined) };
     });
 
-    if (!isDeepStrictEqual(JSON.parse(kept.input), value)) {
+    if (!isDeepStrictEqual(JSON.parse(running?.input ?? kept.input), value)) {
       return failure(`${toolName} didn't run: identity ${id} already identifies a different call`);
     }
 
@@ -258,7 +256,7 @@ export function endpoint(
       return Kept.parse(JSON.parse(kept.result));
     }
 
-    return await (running ?? uncertain(toolName, id));
+    return await (running?.answer ?? uncertain(toolName, id));
   }
 
   async function call(

@@ -63,6 +63,7 @@ let movedTo: string | undefined;
 const openedFirst = stores.open;
 const outages = new Map<string, Store>();
 const storeCalls: string[] = [];
+const storeWaits = new Map<string, Promise<void>>();
 
 const MessageArgs = z
   .tuple([z.looseObject({ body: z.string().optional(), key: z.string().optional() })])
@@ -93,7 +94,7 @@ function refusal(name: string | symbol, args: unknown[]) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Every call the store's client makes, on any domain, noted by name (storeCalls) and answered as the outage says: a test seam over a client whose methods are a table built from names (store/wire.ts), so it reads them by name too. A store moved from answers nothing as it did.
+// Every call the store's client makes, on any domain, noted by name (storeCalls), held while a test has its name wait (storeWaits), and answered as the outage says: a test seam over a client whose methods are a table built from names (store/wire.ts), so it reads them by name too. A store moved from answers nothing as it did.
 function answering<Domain extends object>(
   domain: Domain,
   movedFrom = false,
@@ -115,6 +116,7 @@ function answering<Domain extends object>(
 
       return async (...args: unknown[]) => {
         storeCalls.push(String(name));
+        await storeWaits.get(String(name));
         const refusing = claimed || outage !== "lost" ? refusal(name, args) : undefined;
 
         if (refusing !== undefined && (outage !== "moved" || movedFrom)) {
@@ -299,6 +301,7 @@ exit 0
 
 afterEach(() => {
   outage = undefined;
+  storeWaits.clear();
   wholeHere = true;
   toldOwner.length = 0;
   claimedAs(undefined);
@@ -5863,8 +5866,8 @@ async function replying() {
 
   const line = await session("chat:7");
 
-  const reply = async (id: string) =>
-    (await line.call("reply", { text: "still here" }, id)).content[0]?.text;
+  const reply = async (id: string, text = "still here") =>
+    (await line.call("reply", { text }, id)).content[0]?.text;
 
   return { told, waiting, reply };
 }
@@ -5928,6 +5931,50 @@ test("a tool call still running as hex's store stops answering runs once, its re
   expect(await repeatedInAnOutage("tool-5")).toBe("sent 2");
   expect(await second).toBe("sent 2");
   expect(told.ran).toBe(2);
+});
+
+test("a repeat the store is still being asked about as its call ends, and then can't answer, is answered from the end the hub owes", async () => {
+  const { told, waiting, reply } = await replying();
+  told.held = true;
+  const first = reply("tool-7");
+  await until(() => waiting.length);
+
+  const answerIt: (() => void)[] = [];
+
+  storeWaits.set(
+    "begin",
+    new Promise<void>((resolve) => {
+      answerIt.push(resolve);
+    }),
+  );
+  const begun = begins();
+  const again = reply("tool-7");
+  await until(() => begins() > begun);
+  outage = "unreached";
+  told.held = false;
+  waiting.shift()?.();
+  expect(await first).toBe("sent 1");
+  answerIt.shift()?.();
+
+  expect(await again).toBe("sent 1");
+  expect(told.ran).toBe(1);
+});
+
+test("a different call under the id of one still running is told so, though hex's store can't be asked", async () => {
+  const { told, waiting, reply } = await replying();
+  told.held = true;
+  const first = reply("tool-8");
+  await until(() => waiting.length);
+
+  outage = "unreached";
+  const begun = begins();
+  const other = reply("tool-8", "something else");
+  await until(() => begins() > begun);
+  waiting.shift()?.();
+
+  expect(await other).toContain("already identifies a different call");
+  expect(await first).toBe("sent 1");
+  expect(told.ran).toBe(1);
 });
 
 test("a tool call's start and its end are one write each to a store that answers", async () => {
