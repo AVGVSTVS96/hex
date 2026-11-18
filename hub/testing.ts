@@ -260,7 +260,7 @@ export function http({
         if (unheard > 0) {
           unheard--;
         } else {
-          void rpc("tools/list");
+          rpc("tools/list").catch((): void => undefined);
         }
       });
 
