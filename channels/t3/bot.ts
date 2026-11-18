@@ -70,6 +70,10 @@ type Turn = {
 
 const turns = new Map<string, Turn>();
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Whether each thread's turn is over, as its hooks last said since this hub started. A rejoined turn goes by it over Claude's listing, which lags the hooks, and a hook that came before the turn was tracked reaches no turn.
+const rested = new Map<string, boolean>();
+
 // T3's provider check opens a session it never prompts, so an unprompted thread lasts only as long as its connection: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/provider-acp-registry/src/server/probe.ts#L417-L438
 type Unprompted = { cwd: string; settings: Settings; socket: Socket };
 
@@ -218,6 +222,7 @@ const hub = await startHub({
   link,
   call: dispatch(tools, handlers),
   state: (thread, busy, background) => {
+    rested.set(thread, !busy && !background);
     const turn = turns.get(thread);
 
     if (!turn) {
@@ -525,7 +530,8 @@ async function rejoin(
   }
 
   const session = running?.sessionId ?? hub.session(thread);
-  const working = running?.status === "busy";
+  const heard = rested.get(thread);
+  const working = heard === undefined ? running?.status === "busy" : !heard;
 
   const { promise, resolve, reject } = Promise.withResolvers<PromptResponse>();
   const turn = track(thread, client, signal, resolve, reject, since);

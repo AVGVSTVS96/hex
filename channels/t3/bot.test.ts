@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -124,6 +125,13 @@ async function restart(down: () => Promise<void> | void = () => {}) {
   await start();
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A file a running hub may read at any moment, like a job's record, changes in one step, so the hub never reads it empty.
+function replace(path: string, text: string) {
+  writeFileSync(join(dir, "next"), text);
+  renameSync(join(dir, "next"), path);
+}
+
 function script(name: string, body: string) {
   writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`);
   chmodSync(join(dir, name), 0o755);
@@ -220,11 +228,8 @@ const inboundSchema = z.looseObject({
 
 async function session(thread: string) {
   const settings = join(dir, "state", "settings-test.json");
-  writeFileSync(
-    settings,
-    JSON.stringify({ env: { HEX_CHANNEL: "plugin:t3@hex", HEX_THREAD: thread } }),
-  );
-  writeFileSync(
+  replace(settings, JSON.stringify({ env: { HEX_CHANNEL: "plugin:t3@hex", HEX_THREAD: thread } }));
+  replace(
     join(dir, "config", "jobs", "job12345", "state.json"),
     JSON.stringify({
       state: "working",
