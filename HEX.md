@@ -32,7 +32,8 @@ stops to ask for a compression, that's the memory agent's to do, so work from
 
 After each turn that holds a message of mine, hex's memory agent reads what was said and done,
 records what's worth keeping, so each thing is recorded once, and does the
-compressions its notes make due. Leave `memo note` to it.
+compressions its notes make due; after one where hex told me something without
+me, it notes what finished there that memory still calls open. Leave `memo note` to it.
 
 ### When you need an old memory: search, or navigate
 
