@@ -1,7 +1,7 @@
 import { watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
 
-import { checks, open } from "@hex/hub";
+import { checks, reading } from "@hex/hub";
 
 import type { Finished } from "./board.ts";
 import { Changes, oneAtATime } from "./changes.ts";
@@ -70,7 +70,7 @@ export class Feed extends Changes {
      only when what they're made from changes, read cheaply here. */
   readonly check = oneAtATime("the feed", async () => {
     const now = JSON.stringify([
-      await open(this.state).tasks.finished(""),
+      await reading(this.state).tasks.finished(""),
       this.sources.runs?.().map(({ id, name }) => [id, name]),
       this.sources.decided(),
       checks(this.state).filter((check) => check.news === true),
@@ -152,7 +152,7 @@ export class Feed extends Changes {
   }
 
   private async found(): Promise<Entry[]> {
-    const tasks = open(this.state).tasks;
+    const tasks = reading(this.state).tasks;
 
     const each = checks(this.state).map(async (check): Promise<Entry[]> => {
       if (check.news !== true || check.finding === undefined || check.finding.trim() === "") {
@@ -208,7 +208,7 @@ export class Feed extends Changes {
 
   private async split(text: string) {
     const links: Link[] = [];
-    const store = open(this.state);
+    const store = reading(this.state);
 
     const withoutUrls = text.replaceAll(URLS, (url) => {
       links.push({ label: labelOf(url), url });
