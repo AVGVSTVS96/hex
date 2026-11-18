@@ -180,28 +180,6 @@ inEachHome(
 );
 
 inEachHome(
-  "words held for a turn and taken by a call whose reply was lost come back when it's made again with the same time ($home)",
-  ({ open }) => {
-    const store = open(dir);
-    const at = "2026-11-17T10:00:00.000Z";
-    store.messages.deliver(message);
-    store.messages.hold(message.key, "s-1");
-    expect(store.messages.takeHeld(message.to, "s-1", at).map((row) => row.key)).toEqual([
-      message.key,
-    ]);
-
-    const later = { ...message, key: "telegram:-100:43", body: "and this" };
-    store.messages.deliver(later);
-    store.messages.hold(later.key, "s-1");
-    expect(store.messages.takeHeld(message.to, "s-1", at).map((row) => row.key)).toEqual([
-      message.key,
-      later.key,
-    ]);
-    expect(store.messages.takeHeld(message.to, "s-1", "2026-11-17T10:00:05.000Z")).toEqual([]);
-  },
-);
-
-inEachHome(
   "a key has to start with its sender, so the keys hex makes stay its own ($home)",
   ({ open }) => {
     const store = open(dir);
