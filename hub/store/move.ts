@@ -4,9 +4,9 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
-import { batches, carriedOf, layout, pages } from "./carry.ts";
+import { batches, carriedOf, difference, layout, pages } from "./carry.ts";
 import type { Read } from "./carry.ts";
-import { CONTRACT } from "./domains.ts";
+import { OFFERS, OffersJson, unmet } from "./domains.ts";
 import { UnreachedError } from "./errors.ts";
 import { appendOnlyMigrations } from "./migrations.ts";
 import { at, awayFile, StoreJson } from "./remote.ts";
@@ -28,7 +28,7 @@ type Posted =
 
 const CHECKPOINT_WITHIN = 2000;
 
-const TheirContract = z.object({ contract: z.string() });
+const TheirOffers = z.object({ offers: OffersJson });
 
 const MoveState = z.object({
   arrived: z.boolean(),
@@ -139,50 +139,10 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
   const there: Read = async (text) => z.array(z.unknown()).parse(await post("sql", { text }));
   const here = reader(db);
 
-  const differs = async () => {
-    const mine = await layout(here);
-    const theirs = await layout(there);
-
-    const schema = ({ tables, indexesAndTriggers }: typeof mine) =>
-      JSON.stringify([tables.map(({ sql }) => sql), indexesAndTriggers]);
-
-    if (schema(mine) !== schema(theirs)) {
-      return "the object's tables, indexes or triggers differ from the file's";
-    }
-
-    for (const table of mine.tables) {
-      let same = 0;
-      const its = pages(there, table);
-
-      for await (const rows of pages(here, table)) {
-        const theirRows = await its.next();
-
-        if (JSON.stringify(rows) !== JSON.stringify(theirRows.value)) {
-          return `${table.name} differs in the object after ${same} rows`;
-        }
-
-        same += rows.length;
-      }
-
-      if ((await its.next()).done !== true) {
-        return `the object has rows of ${table.name} the file doesn't`;
-      }
-
-      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-      // JSON reads 7 and 7.0 alike, so each column's types are counted too.
-      const types = `select ${table.columns.map((column) => `typeof("${column}")`).join(" || ',' || ")} as types, count(*) as n from "${table.name}" group by 1 order by 1`;
-
-      if (JSON.stringify(await here(types)) !== JSON.stringify(await there(types))) {
-        return `${table.name} holds values of other types in the object`;
-      }
-
-      say(`${table.name}: ${same} rows the same in the object`);
-    }
-
-    if (JSON.stringify(mine.counters) !== JSON.stringify(theirs.counters)) {
-      return "the object's autoincrement counters differ from the file's";
-    }
-  };
+  const differs = async () =>
+    await difference(here, there, (line) => {
+      say(`${line} in the object`);
+    });
 
   db.run("begin immediate");
 
@@ -197,11 +157,12 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
       );
     }
 
-    const { contract } = TheirContract.parse(JSON.parse(await waitedOut(() => reply("version"))));
+    const { offers } = TheirOffers.parse(JSON.parse(await waitedOut(() => reply("version"))));
+    const lacking = unmet(OFFERS, offers);
 
-    if (contract !== CONTRACT) {
+    if (lacking !== undefined) {
       throw new Error(
-        `the Worker runs another hex's store (${contract}, this hex's is ${CONTRACT}): deploy this checkout's with hex store deploy, then move`,
+        `the Worker runs an older hex's store than this one: ${lacking}. Deploy this checkout's with hex store deploy, then move`,
       );
     }
 
@@ -215,31 +176,30 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
 
     const done =
       before.arrived && before.version === version
-        ? await differs().then((difference) => {
+        ? await differs().then((differing) => {
             say(
-              difference === undefined
+              differing === undefined
                 ? `the object ${away.name} has every row from a move whose last reply was lost`
-                : `the object ${away.name} holds another move (${difference}): it starts over`,
+                : `the object ${away.name} holds another move (${differing}): it starts over`,
             );
 
-            return difference === undefined;
+            return differing === undefined;
           })
         : false;
 
     if (!done) {
       await send(step, here, version, say);
-      const difference = await differs();
+      const differing = await differs();
 
-      if (difference !== undefined) {
-        throw new Error(
-          `${difference}: nothing points hex there, and the next move starts it over`,
-        );
+      if (differing !== undefined) {
+        throw new Error(`${differing}: nothing points hex there, and the next move starts it over`);
       }
 
       await step("move/arrived", { version });
     }
 
-    writeFileSync(awayFile(dir), `${JSON.stringify(away, null, 2)}\n`, { mode: 0o600 });
+    writeFileSync(`${awayFile(dir)}.part`, `${JSON.stringify(away, null, 2)}\n`, { mode: 0o600 });
+    renameSync(`${awayFile(dir)}.part`, awayFile(dir));
 
     for (const { name } of (await layout(here)).tables) {
       for (const event of ["insert", "update", "delete"]) {

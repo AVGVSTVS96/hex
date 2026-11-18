@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -8,8 +8,8 @@ import { z } from "zod";
 
 import { File, messagesSince, open } from "../store.ts";
 import { until } from "../until.ts";
-import { CONTRACT } from "./domains.ts";
-import { LostError, RefusedError, UnreachedError } from "./errors.ts";
+import { OFFERS } from "./domains.ts";
+import { LostError, RefusedError, UnaskedError, UnreachedError } from "./errors.ts";
 import type { NewRow } from "./messages.ts";
 import { move } from "./move.ts";
 import { remote, unlease } from "./remote.ts";
@@ -527,8 +527,8 @@ test("a process that finds the object not answering tells the next, which fails 
   expect(await thrown(remote(dir, QUICK)?.clock.now())).toBeInstanceOf(UnreachedError);
 
   const started = performance.now();
-  expect(await thrown(remote(dir, QUICK)?.clock.now())).toBeInstanceOf(UnreachedError);
-  expect(performance.now() - started).toBeLessThan(20);
+  expect(await thrown(remote(dir, QUICK)?.clock.now())).toBeInstanceOf(UnaskedError);
+  expect(performance.now() - started).toBeLessThan(QUICK.answerWithin / 4);
 });
 
 test("a move rides out Cloudflare's own pages partway through, and the object takes each step once", async () => {
@@ -593,12 +593,12 @@ test("a move rides out Cloudflare's own pages partway through, and the object ta
   }
 }, 120_000);
 
-test("the object says which hex's store it runs, as this checkout counts it", async () => {
+test("the object says what its store offers, the migrations and methods this checkout has", async () => {
   const answer = z
-    .object({ contract: z.string() })
+    .object({ offers: z.unknown() })
     .parse(await (await fetch(`${url}/hex/version`, { headers: auth })).json());
 
-  expect(answer.contract).toBe(CONTRACT);
+  expect(answer.offers).toEqual(OFFERS);
 });
 
 test("words a lost reply took mid-turn come back when the take is made again with the same time", async () => {
@@ -614,17 +614,66 @@ test("words a lost reply took mid-turn come back when the take is made again wit
   ]);
 }, 60_000);
 
-test("a claim from a hex whose store differs from the object's is answered as another store, apart from an outage", async () => {
-  await movedInto("contracts");
-
-  const answer = await fetch(`${url}/contracts/claim`, {
+const claimNeeding = async (claimant: string, needs: typeof OFFERS) =>
+  await fetch(`${url}/contracts/claim`, {
     method: "POST",
     headers: auth,
-    body: JSON.stringify({ claimant: "a", contract: "older" }),
+    body: JSON.stringify({ claimant, needs }),
   });
 
-  expect(answer.status).toBe(503);
-  expect(await answer.json()).toMatchObject({ every: true, other: true });
+test("a claim from a hex newer than the object's store is answered as another store, apart from an outage, and one from an older hex is served", async () => {
+  await movedInto("contracts");
+
+  for (const needs of [
+    { ...OFFERS, migrations: OFFERS.migrations + 1 },
+    { ...OFFERS, methods: [...OFFERS.methods, "messages.later"] },
+  ]) {
+    const refused = await claimNeeding("newer", needs);
+    expect(refused.status).toBe(503);
+    expect(await refused.json()).toMatchObject({ every: true, other: true });
+  }
+
+  const older = await claimNeeding("older", { migrations: 1, methods: OFFERS.methods.slice(1) });
+  expect(older.status).toBe(200);
+  expect(await older.json()).toEqual({ value: 1 });
+}, 60_000);
+
+test("hex store back, run as its command, brings the object's rows home into hex.db, and the hub that held hex is lost", async () => {
+  const dir = await movedInto("back");
+  const hub = remote(dir, QUICK, false);
+  await hub?.claim();
+  await hub?.messages.deliver(message);
+
+  const backed = Bun.spawn(["bun", join(HEX, "hub/store/back.ts"), dir], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  expect(await backed.exited).toBe(0);
+  expect(await new Response(backed.stdout).text()).toContain("hex's records are in");
+  expect(existsSync(join(dir, "store.json"))).toBe(false);
+  expect(
+    await thrown(hub?.messages.deliver({ ...message, key: "telegram:-100:2" })),
+  ).toBeInstanceOf(LostError);
+  expect((await Array.fromAsync(messagesSince(open(dir)))).flat().map((row) => row.key)).toEqual([
+    message.key,
+  ]);
+}, 60_000);
+
+test("an object whose store's code doesn't fit its own records answers every call alike, never as a bad row", async () => {
+  const dir = join(scratch, "unfit-state");
+  const file = new File(dir);
+  file.db.run("drop index if exists untaken");
+  file.db.run("alter table messages drop column held_for");
+  file.db.close();
+  await move(dir, { url, name: "unfit", key: KEY }, quiet);
+
+  const store = remote(dir, QUICK, false);
+  await store?.claim();
+  await store?.messages.deliver(message);
+  const failed = await thrown(store?.messages.hold(message.key, "s-1"));
+  expect(failed).toBeInstanceOf(UnreachedError);
+  expect(String(failed)).toContain("held_for");
 }, 60_000);
 
 test("the log of large messages is read in pages of about 4 MB", async () => {

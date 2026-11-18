@@ -224,3 +224,54 @@ export async function bring(read: Read, to: string) {
     throw error;
   }
 }
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// How one copy of hex's records differs from another, in words, or nothing when every table, row, column type and autoincrement counter is the same.
+export async function difference(
+  here: Read,
+  there: Read,
+  say: (line: string) => void,
+): Promise<string | undefined> {
+  const mine = await layout(here);
+  const theirs = await layout(there);
+
+  const schema = ({ tables, indexesAndTriggers }: typeof mine) =>
+    JSON.stringify([tables.map(({ sql }) => sql), indexesAndTriggers]);
+
+  if (schema(mine) !== schema(theirs)) {
+    return "the tables, indexes or triggers differ";
+  }
+
+  for (const table of mine.tables) {
+    let same = 0;
+    const its = pages(there, table);
+
+    for await (const rows of pages(here, table)) {
+      const theirRows = await its.next();
+
+      if (JSON.stringify(rows) !== JSON.stringify(theirRows.value)) {
+        return `${table.name} differs after ${same} rows`;
+      }
+
+      same += rows.length;
+    }
+
+    if ((await its.next()).done !== true) {
+      return `${table.name} has more rows in one than the other`;
+    }
+
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // JSON reads 7 and 7.0 alike, so each column's types are counted too.
+    const types = `select ${table.columns.map((column) => `typeof("${column}")`).join(" || ',' || ")} as types, count(*) as n from "${table.name}" group by 1 order by 1`;
+
+    if (JSON.stringify(await here(types)) !== JSON.stringify(await there(types))) {
+      return `${table.name} holds values of other types`;
+    }
+
+    say(`${table.name}: ${same} rows the same`);
+  }
+
+  if (JSON.stringify(mine.counters) !== JSON.stringify(theirs.counters)) {
+    return "the autoincrement counters differ";
+  }
+}

@@ -9,8 +9,7 @@ import { nightly } from "./backup.ts";
 import { besideOf } from "./beside.ts";
 import { clients, engine, free, listen, up } from "./hub.ts";
 import { answered, payOwedFacts, takeOver, whenLost, whenMoved } from "./kept.ts";
-import { cantStart } from "./notice.ts";
-import { queue } from "./observe.ts";
+import { cantStart, tellOwner } from "./notice.ts";
 import { hexDir, open, stateDir, syncInBackground } from "./store.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -54,11 +53,7 @@ const hangUpSignOffAndExit = (signal: NodeJS.Signals | "lost") =>
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // A hub refused before any hub of its own read its spool still lands what it owed as fact.
     .then(async () =>
-      signal === "lost"
-        ? await payOwedFacts(stateDir(), async (turn, store) => {
-            await queue(stateDir(), turn, store);
-          })
-        : true,
+      signal === "lost" ? await payOwedFacts(stateDir(), (why) => void tellOwner(why)) : true,
     )
     .then(() => process.exit(signal === "lost" ? LOST_HEX : 0)));
 

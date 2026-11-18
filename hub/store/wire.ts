@@ -37,7 +37,7 @@ const HOME_FAILED = /SQLITE_(BUSY|LOCKED|IOERR|FULL|CANTOPEN|READONLY|CORRUPT|NO
 const SqliteFailure = z.object({ code: z.string() });
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A schema that lacks what this hex's SQL names is a store that doesn't fit this hex, which no row of its own causes: every write would fail the same.
+// SQL that names what its records lack. On a file, it's the hub's own commit that doesn't fit its hex.db, which a rollback fixes once the hub exits. In a Worker, deployed apart from the hub, it's the store's code that doesn't fit its own records, which every call meets alike until a deploy fixes it.
 const SCHEMA_FAILED = /no such (table|column|function|index)|has no column named/u;
 
 const NAMED = new Map<string, string[]>(Object.entries(METHODS));
@@ -61,7 +61,7 @@ function methodsOf(domains: Domains): Map<string, Method> {
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A home's answers to the calls that reach it: what the method returned, or the words it threw.
-export function answering(domains: Domains): (call: string) => Reply {
+export function answering(domains: Domains, deployed = false): (call: string) => Reply {
   const methods = methodsOf(domains);
 
   return (call) => {
@@ -85,7 +85,7 @@ export function answering(domains: Domains): (call: string) => Reply {
       const said = error instanceof Error ? error.message : String(error);
       const { code = said } = SqliteFailure.safeParse(error).data ?? {};
 
-      return HOME_FAILED.test(code) || SCHEMA_FAILED.test(said)
+      return HOME_FAILED.test(code) || (deployed && SCHEMA_FAILED.test(said))
         ? { error: said, every: true }
         : { error: said };
     }

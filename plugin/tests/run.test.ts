@@ -507,6 +507,33 @@ test("no hub starts on records that are moving, however hex starts, and no move 
   expect(hubs()).toHaveLength(3);
 });
 
+test("on a store that answers, a commit whose hub can't start goes back to the last good one and runs there, with nobody at the machine", async () => {
+  const good = commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  writeFileSync(join(home, "state/good"), `${good}\n`);
+
+  const bad = commit("process.exit(1)\n", "a hub that crashes on a store it's newer than");
+
+  const store = Bun.serve({
+    port: 0,
+    fetch: () => Response.json({ version: "a newer store", migrations: 50, contract: "newer" }),
+  });
+
+  try {
+    writeFileSync(
+      join(home, "state/store.json"),
+      JSON.stringify({ url: store.url.origin, name: "hex", key: "k".repeat(40) }),
+    );
+
+    run();
+    await until(() => hubs().length === 1);
+    expect(git("rev-parse", "HEAD")).toBe(good);
+    expect(readFileSync(join(home, "state/bad"), "utf-8").trim()).toBe(bad);
+    expect(hubs()[0]).toMatch(/^start mark=1 loop=1 \d+$/u);
+  } finally {
+    await store.stop(true);
+  }
+}, 30_000);
+
 const curlThatRecordsWhatGeneralIsTold = () => {
   const bin = join(home, "fake-bin");
   mkdirSync(bin);

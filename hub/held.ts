@@ -5,7 +5,8 @@ import { z } from "zod";
 import type { HubLine } from "./hub.ts";
 import { followed } from "./kept.ts";
 import { local } from "./mcp.ts";
-import { stateDir, UnreachedError } from "./store.ts";
+import { stateDir, UnaskedError, unclaimed, UnreachedError } from "./store.ts";
+import type { Store } from "./store.ts";
 import type { Row } from "./store/messages.ts";
 
 const { HEX_THREAD, HEX_HUB } = process.env;
@@ -27,28 +28,28 @@ function tag(row: Row, zone: string) {
   return `<channel source="${row.from}"${meta}>\n${row.body.replaceAll("</channel>", "<\\/channel>")}\n</channel>`;
 }
 
-const TRIES = 3;
-
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The store marks what it gives taken before it answers, so a take whose answer was lost is asked again at once under the same time, which gives what that take took; a store that's down fails each at once, so a tool call never waits on it. One the store still doesn't answer is left to the hub, which gives what it held from memory once the turn ends.
+// The store marks what it gives taken before it answers, so a take that went out and got no answer is asked again at once under the same time, through a client of its own, which gives what that take took; a store already known down fails it at once, unasked (UnaskedError), so a tool call never waits on it. What the store still doesn't answer is left to the hub, which gives what it held from memory once the turn ends.
 async function takeHeld(thread: string, session: string) {
   const at = new Date().toISOString();
+  const take = async (store: Store) => await store.messages.takeHeld(thread, session, at);
 
-  for (let tried = 1; ; tried++) {
+  try {
     try {
-      return await followed(
-        stateDir(),
-        async (store) => await store.messages.takeHeld(thread, session, at),
-      );
+      return await followed(stateDir(), take);
     } catch (error) {
-      if (!(error instanceof UnreachedError) || tried === TRIES) {
-        process.stderr.write(
-          `hex couldn't give this session the words held for it: ${String(error)}\n`,
-        );
-
-        return [];
+      if (error instanceof UnreachedError && !(error instanceof UnaskedError)) {
+        return await take(unclaimed(stateDir()));
       }
+
+      throw error;
     }
+  } catch (error) {
+    process.stderr.write(
+      `hex couldn't give this session the words held for it: ${String(error)}\n`,
+    );
+
+    return [];
   }
 }
 

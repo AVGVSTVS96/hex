@@ -208,6 +208,10 @@ test("hex store deploy makes the store's key once, keeps it in .env, and sends i
     `the store at ${WORKERS_DEV} answers as ${read(join(root, "deployed"))}`,
   );
 
+  expect((await run(join(hex, "bin/hex"), "status")).out).toContain(
+    `store: hex.db here; the Worker at ${WORKERS_DEV} answers, as ${read(join(root, "deployed"))}, ready for a move`,
+  );
+
   rmSync(join(root, "secrets"));
 
   const again = await run(join(hex, "bin/hex"), "store", "deploy");
@@ -343,6 +347,56 @@ test("hex status says whether the store hex points at answers", async () => {
   expect((await run(join(hex, "bin/hex"), "status")).out).toContain(
     `store: ${store.url.origin} doesn't answer, so the hub waits for it`,
   );
+});
+
+test("a move that ends after it wrote store.json counts as moved, and one that ends before it doesn't", async () => {
+  const moveThatEnds = (afterStoreJson: boolean) => {
+    writeFileSync(
+      join(hex, "hub/store/move.ts"),
+      `import { writeFileSync } from "node:fs";\n${afterStoreJson ? `writeFileSync(process.argv[2] + "/store.json", "{}");\n` : ""}process.exit(1);\n`,
+    );
+  };
+
+  moveThatEnds(false);
+  const before = await run(join(hex, "bin/hex"), "store", "move", WORKERS_DEV, "hex");
+  expect(before.code).toBe(1);
+
+  moveThatEnds(true);
+  const after = await run(join(hex, "bin/hex"), "store", "move", WORKERS_DEV, "hex");
+  expect(after.code).toBe(0);
+  expect(after.err).toContain("hex's records are in the object");
+});
+
+test("hex store back takes the records back from the object alone, as the move does, and does nothing where they're in hex.db already", async () => {
+  writeFileSync(
+    join(hex, "hub/store/back.ts"),
+    `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(join(root, "backs"))}, process.argv[2] + "\\n");\n`,
+  );
+
+  const already = await run(join(hex, "bin/hex"), "store", "back");
+  expect(already.code).toBe(0);
+  expect(already.out).toContain("hex's records are in state/hex.db already");
+  expect(read(join(root, "backs"))).toBe("");
+
+  pointed();
+
+  const back = await run(join(hex, "bin/hex"), "store", "back");
+  expect(back.code).toBe(0);
+  expect(read(join(root, "backs"))).toBe(`${join(home, "state")}\n`);
+
+  const lock = Bun.spawn(["flock", "-s", join(home, "state/records.lock"), "sleep", "30"]);
+
+  try {
+    await Bun.sleep(200);
+
+    const running = await run(join(hex, "bin/hex"), "store", "back");
+    expect(running.code).toBe(1);
+    expect(running.err).toContain("hex is running here: stop it first");
+  } finally {
+    lock.kill();
+  }
+
+  expect(read(join(root, "backs"))).toBe(`${join(home, "state")}\n`);
 });
 
 test("a move is refused while hex runs on another machine, or is moving there", async () => {

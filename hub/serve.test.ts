@@ -295,7 +295,13 @@ test("a hub whose store runs another hex's code tells the owner at once that it 
 
   try {
     const { started, output } = serve(port);
-    await until(() => output.said.includes("hex can't start") || started.exitCode !== null);
+
+    const told = await Promise.race([
+      until(() => output.said.includes("hex can't start") || started.exitCode !== null),
+      Bun.sleep(15_000),
+    ]);
+
+    expect(told).toBe(true);
     expect(output.said).toContain("hex store deploy");
     expect(started.exitCode).toBeNull();
   } finally {

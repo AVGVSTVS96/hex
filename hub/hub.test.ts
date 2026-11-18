@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, mock, spyOn, test } from "bun:test";
 import {
   appendFileSync,
@@ -6132,7 +6133,7 @@ test("what a hub owed from before another hub held hex keeps its facts and lets 
   expect(registry()).toEqual({ "chat:7": { name: "Desk anchors", session: "newer" } });
 });
 
-test("a message hex's store refuses for what's in it is set aside whole, what comes after it lands, the owner hears which, and it lands at a start once the store takes it", async () => {
+test("a message hex's store refuses for what's in it is set aside whole, what comes after it lands, the owner hears which once, and it lands at a start once the store takes it", async () => {
   const { received } = await onCall();
   refusingKey = "telegram:1:82";
 
@@ -6143,7 +6144,14 @@ test("a message hex's store refuses for what's in it is set aside whole, what co
   expect(keysKept()).toEqual([matching(/^hub:refused:/u), "telegram:1:83"]);
   expect(toldOwner).toHaveLength(1);
   expect(toldOwner[0]).toContain("telegram:1:82");
-  expect(toldOwner[0]).toContain("tries it again each time it starts");
+  expect(toldOwner[0]).toContain("tries them again each time it starts");
+  expect(toldOwner[0]).toContain("delete one's line there to give up on it");
+
+  hub.close();
+  hangUpAll();
+  await start();
+  await hub.synced();
+  expect(toldOwner).toHaveLength(1);
 
   hub.close();
   hangUpAll();
@@ -6152,6 +6160,16 @@ test("a message hex's store refuses for what's in it is set aside whole, what co
   await hub.synced();
   expect(keysKept()).toContain("telegram:1:82");
   expect(existsSync(join(dir, "refused.telegram.json"))).toBe(false);
+});
+
+test("a hub whose hex.db lacks a table this hex's code names fails to start rather than waiting, so bin/hex rolls the update back", async () => {
+  file(dir);
+  const db = new Database(join(dir, "hex.db"));
+  db.run("ALTER TABLE threads RENAME TO threads_gone");
+  db.close();
+
+  const started = await settles(start());
+  expect(started.status === "rejected" && started.reason instanceof RefusedError).toBe(true);
 });
 
 test("a hub that waits a while for its store as it starts tells the owner", async () => {

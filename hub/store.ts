@@ -31,6 +31,7 @@ export {
   MovedError,
   OtherStoreError,
   RefusedError,
+  UnaskedError,
   UnreachedError,
 } from "./store/errors.ts";
 

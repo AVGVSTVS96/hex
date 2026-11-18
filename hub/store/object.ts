@@ -1,7 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 import type { Namespace } from "cloudflare:workers";
 
-import { CONTRACT } from "./domains.ts";
+import { OFFERS } from "./domains.ts";
+import type { Offers } from "./domains.ts";
 import { recordsIn } from "./storage.ts";
 import type { Reply } from "./wire.ts";
 
@@ -12,7 +13,7 @@ type Env = { STORE: Namespace; KEY?: string; VERSION?: string };
 const SHORTEST_KEY = 32;
 const NAME = /^[a-z0-9][a-z0-9-]{0,62}$/u;
 
-type Version = { version: string | null; migrations: number | null; contract: string };
+type Version = { version: string | null; migrations: number | null; offers: Offers };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Cloudflare's own edge answers 409 for some of its errors too (1001, 1004, 1018), so only the object's word, `lost`, says another hub holds hex.
@@ -74,7 +75,7 @@ export class Records extends DurableObject<Env> {
         return json({
           version: this.env.VERSION ?? null,
           migrations: records.migrations(),
-          contract: CONTRACT,
+          offers: OFFERS,
         });
       }
 

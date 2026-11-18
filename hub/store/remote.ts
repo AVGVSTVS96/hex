@@ -6,12 +6,19 @@ import { z } from "zod";
 import { bring } from "./carry.ts";
 import { fromJson } from "./db.ts";
 import type { Bound } from "./db.ts";
-import { CONTRACT } from "./domains.ts";
-import { LostError, OtherStoreError, UnreachedError } from "./errors.ts";
+import { OFFERS } from "./domains.ts";
+import { LostError, OtherStoreError, UnaskedError, UnreachedError } from "./errors.ts";
 import { client, decode } from "./wire.ts";
 import type { Client } from "./wire.ts";
 
-export { LostError, MovedError, OtherStoreError, RefusedError, UnreachedError } from "./errors.ts";
+export {
+  LostError,
+  MovedError,
+  OtherStoreError,
+  RefusedError,
+  UnaskedError,
+  UnreachedError,
+} from "./errors.ts";
 
 const ON_THIS_MACHINE = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -355,7 +362,7 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
     }
 
     if (down !== undefined) {
-      throw new UnreachedError(`hex's store at ${away.url} isn't answering: ${down.message}`);
+      throw new UnaskedError(`hex's store at ${away.url} isn't answering: ${down.message}`);
     }
 
     try {
@@ -391,7 +398,7 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
 
     const asked = {
       claimant,
-      contract: CONTRACT,
+      needs: OFFERS,
       ...(leased !== undefined && { lease: leased }),
     };
 

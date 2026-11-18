@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { eachVariable, onlyReading } from "./db.ts";
 import type { Core } from "./db.ts";
-import { CONTRACT, domains, migrate } from "./domains.ts";
+import { domains, migrate, OffersJson, unmet } from "./domains.ts";
 import type { Domains } from "./domains.ts";
 import { answering } from "./wire.ts";
 import type { Reply } from "./wire.ts";
@@ -26,7 +26,7 @@ const HomeRow = z
 
 const Claim = z.object({
   claimant: z.string().min(1).max(100),
-  contract: z.string().optional(),
+  needs: OffersJson.optional(),
   lease: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
 });
 
@@ -218,7 +218,7 @@ export function recordsIn(storage: Storage, dir = "") {
     );
 
     records = made;
-    answer = answering(made);
+    answer = answering(made, true);
   };
 
   run(
@@ -282,12 +282,13 @@ export function recordsIn(storage: Storage, dir = "") {
     claim(
       body: string,
     ): { tenure: number } | { lost: string } | { empty: string } | { other: string } {
-      const { claimant, lease, contract } = Claim.parse(JSON.parse(body));
+      const { claimant, lease, needs } = Claim.parse(JSON.parse(body));
       const now = home();
+      const lacking = needs === undefined ? undefined : unmet(needs);
 
-      if (contract !== undefined && contract !== CONTRACT) {
+      if (lacking !== undefined) {
         return {
-          other: `hex's store runs another hex's code (${CONTRACT}, this hex's is ${contract}): deploy this hex's with hex store deploy`,
+          other: `hex's store runs an older hex's code than this one: ${lacking}. Deploy this hex's with hex store deploy`,
         };
       }
 

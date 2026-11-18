@@ -1,13 +1,11 @@
 import { payOwedFacts } from "./kept.ts";
-import { queue } from "./observe.ts";
+import { tellOwner } from "./notice.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Lands what a folder's hubs owed as fact, with no hub and no claim, for a machine that won't run a hub (bin/hex on state/lost): exits 0 once nothing is owed.
 const state = process.argv[2] ?? "";
 
-const paid = await payOwedFacts(state, async (turn, store) => {
-  await queue(state, turn, store);
-});
+const paid = await payOwedFacts(state, (why) => void tellOwner(why));
 
 process.stderr.write(
   paid
