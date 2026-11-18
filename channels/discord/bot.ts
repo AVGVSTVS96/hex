@@ -221,6 +221,9 @@ const withoutMentions = (text: string) => text.replaceAll(/<@[!&]?\d+>/gu, "").t
 
 const failure = (what: string) => failed(`${what} failed`);
 
+const questionFailed = (thread: string, message: string | number) =>
+  failed(`couldn't change the question ${message} in ${thread}`);
+
 const allowed = (user: string) => loadAccess().allowFrom.includes(user);
 
 async function replyMeta(msg: DiscordMessage): Promise<Record<string, string>> {
@@ -1552,9 +1555,12 @@ async function serve(token: string) {
     permission: (thread, request) =>
       void ask(thread, request).catch(failed(`couldn't relay a permission prompt to ${thread}`)),
     questions: {
-      answer: (thread, message, label, via) => void answerQuestion(thread, message, label, via),
-      settle: (thread, message, note) => void settleQuestion(thread, message, note),
-      reopen: (thread, message, via) => void reopenQuestion(thread, message, via),
+      answer: (thread, message, label, via) =>
+        void answerQuestion(thread, message, label, via).catch(questionFailed(thread, message)),
+      settle: (thread, message, note) =>
+        void settleQuestion(thread, message, note).catch(questionFailed(thread, message)),
+      reopen: (thread, message, via) =>
+        void reopenQuestion(thread, message, via).catch(questionFailed(thread, message)),
     },
     ...(process.env.HEX_DIR !== undefined && { hexDir: process.env.HEX_DIR }),
     ...(process.env.HEX_LAUNCHER !== undefined && { launcher: process.env.HEX_LAUNCHER }),
@@ -2142,11 +2148,9 @@ async function serve(token: string) {
 
     hub.save().catch(failure("saving the threads' links"));
     void c.application?.commands.set(COMMANDS).catch(failure("registering slash commands"));
-    ledger
-      .keep(post, (thread, error) => {
-        failed(`couldn't rewrite ${thread}'s status post`)(error);
-      })
-      .catch(failure("keeping the status posts current"));
+    void ledger.keep(post, (thread, error) => {
+      failed(`couldn't rewrite ${thread}'s status post`)(error);
+    });
   });
 
   async function login(attempt = 1): Promise<void> {

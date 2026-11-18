@@ -2625,7 +2625,7 @@ async function handleInbound(
   // Telegram sends an album as one message per item, with no event once the last has arrived. https://core.telegram.org/bots/api#message (media_group_id)
   album.timer = setTimeout(() => {
     albums.delete(group);
-    void deliverInbound(album.parts);
+    void deliverAlbum(album.parts);
   }, ALBUM_WAIT);
 }
 
@@ -2633,6 +2633,14 @@ function listed(name: string, values: (string | number | undefined)[]): Record<s
   return values.some((value) => value !== undefined)
     ? { [name]: values.map((value) => value ?? "").join("; ") }
     : {};
+}
+
+async function deliverAlbum(parts: Part[]) {
+  try {
+    await deliverInbound(parts);
+  } catch (error) {
+    process.stderr.write(`telegram hub: couldn't deliver an album: ${String(error)}\n`);
+  }
 }
 
 async function deliverInbound(parts: Part[]): Promise<void> {
@@ -2738,18 +2746,11 @@ async function deliverInbound(parts: Part[]): Promise<void> {
 let keeping: Promise<void> | undefined;
 
 async function keepStatusPosts() {
-  try {
-    await ledger.keep(post, (thread, error) => {
-      process.stderr.write(
-        `telegram hub: couldn't rewrite ${thread}'s status post: ${String(error)}\n`,
-      );
-    });
-  } catch (error) {
-    keeping = undefined;
+  await ledger.keep(post, (thread, error) => {
     process.stderr.write(
-      `telegram hub: couldn't keep the status posts current: ${String(error)}\n`,
+      `telegram hub: couldn't rewrite ${thread}'s status post: ${String(error)}\n`,
     );
-  }
+  });
 }
 
 let boarding: Promise<void> | undefined;

@@ -121,40 +121,44 @@ const rollback = join(state, "rollback");
 const down = join(state, `down.${hostname()}`);
 
 void (async () => {
-  const general = await up;
+  try {
+    const general = await up;
 
-  if (commit) {
-    writeFileSync(join(state, "good"), `${commit}\n`);
-  }
+    if (commit) {
+      writeFileSync(join(state, "good"), `${commit}\n`);
+    }
 
-  const { main } = general;
+    const { main } = general;
 
-  if (main === undefined) {
-    return;
-  }
+    if (main === undefined) {
+      return;
+    }
 
-  nightly(state, home, main);
+    nightly(state, home, main);
 
-  const tell = async (what: string, body: string) =>
-    await open(state).messages.deliver({
-      key: `hub:${what}@${Date.now()}`,
-      to: besideOf(main),
-      from: "hub",
-      author: "prompt",
-      body,
-      meta: { user: "hub" },
-    });
+    const tell = async (what: string, body: string) =>
+      await open(state).messages.deliver({
+        key: `hub:${what}@${Date.now()}`,
+        to: besideOf(main),
+        from: "hub",
+        author: "prompt",
+        body,
+        meta: { user: "hub" },
+      });
 
-  if (existsSync(down)) {
-    const since = new Date(Number(readFileSync(down, "utf-8")) * 1000);
-    const from = Number.isNaN(since.getTime()) ? "" : ` from ${since.toLocaleString()}`;
-    await tell("back", `hex is back, on ${hostname()}: it couldn't start${from} until now.`);
-    rmSync(down);
-  }
+    if (existsSync(down)) {
+      const since = new Date(Number(readFileSync(down, "utf-8")) * 1000);
+      const from = Number.isNaN(since.getTime()) ? "" : ` from ${since.toLocaleString()}`;
+      await tell("back", `hex is back, on ${hostname()}: it couldn't start${from} until now.`);
+      rmSync(down);
+    }
 
-  if (existsSync(rollback)) {
-    await tell("rollback", readFileSync(rollback, "utf-8").trim());
-    rmSync(rollback);
+    if (existsSync(rollback)) {
+      await tell("rollback", readFileSync(rollback, "utf-8").trim());
+      rmSync(rollback);
+    }
+  } catch (error) {
+    process.stderr.write(`hub: couldn't tell General how hex came up: ${String(error)}\n`);
   }
 })();
 

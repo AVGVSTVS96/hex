@@ -136,10 +136,24 @@ export class Ledger {
       }
     };
 
-    let seen = (await this.store.pins.changedSince(0)).last;
+    let seen: number | undefined;
 
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // The first read rewrites every post; a read the store didn't answer, the first one too, is made again at the store's next change, which a store that answers again rings.
     const rewriteChanged = async () => {
       try {
+        if (seen === undefined) {
+          const { last } = await this.store.pins.changedSince(0);
+          const pins = await this.reads.pins.list({ app: this.app });
+          seen ??= last;
+
+          for (const { thread } of pins) {
+            void rewriteOrReport(thread);
+          }
+
+          return;
+        }
+
         const { threads, last } = await this.store.pins.changedSince(seen);
 
         seen = Math.max(seen, last);
@@ -158,14 +172,7 @@ export class Ledger {
       void rewriteChanged();
     });
 
-    try {
-      for (const { thread } of await this.reads.pins.list({ app: this.app })) {
-        void rewriteOrReport(thread);
-      }
-    } catch (error) {
-      stop();
-      throw error;
-    }
+    await rewriteChanged();
 
     return stop;
   }

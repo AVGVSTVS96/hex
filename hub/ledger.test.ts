@@ -505,3 +505,84 @@ test("status posts read hex's store through a client of their own, so a message 
     await object.stop(true);
   }
 });
+
+test("status posts whose first read the store didn't answer are kept once it answers again, and no read it fails goes unhandled", async () => {
+  const records = file(join(dir, "object"));
+  const answer = answering(records);
+  records.pins.pinned({
+    app: "telegram",
+    thread: "-100:7",
+    message: 1,
+    text: "old",
+    note: "Working",
+  });
+  let failing = true;
+  let unhandled = 0;
+
+  const count = () => {
+    unhandled += 1;
+  };
+
+  process.on("unhandledRejection", count);
+
+  const object = Bun.serve<undefined>({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request, server) => {
+      if (new URL(request.url).pathname.endsWith("/watch")) {
+        return server.upgrade(request) ? undefined : new Response("no", { status: 400 });
+      }
+
+      const call = await request.text();
+
+      return failing && call.includes('"pins"')
+        ? new Response("", { status: 500 })
+        : Response.json(answer(call));
+    },
+    websocket: {
+      open: (socket) => {
+        socket.subscribe("changes");
+      },
+      message: (socket) => {
+        socket.send("pong");
+      },
+    },
+  });
+
+  writeFileSync(
+    join(stateDir(dir), "store.json"),
+    JSON.stringify({ url: object.url.origin, name: "hex", key: "k".repeat(32) }),
+  );
+
+  const edited: string[] = [];
+
+  const post: Post = {
+    room: 4096,
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- a Link returns string | undefined, which () => {} doesn't
+    link: () => undefined,
+    send: () => Promise.resolve(2),
+    edit: (thread) => {
+      edited.push(thread);
+
+      return Promise.resolve(true);
+    },
+    pin: () => Promise.resolve(),
+    unpin: () => Promise.resolve(),
+  };
+
+  const stop = await new Ledger(dir, "telegram").keep(post, (_, error) => {
+    throw error;
+  });
+
+  try {
+    expect(edited).toEqual([]);
+    failing = false;
+    object.publish("changes", ".");
+    await until(() => edited.includes("-100:7"));
+    expect(unhandled).toBe(0);
+  } finally {
+    stop();
+    process.off("unhandledRejection", count);
+    await object.stop(true);
+  }
+});
