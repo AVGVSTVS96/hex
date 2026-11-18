@@ -324,7 +324,7 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
   };
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Once a call can't reach the object, the calls behind it fail at once rather than each waiting out its time, until a probe gets an answer; the probe's timer holds no process open.
+  // A call that can't reach the object fails alone unless a probe, a call that changes nothing, can't reach it either: then the object is down, for this process and the folder's others, and the calls behind it fail at once rather than each waiting out its time, until a probe gets an answer. The probe's timer holds no process open.
   let down: UnreachedError | undefined;
   let lost: LostError | undefined;
   let wait = times.firstRetry;
@@ -334,30 +334,38 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
     wait = Math.min(wait * 2, times.longestRetry);
   };
 
-  const fell = (error: Error) => {
-    if (error instanceof LostError) {
-      lost ??= error;
-    } else if (error instanceof UnreachedError && down === undefined) {
-      down = error;
-      elsewhere.say(error.message);
-      probeLater();
+  const answers = async () => {
+    try {
+      await reach("call", PROBE);
+
+      return true;
+    } catch (error) {
+      if (error instanceof LostError) {
+        lost ??= error;
+      }
+
+      return error instanceof LostError;
     }
   };
 
   const probe = async () => {
-    try {
-      await reach("call", PROBE);
+    if (await answers()) {
       down = undefined;
       wait = times.firstRetry;
       elsewhere.clear();
       socket.ring();
-    } catch (error) {
-      if (error instanceof LostError) {
-        lost ??= error;
-        down = undefined;
-      } else {
-        probeLater();
-      }
+    } else {
+      probeLater();
+    }
+  };
+
+  const fell = async (error: Error) => {
+    if (error instanceof LostError) {
+      lost ??= error;
+    } else if (error instanceof UnreachedError && down === undefined && !(await answers())) {
+      down = error;
+      elsewhere.say(error.message);
+      probeLater();
     }
   };
 
@@ -381,7 +389,7 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
       return await reach(route, body);
     } catch (error) {
       if (error instanceof Error) {
-        fell(error);
+        await fell(error);
       }
 
       throw error;
