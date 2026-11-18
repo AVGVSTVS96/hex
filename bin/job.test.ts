@@ -52,6 +52,7 @@ beforeAll(() => {
     "bin/hex",
     "bin/session",
     "hub/cli.ts",
+    "hub/cli",
     "hub/fit.ts",
     "hub/notes.ts",
     "hub/tasks.ts",
