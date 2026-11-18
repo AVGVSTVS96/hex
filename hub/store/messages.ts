@@ -152,9 +152,9 @@ export class Messages {
     );
   }
 
-  takeHeld(thread: string, session: string): Row[] {
-    const at = now();
-
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A hook from before calls had names sends its own time, and after a lost reply asks again with it, so it gets every row it took under that time; a store deploys before the hex beside it updates, so it keeps that until no hook sends one.
+  takeHeld(thread: string, session: string, at = now()): Row[] {
     return this.write(() => {
       this.db
         .query(

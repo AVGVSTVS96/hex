@@ -121,8 +121,11 @@ const rollback = join(state, "rollback");
 const down = join(state, `down.${hostname()}`);
 
 void (async () => {
+  let doing = "waiting for General to connect";
+
   try {
     const general = await up;
+    doing = "marking this hub's commit good";
 
     if (commit) {
       writeFileSync(join(state, "good"), `${commit}\n`);
@@ -134,6 +137,7 @@ void (async () => {
       return;
     }
 
+    doing = "starting the nightly backup";
     nightly(state, home, main);
 
     const tell = async (what: string, body: string) =>
@@ -149,16 +153,18 @@ void (async () => {
     if (existsSync(down)) {
       const since = new Date(Number(readFileSync(down, "utf-8")) * 1000);
       const from = Number.isNaN(since.getTime()) ? "" : ` from ${since.toLocaleString()}`;
+      doing = "telling General hex is back";
       await tell("back", `hex is back, on ${hostname()}: it couldn't start${from} until now.`);
       rmSync(down);
     }
 
     if (existsSync(rollback)) {
+      doing = "telling General about the rollback";
       await tell("rollback", readFileSync(rollback, "utf-8").trim());
       rmSync(rollback);
     }
   } catch (error) {
-    process.stderr.write(`hub: couldn't tell General how hex came up: ${String(error)}\n`);
+    process.stderr.write(`hub: failed ${doing}: ${String(error)}\n`);
   }
 })();
 
