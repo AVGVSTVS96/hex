@@ -5,8 +5,7 @@ import { z } from "zod";
 import { followed } from "./kept.ts";
 import { local } from "./mcp.ts";
 import type { HubLine } from "./socket.ts";
-import { stateDir, UnaskedError, unclaimed, UnreachedError } from "./store.ts";
-import type { Store } from "./store.ts";
+import { stateDir } from "./store.ts";
 import type { Row } from "./store/messages.ts";
 
 const { HEX_THREAD, HEX_HUB } = process.env;
@@ -29,21 +28,13 @@ function tag(row: Row, zone: string) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The store marks what it gives taken before it answers, so a take that went out and got no answer is asked again at once under the same time, through a client of its own, which gives what that take took; a store already known down fails it at once, unasked (UnaskedError), so a tool call never waits on it. What the store still doesn't answer is left to the hub, which gives what it held from memory once the turn ends.
+// A store already known down fails the take at once, unasked, so a tool call never waits on it. What the store doesn't answer is left to the hub, which gives what it held from memory once the turn ends.
 async function takeHeld(thread: string, session: string) {
-  const at = new Date().toISOString();
-  const take = async (store: Store) => await store.messages.takeHeld(thread, session, at);
-
   try {
-    try {
-      return await followed(stateDir(), take);
-    } catch (error) {
-      if (error instanceof UnreachedError && !(error instanceof UnaskedError)) {
-        return await take(unclaimed(stateDir()));
-      }
-
-      throw error;
-    }
+    return await followed(
+      stateDir(),
+      async (store) => await store.messages.takeHeld(thread, session),
+    );
   } catch (error) {
     process.stderr.write(
       `hex couldn't give this session the words held for it: ${String(error)}\n`,

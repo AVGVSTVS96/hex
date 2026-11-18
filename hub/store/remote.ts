@@ -201,7 +201,12 @@ function watcher(address: URL, headers: Asking, times: Times) {
   };
 }
 
-const WORKER_UNKNOWN_TO_EDGE_TRIES = 4;
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The object answers in JSON, so a page is Cloudflare's in its place, and one that says the call went unanswered goes again: a Worker its edge doesn't know yet after a deploy (404), an object reset as its code or Cloudflare's runtime changed (500, with no body), or an edge that couldn't reach the Worker (502 to 530). A page that refuses the call, like 403 or 429, isn't sent again.
+const PAGES_SENT_PAST = 4;
+
+const unanswered = (status: number, text: string) =>
+  !text.startsWith("{") && (status === 404 || status >= 500);
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A process that finds the object not answering says so in the state folder, so the next process, like a hook, fails at once instead of waiting out its own time, until one gets an answer again or the word is older than the longest wait between tries.
@@ -268,12 +273,13 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
   const socket = watcher(at(away, "watch"), headers, times);
   const elsewhere = shared ? word(dir, times) : alone;
 
-  const sent = async (route: string, body: string) => {
+  const sent = async (route: string, body: string, call: string, fresh = false) => {
     try {
       const response = await fetch(at(away, route), {
         method: "POST",
-        headers,
+        headers: { ...headers, "hex-call": call },
         body,
+        keepalive: !fresh,
         signal: AbortSignal.timeout(times.answerWithin),
       });
 
@@ -285,17 +291,7 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
     }
   };
 
-  const reach = async (route: string, body: string) => {
-    let { response, text } = await sent(route, body);
-
-    for (
-      let again = 0;
-      again < WORKER_UNKNOWN_TO_EDGE_TRIES && response.status === 404 && !text.startsWith("{");
-      again++
-    ) {
-      ({ response, text } = await sent(route, body));
-    }
-
+  const judged = (response: Response, text: string) => {
     const lostTo = response.status === 409 ? lostIn(text) : null;
 
     if (lostTo !== null) {
@@ -324,6 +320,38 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
   };
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Each call goes under a name, and the object answers a call it took already with the reply it kept, so a call sent again lands once. A send that got no answer goes once more on a connection of its own: Cloudflare can carry connections to a data center far from this machine and drop them all at once. A page in place of the object's reply goes again too; a probe only asks whether the object answers, so its dropped send isn't sent again.
+  const reach = async (route: string, body: string, dropsAgain = true) => {
+    const call = crypto.randomUUID();
+    let fresh = false;
+    let pages = 0;
+
+    for (;;) {
+      let answer: Awaited<ReturnType<typeof sent>>;
+
+      try {
+        answer = await sent(route, body, call, fresh);
+      } catch (error) {
+        if (fresh || !dropsAgain) {
+          throw error;
+        }
+
+        fresh = true;
+        continue;
+      }
+
+      const { response, text } = answer;
+
+      if (unanswered(response.status, text) && pages < PAGES_SENT_PAST) {
+        pages += 1;
+        continue;
+      }
+
+      return judged(response, text);
+    }
+  };
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A call that can't reach the object fails alone unless a probe, a call that changes nothing, can't reach it either: then the object is down, for this process and the folder's others, and the calls behind it fail at once rather than each waiting out its time, until a probe gets an answer. The probe's timer holds no process open.
   let down: UnreachedError | undefined;
   let lost: LostError | undefined;
@@ -336,7 +364,7 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
 
   const answers = async () => {
     try {
-      await reach("call", PROBE);
+      await reach("call", PROBE, false);
 
       return true;
     } catch (error) {

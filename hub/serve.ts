@@ -121,40 +121,50 @@ const rollback = join(state, "rollback");
 const down = join(state, `down.${hostname()}`);
 
 void (async () => {
-  const general = await up;
+  let doing = "waiting for General to connect";
 
-  if (commit) {
-    writeFileSync(join(state, "good"), `${commit}\n`);
-  }
+  try {
+    const general = await up;
+    doing = "marking this hub's commit good";
 
-  const { main } = general;
+    if (commit) {
+      writeFileSync(join(state, "good"), `${commit}\n`);
+    }
 
-  if (main === undefined) {
-    return;
-  }
+    const { main } = general;
 
-  nightly(state, home, main);
+    if (main === undefined) {
+      return;
+    }
 
-  const tell = async (what: string, body: string) =>
-    await open(state).messages.deliver({
-      key: `hub:${what}@${Date.now()}`,
-      to: besideOf(main),
-      from: "hub",
-      author: "prompt",
-      body,
-      meta: { user: "hub" },
-    });
+    doing = "starting the nightly backup";
+    nightly(state, home, main);
 
-  if (existsSync(down)) {
-    const since = new Date(Number(readFileSync(down, "utf-8")) * 1000);
-    const from = Number.isNaN(since.getTime()) ? "" : ` from ${since.toLocaleString()}`;
-    await tell("back", `hex is back, on ${hostname()}: it couldn't start${from} until now.`);
-    rmSync(down);
-  }
+    const tell = async (what: string, body: string) =>
+      await open(state).messages.deliver({
+        key: `hub:${what}@${Date.now()}`,
+        to: besideOf(main),
+        from: "hub",
+        author: "prompt",
+        body,
+        meta: { user: "hub" },
+      });
 
-  if (existsSync(rollback)) {
-    await tell("rollback", readFileSync(rollback, "utf-8").trim());
-    rmSync(rollback);
+    if (existsSync(down)) {
+      const since = new Date(Number(readFileSync(down, "utf-8")) * 1000);
+      const from = Number.isNaN(since.getTime()) ? "" : ` from ${since.toLocaleString()}`;
+      doing = "telling General hex is back";
+      await tell("back", `hex is back, on ${hostname()}: it couldn't start${from} until now.`);
+      rmSync(down);
+    }
+
+    if (existsSync(rollback)) {
+      doing = "telling General about the rollback";
+      await tell("rollback", readFileSync(rollback, "utf-8").trim());
+      rmSync(rollback);
+    }
+  } catch (error) {
+    process.stderr.write(`hub: failed ${doing}: ${String(error)}\n`);
   }
 })();
 

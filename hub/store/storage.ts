@@ -4,7 +4,7 @@ import { eachVariable, onlyReading } from "./db.ts";
 import type { Core, Write } from "./db.ts";
 import { domains, migrate, OffersJson, unmet } from "./domains.ts";
 import type { Domains } from "./domains.ts";
-import { answering } from "./wire.ts";
+import { answering, ReplyJson } from "./wire.ts";
 import type { Reply } from "./wire.ts";
 
 // The part of a Durable Object's storage the store runs on: https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/
@@ -43,6 +43,48 @@ const Claimed = z.object({ tenure: z.number() }).optional();
 // The claims kept, so one that arrives again (a retry, or a request the network held back) is known by its claimant; older ones go.
 const CLAIMS_KEPT = 100;
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The reply of a call that wrote is kept, so the call sent again after its reply was lost is answered from it, not run twice. A client sends a call again within its own wait for it, seconds, so a reply goes ten minutes on. One is kept in parts of at most 1.5 MiB however it's encoded, so a reply as large as a value can be (8 MiB) is kept too.
+const CALLS_KEPT_FOR = 10 * 60_000;
+const PART = 512 * 1024;
+
+const KeptParts = z.array(z.object({ reply: z.string() }));
+
+function partsOf(text: string): string[] {
+  const parts: string[] = [];
+
+  for (let from = 0; from < text.length;) {
+    const cut = Math.min(from + PART, text.length);
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // A part never ends between the two halves of a character, which SQLite's UTF-8 would replace.
+    const end = cut < text.length && /[\uD800-\uDBFF]/u.test(text.charAt(cut - 1)) ? cut - 1 : cut;
+    parts.push(text.slice(from, end));
+    from = end;
+  }
+
+  return parts;
+}
+
+function keptReplies(run: Run) {
+  return {
+    of: (id: string): Reply | undefined => {
+      const parts = KeptParts.parse(run("select reply from _calls where id = ? order by part", id));
+
+      return parts.length === 0
+        ? undefined
+        : ReplyJson.parse(JSON.parse(parts.map(({ reply }) => reply).join("")));
+    },
+    keep: (id: string, reply: Reply) => {
+      const at = Date.now();
+      run("delete from _calls where at < ?", at - CALLS_KEPT_FOR);
+
+      for (const [part, said] of partsOf(JSON.stringify(reply)).entries()) {
+        run("insert into _calls (id, part, at, reply) values (?, ?, ?, ?)", id, part, at, said);
+      }
+    },
+  };
+}
+
 const Count = z.object({ n: z.number() });
 const Statements = z.object({ statements: z.array(z.string()) });
 
@@ -63,7 +105,7 @@ class UndoneError extends Error {
   override name = "UndoneError";
 }
 
-type Called = { reply: Reply; wrote: boolean };
+type Called = { reply: Reply; wrote: boolean; again?: true };
 
 type Step = { id: string; step: number };
 
@@ -232,6 +274,9 @@ function homeTables(run: Run) {
   run(
     "create table if not exists _claims (claimant text primary key, tenure integer not null unique)",
   );
+  run(
+    "create table if not exists _calls (id text not null, part integer not null, at integer not null, reply text not null, primary key (id, part))",
+  );
 
   for (const [column, kind] of [
     ["served", "integer not null default 0"],
@@ -257,6 +302,7 @@ export function recordsIn(storage: Storage, dir = "") {
   const changes = () => Count.parse(run("select total_changes() as n")[0]).n;
 
   const own = ownWrites(core, changes);
+  const replies = keptReplies(run);
 
   const ready = () => {
     const made = domains(core, own.quiet);
@@ -351,8 +397,8 @@ export function recordsIn(storage: Storage, dir = "") {
     },
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // Each call is one write: one that fails leaves nothing of itself behind.
-    call(text: string): Called {
+    // Each call is one write: one that fails leaves nothing of itself behind, and one that wrote keeps its reply with it under the name it came with, so the same call sent again is answered from it.
+    call(text: string, id?: string): Called {
       if (answer === undefined) {
         return {
           reply: {
@@ -367,8 +413,15 @@ export function recordsIn(storage: Storage, dir = "") {
         run("update _home set served = 1");
       }
 
+      const kept = id === undefined ? undefined : replies.of(id);
+
+      if (kept !== undefined) {
+        return { reply: kept, wrote: false, again: true };
+      }
+
       const answered = answer;
-      const before = changes() - own.unheard();
+      const all = changes();
+      const before = all - own.unheard();
       let reply: Reply = { error: "the call didn't run" };
 
       try {
@@ -377,6 +430,12 @@ export function recordsIn(storage: Storage, dir = "") {
 
           if ("error" in reply) {
             throw new UndoneError();
+          }
+
+          if (id !== undefined && changes() !== all) {
+            own.quiet(() => {
+              replies.keep(id, reply);
+            });
           }
         });
       } catch (error) {

@@ -17,7 +17,7 @@ const CallJson = z.object({
 // JSON gives every object a prototype, so a lookup table a method made without one, like threads.names(), says so, or a key like toString would find Object's method.
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // An error says `every` when the home would refuse any call now, not just this one: a method it doesn't have yet, or a disk that failed under it.
-const ReplyJson = z.union([
+export const ReplyJson = z.union([
   z.object({ error: z.string(), every: z.literal(true).optional() }),
   z.object({ value: z.unknown().optional(), prototype: z.null().optional() }),
 ]);

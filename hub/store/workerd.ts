@@ -357,7 +357,7 @@ test("a store whose object is gone fails at once after the first call, and synce
   expect(await thrown(far?.synced())).toBeInstanceOf(UnreachedError);
 });
 
-test("one call whose connection resets fails alone, and the calls behind it, here and in another process, reach the store", async () => {
+test("a call whose connection drops is sent again and lands once, whether the object took it before the drop or not, and one dropped each time fails alone", async () => {
   const dir = await movedInto("reset");
   const front = await resetting(url);
   writeFileSync(
@@ -368,18 +368,22 @@ test("one call whose connection resets fails alone, and the calls behind it, her
   try {
     const hub = remote(dir, QUICK);
     await hub?.claim();
-    front.arm();
-    const reset = await thrown(hub?.messages.deliver(message));
+    expect(await hub?.messages.deliver(message)).toBe(true);
+    const task = { title: "Fix it", message: message.key, owner: "-100:7" };
+
+    front.arm("asked");
+    expect((await hub?.tasks.create(task))?.id).toBe("t-1");
+    front.arm("answered");
+    expect((await hub?.tasks.create(task))?.id).toBe("t-2");
+    expect(front.resets()).toBe(2);
+    expect((await hub?.tasks.list())?.map(({ id }) => id)).toEqual(["t-2", "t-1"]);
+
+    front.arm("asked", 2);
+    const reset = await thrown(hub?.tasks.create(task));
     expect(reset).toBeInstanceOf(UnreachedError);
     expect(reset).not.toBeInstanceOf(UnaskedError);
-    expect(front.resets()).toBe(1);
     expect(existsSync(join(dir, "store.down"))).toBe(false);
-
-    expect(await hub?.messages.deliver(message)).toBe(true);
-    await hub?.synced();
-    expect(await remote(dir, QUICK)?.messages.get(message.key)).toMatchObject({
-      body: message.body,
-    });
+    expect((await remote(dir, QUICK)?.tasks.list())?.length).toBe(2);
   } finally {
     await front.stop();
   }
@@ -667,19 +671,6 @@ test("the object says what its store offers, the migrations and methods this che
     .parse(await (await fetch(`${url}/hex/version`, { headers: auth })).json());
 
   expect(answer.offers).toEqual(OFFERS);
-});
-
-test("words a lost reply took mid-turn come back when the take is made again with the same time", async () => {
-  const store = remote(await movedInto("held"), QUICK);
-  const at = "2026-11-17T10:00:00.000Z";
-
-  await store?.messages.deliver(message);
-  await store?.messages.hold(message.key, "s-1");
-  await store?.messages.takeHeld(message.to, "s-1", at);
-
-  expect((await store?.messages.takeHeld(message.to, "s-1", at))?.map((row) => row.key)).toEqual([
-    message.key,
-  ]);
 });
 
 const claimNeeding = async (claimant: string, needs: typeof OFFERS) =>

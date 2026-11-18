@@ -7,4 +7,6 @@
   "compatibility_flags": ["nodejs_compat"],
   "durable_objects": { "bindings": [{ "name": "STORE", "class_name": "Records" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Records"] }],
+  // Workers Logs: how each request ended (a client that hung up shows as canceled) and what the object said. A hex sends the store a few million requests a day as it copies transcripts, so one in a hundred is kept, inside the 20 million events a month the Workers Paid plan includes: https://developers.cloudflare.com/workers/observability/logs/workers-logs/#pricing
+  "observability": { "enabled": true, "head_sampling_rate": 0.01 },
 }

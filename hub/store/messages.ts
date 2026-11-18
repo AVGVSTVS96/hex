@@ -153,7 +153,7 @@ export class Messages {
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Called again with the same at, as after a lost reply, it answers with every row it took under that at, so none is taken and never seen.
+  // A hook from before calls had names sends its own time, and after a lost reply asks again with it, so it gets every row it took under that time; a store deploys before the hex beside it updates, so it keeps that until no hook sends one.
   takeHeld(thread: string, session: string, at = now()): Row[] {
     return this.write(() => {
       this.db
