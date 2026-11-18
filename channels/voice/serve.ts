@@ -4,20 +4,19 @@ import { dirname, join } from "node:path";
 
 import * as app from "./app.ts";
 import { Board } from "./board.ts";
-import { PORT, env } from "./env.ts";
+import * as calls from "./engine.ts";
+import type { Hub } from "./engine.ts";
+import { PORT, PUBLIC_HOST, env } from "./env.ts";
 import { Media } from "./media.ts";
 import page from "./page.html" with { type: "text" };
 import { Questions } from "./questions.ts";
-import * as calls from "./server.ts";
-import type { Hub } from "./server.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* One port for the call page, hex's apps and Twilio, since the apps know one address and token:
-   calls go to the call engine (server.ts), everything else the apps read and do to the app API
+   calls go to the call engine (engine.ts), everything else the apps read and do to the app API
    (app.ts), and both read the same board, questions and photos. */
 
 const TOKEN = env.VOICE_TOKEN;
-const PUBLIC_HOST = env.VOICE_PUBLIC_URL?.replace(/^\w+:\/\//u, "");
 
 const PUBLIC_HOSTNAME = filled(PUBLIC_HOST)
   ? URL.parse(`https://${PUBLIC_HOST}`)?.hostname

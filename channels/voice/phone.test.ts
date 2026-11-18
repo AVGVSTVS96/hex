@@ -188,7 +188,7 @@ async function phoneCall({ openaiHoldsEachStart = false } = {}) {
   const hex = join(home, "hex", "state");
   mkdirSync(hex, { recursive: true });
 
-  const engineWhoseKeepWaitsForAStdinLine = `import { serve } from ${JSON.stringify(join(import.meta.dir, "serve.ts"))}; import { tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
+  const engineWhoseKeepWaitsForAStdinLine = `import { serve } from ${JSON.stringify(join(import.meta.dir, "serve.ts"))}; import { tool } from ${JSON.stringify(join(import.meta.dir, "engine.ts"))}
 const step = (step, more = {}) => console.log(JSON.stringify({ step, ...more }))
 const lines = console[Symbol.asyncIterator]()
 const server = serve({

@@ -5,8 +5,8 @@ import { dispatch, engine, startHub, hexDir } from "@hex/hub";
 import type { Handlers } from "@hex/hub";
 
 import { server, tools } from "./channel.ts";
+import { cantAnswer, stopsHere, take, tool } from "./engine.ts";
 import { serve } from "./serve.ts";
-import { cantAnswer, stopsHere, take, tool } from "./server.ts";
 
 const filled = (value: string | undefined) => value !== undefined && value !== "";
 

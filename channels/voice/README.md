@@ -27,7 +27,7 @@ other apps:
 - `serve.ts` holds `VOICE_PORT`, the one address the call page, the apps and
   Twilio reach: Twilio's routes, then the token, then the call engine's routes
   and the app API's.
-- `server.ts` is the call engine: each call's `gpt-live-1` connection,
+- `engine.ts` is the call engine: each call's `gpt-live-1` connection,
   Twilio's media streams, call records, and the routes a call needs
   (`/session`, `/calls`, `/settings`, `/activity`, `/phone`). It lives as long
   as the service, not a session.
@@ -44,7 +44,7 @@ other apps:
   so no process runs per session.
 
 ```
- page, apps, Twilio ──► serve.ts ─┬─► call engine (server.ts) ◄── hub ◄── HTTP ── voice session
+ page, apps, Twilio ──► serve.ts ─┬─► call engine (engine.ts) ◄── hub ◄── HTTP ── voice session
                                   └─► app API (app.ts)
 ```
 

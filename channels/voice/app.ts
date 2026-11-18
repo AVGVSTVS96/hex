@@ -4,20 +4,18 @@ import { open, sentPicture } from "@hex/hub";
 import { z } from "zod";
 
 import { brief } from "./activity.ts";
-import { opener } from "./board.ts";
 import type { Board, Page, Run } from "./board.ts";
 import { Chats } from "./chat.ts";
 import type { Where } from "./chat.ts";
+import { card, talkAbout } from "./engine.ts";
 import { Feed } from "./feed.ts";
-import type { Entry } from "./feed.ts";
 import { Goals } from "./goals.ts";
 import { Ideas } from "./ideas.ts";
 import { Media } from "./media.ts";
 import type { Item } from "./media.ts";
-import { clip } from "./questions.ts";
-import type { Question, Questions } from "./questions.ts";
-import { answerQuestion, card, talkAbout } from "./server.ts";
-import type { Topic } from "./server.ts";
+import { feedTopic, runTopic, walkTopic } from "./prompt.ts";
+import type { Topic } from "./prompt.ts";
+import type { Questions } from "./questions.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* The API hex's apps read and act through, beside the calls on the same port: the board of threads
@@ -137,82 +135,6 @@ export function topicOf(about?: string): Topic | undefined {
   const run = filled(about) ? board.get(about) : undefined;
 
   return run && runTopic(run);
-}
-
-function runTopic(run: Run): Topic {
-  return {
-    id: run.id,
-    claude: `The caller started it with Talk it through on a task. ${opener(run)}`,
-    voice: `The caller tapped Talk it through on a task, so name it now in a sentence, with its last update and how old that is, then listen: Assistant checks what's new. ${opener(run)} Its last update came ${ago(run.at)}.`,
-  };
-}
-
-function ago(at: string) {
-  const minutes = Math.round((Date.now() - Date.parse(at)) / 60_000);
-
-  if (!Number.isFinite(minutes)) {
-    return "at a time hex doesn't know";
-  }
-
-  if (minutes < 2) {
-    return "just now";
-  }
-
-  if (minutes < 90) {
-    return `${minutes} minutes ago`;
-  }
-
-  const hours = Math.round(minutes / 60);
-
-  return hours < 48 ? `${hours} hours ago` : `${Math.round(hours / 24)} days ago`;
-}
-
-const FEED_KINDS = {
-  done: "a task hex finished",
-  found: "news an idea check found",
-  decided: "a question hex decided itself",
-} satisfies Record<Entry["kind"], string>;
-
-function feedTopic(entry: Entry): Topic {
-  const said = [
-    `It's ${FEED_KINDS[entry.kind]}, ${entry.opens} in ${entry.topic || "hex"}: ${entry.title}`,
-    entry.body,
-    ...entry.links.map((link) => `${link.label}: ${link.url}`),
-  ]
-    .filter(filled)
-    .join("\n");
-
-  return {
-    id: `feed:${entry.id}`,
-    claude: `The caller started it with Discuss on an entry in the Feed. ${said}`,
-    voice: `The caller tapped Discuss on an entry in the Feed, so name it now in a sentence, with how long ago it was, then listen: Assistant checks what's new. ${said}\nIt came ${ago(entry.at)}.`,
-  };
-}
-
-function halfDone({ partly, undoing }: Question) {
-  if (undoing === true) {
-    return " [taking back its answer stopped partway: only Undo in the app finishes it]";
-  }
-
-  return filled(partly)
-    ? ` ["${partly}" already went out to part of it: only "${partly}" finishes it, or Undo in the app]`
-    : "";
-}
-
-function walkTopic(questions: Question[]): Topic {
-  const list = questions.map(
-    (question, i) =>
-      `${i + 1}. ${question.id} · ${question.topic} · ${question.question}${filled(question.context) ? ` (${clip(question.context.replaceAll(/\s+/gu, " ").trim(), 280)})` : ""} Options: ${question.options.map((option) => `${option.label}${option.pick === true ? " (hex’s pick)" : ""}`).join(" / ")}${filled(question.tag) ? ` [${question.tag}]` : ""}${halfDone(question)}`,
-  );
-
-  return {
-    id: "asks",
-    claude: [
-      `The caller tapped Go through them with hex: walk them through the ${questions.length} things waiting on them, one at a time, in this order. For each, put it on screen with ask, say it in a sentence or two with hex's pick if it has one, and listen. When they say a choice, answer sends it to the thread that asked; when they tap the card instead, a message tells you. Move on when they skip one. Say so when a choice costs money or goes out in their name.`,
-      ...list,
-    ].join("\n"),
-    voice: `The caller wants to go through what's waiting on them, one at a time. Generate <|SpawnThinking|> now, then say you'll start with the first one: the backend brings each one up.`,
-  };
 }
 
 async function upload(request: Request) {
@@ -389,8 +311,8 @@ async function questionRoutes(request: Request, url: URL) {
         return new Response("An answer needs its label", { status: 400 });
       }
 
-      const sent = await answerQuestion(key, picked.length > 0 ? picked : label, "app", items);
-      onTheCall.answered(label, sent);
+      const sent = await yours.answer(key, picked.length > 0 ? picked : label, "app", items);
+      onTheCall.tapped(label, sent);
 
       return Response.json(sent);
     }
@@ -417,9 +339,8 @@ async function questionRoutes(request: Request, url: URL) {
     }
 
     if (kind === "asks" && verb === "dismiss") {
-      const question = questions.find(key);
       const sent = await questions.dismiss(key, "app");
-      onTheCall.dismissed(question, sent);
+      onTheCall.dismissed(sent);
 
       return Response.json(sent);
     }

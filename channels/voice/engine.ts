@@ -15,10 +15,10 @@ import { CallLog, ending, usage } from "./calls.ts";
 import type { CallRecord, Ending, Source } from "./calls.ts";
 import { Changes } from "./changes.ts";
 import type { tools } from "./channel.ts";
-import { STATE_DIR, env } from "./env.ts";
+import { PUBLIC_HOST, STATE_DIR, env } from "./env.ts";
 import { jev } from "./jev.ts";
 import { counted, line } from "./media.ts";
-import type { Item, Media } from "./media.ts";
+import type { Media } from "./media.ts";
 import { muting } from "./mute.ts";
 import type { Muting } from "./mute.ts";
 import { jobs, overall } from "./overall.ts";
@@ -31,6 +31,7 @@ import {
   unreachable,
   voicePrompt,
 } from "./prompt.ts";
+import type { Topic } from "./prompt.ts";
 import type { Question, Questions } from "./questions.ts";
 import { relay } from "./relay.ts";
 import { stopping } from "./stop.ts";
@@ -67,8 +68,6 @@ const JEV = filled(env.OPENROUTER_API_KEY)
       `${env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1"}/systemone`,
     )
   : undefined;
-
-const PUBLIC_HOST = env.VOICE_PUBLIC_URL?.replace(/^\w+:\/\//u, "");
 
 const calls = new CallLog(join(STATE_DIR, "calls"));
 const activity = new Changes();
@@ -365,9 +364,11 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
   }
 
   if (name === "answer") {
-    return await answerQuestion(args.id, args.label, "call").then(
-      (sent) => `sent "${args.label}" to ${sent.topic}${missed(sent)}`,
-    );
+    const onTheCall = card(args.id);
+    const sent = await yours.answer(args.id, args.label, "call");
+    onTheCall.answered(args.label, sent);
+
+    return `sent "${args.label}" to ${sent.topic}${missed(sent)}`;
   }
 
   if (name === "note" && !live) {
@@ -1463,8 +1464,6 @@ function lastCalls(now: string) {
   return held.length ? ["Your last calls with the caller, newest last:", ...held] : [];
 }
 
-export type Topic = { id: string; claude: string; voice: string };
-
 export function talkAbout(topic: Topic) {
   if (!live) {
     return new Response("No call is live", { status: 409 });
@@ -1526,48 +1525,41 @@ function missed({ missed: unreached }: Sent) {
   return unreached ? `, but ${unreached} of its copies or threads couldn't be reached` : "";
 }
 
-export async function answerQuestion(
-  id: string,
-  picked: string | string[],
-  via: "call" | "app",
-  items: Item[] = [],
-) {
-  const call = live;
-  const question = yours.find(id) ?? call?.shown.get(id);
-  const sent = await yours.answer(id, picked, via, items);
-  const label = [picked].flat().join("; ");
-
-  if (call && live === call && question) {
-    call.shown.set(id, question);
-    remember(call, "answered", label, { ask: id, sent });
-    activity.changed();
-  }
-
-  return sent;
-}
-
 function onTheRecord(call: Live, kind: Mark["kind"], key: string) {
   return call.call.record().moments.some((moment) => moment.kind === kind && moment.ask === key);
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-/* What the call hears when the caller acts in the app on a question the call put on screen: taken
-   before the act, since an answer can take the question off the list. */
+/* What the live call keeps and hears when a question is answered, on the call or in the app, or a
+   card it put on screen is noted, dismissed or taken back: read before the act, since an answer can
+   take the question off the list. */
 export function card(key: string) {
+  const call = live;
+  const question = yours.find(key) ?? call?.shown.get(key);
   const shownOn = live?.shown.has(key) === true && onTheRecord(live, "ask", key) ? live : undefined;
   const answeredOn = live && onTheRecord(live, "answered", key) ? live : undefined;
-  const still = (call = shownOn) => (call && live === call ? call : undefined);
+  const still = (on = shownOn) => (on && live === on ? on : undefined);
 
   const toTheCall = (words: string) => {
-    const call = still();
+    const on = still();
 
-    if (call) {
-      deliver(words, { call: call.id });
+    if (on) {
+      deliver(words, { call: on.id });
+    }
+  };
+
+  const answered = (label: string, sent: Sent) => {
+    if (call && live === call && question) {
+      call.shown.set(key, question);
+      remember(call, "answered", label, { ask: key, sent });
+      activity.changed();
     }
   };
 
   return {
-    answered(label: string, sent: Sent) {
+    answered,
+    tapped(label: string, sent: Sent) {
+      answered(label, sent);
       toTheCall(
         `The caller tapped "${label}" on the card for ${key}; it's sent to its thread${missed(sent)}.`,
       );
@@ -1577,28 +1569,28 @@ export function card(key: string) {
         `The caller wrote a note on the card for ${key}: "${text}". It's sent to its thread, and the question stays open.`,
       );
     },
-    dismissed(question: Question | undefined, sent: Sent) {
-      const call = still();
+    dismissed(sent: Sent) {
+      const on = still();
 
-      if (!call) {
+      if (!on) {
         return;
       }
 
       if (question) {
-        call.shown.set(key, question);
+        on.shown.set(key, question);
       }
 
-      remember(call, "answered", "Not needed", { ask: key, sent });
+      remember(on, "answered", "Not needed", { ask: key, sent });
       activity.changed();
       toTheCall(
         `The caller marked the card for ${key} as not needing them; its threads are told to decide or do it themselves${missed(sent)}.`,
       );
     },
     takenBack() {
-      const call = yours.answered(key) ? undefined : still(answeredOn);
+      const on = yours.answered(key) ? undefined : still(answeredOn);
 
-      if (call) {
-        remember(call, "undone", "Taken back", { ask: key });
+      if (on) {
+        remember(on, "undone", "Taken back", { ask: key });
         activity.changed();
       }
     },

@@ -28,3 +28,4 @@ function pluginSettingsOverStaleHubEnv() {
 
 export const env = pluginSettingsOverStaleHubEnv();
 export const PORT = Number(env.VOICE_PORT ?? 8790);
+export const PUBLIC_HOST = env.VOICE_PUBLIC_URL?.replace(/^\w+:\/\//u, "");
