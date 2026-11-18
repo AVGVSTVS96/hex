@@ -219,7 +219,7 @@ test("hex store deploy makes the store's key once, keeps it in .env, and sends i
   expect(read(join(home, ".env")).match(/HEX_STORE_KEY=/gu)).toHaveLength(1);
   expect(existsSync(join(root, "secrets"))).toBe(false);
   expect(deploys().at(-1)).not.toContain("--secrets-file");
-}, 60_000);
+});
 
 test("a deploy from a machine with no key, to a Worker that answers to one, is refused, so no hub that uses the key is locked out", async () => {
   published();
@@ -240,7 +240,7 @@ test("a deploy from a machine with no key, to a Worker that answers to one, is r
   expect(unsure.err).toContain("the route was not found");
   expect(deploys()).toEqual([]);
   expect(read(join(home, ".env"))).not.toContain("HEX_STORE_KEY");
-}, 60_000);
+});
 
 test("an update deploys nothing over a store built from a commit made after its own, or one that doesn't answer, and goes over one from a commit a squash merge left out of main", async () => {
   published();
@@ -267,7 +267,7 @@ test("an update deploys nothing over a store built from a commit made after its 
   expect((await run(join(hex, "bin/update"), "--now")).code).toBe(0);
   expect(git("rev-parse", "HEAD")).toBe(incoming);
   expect(deploys()).toHaveLength(1);
-}, 60_000);
+});
 
 test("an update deploys the store the new hex is built with, with the token in the folder's .env, ships once the object hex points at answers as it, and deploys nothing when it already does", async () => {
   published();
@@ -298,7 +298,7 @@ test("an update deploys the store the new hex is built with, with the token in t
   expect((await run(join(hex, "bin/update"), "--now")).code).toBe(0);
   expect(git("rev-parse", "HEAD")).toBe(later);
   expect(deploys()).toHaveLength(1);
-}, 60_000);
+});
 
 test("an update that finds hex up to date still deploys the store it's built with, as after a takeover that pulled hex ahead of its store", async () => {
   published();
@@ -315,7 +315,7 @@ test("an update that finds hex up to date still deploys the store it's built wit
 
   expect((await run(join(hex, "bin/update"), "--now")).code).toBe(0);
   expect(deploys()).toHaveLength(1);
-}, 60_000);
+});
 
 const BEFORE = "the store before";
 
@@ -353,7 +353,7 @@ test("an update waits out Cloudflare's edge answering as the store before for as
   expect(update.code).toBe(0);
   expect(git("rev-parse", "HEAD")).toBe(incoming);
   expect(read(join(root, "wrangler.log"))).not.toContain("rollback");
-}, 60_000);
+});
 
 test("an update whose new store still answers as the one before after five and a half minutes leaves it deployed, doesn't ship, and ships at the next update", async () => {
   let rolledOut = false;
@@ -372,7 +372,7 @@ test("an update whose new store still answers as the one before after five and a
   expect((await run(join(hex, "bin/update"), "--now")).code).toBe(0);
   expect(git("rev-parse", "HEAD")).toBe(incoming);
   expect(deploys()).toHaveLength(1);
-}, 60_000);
+});
 
 test("an update whose new store doesn't answer at all puts the store before it back and doesn't ship", async () => {
   const { before, incoming, update } = await updateOverAStoreThatAnswers(() => null);
@@ -386,7 +386,7 @@ test("an update whose new store doesn't answer at all puts the store before it b
   expect(read(join(root, "wrangler.log"))).toContain("rollback");
   expect(read(join(root, "deployed"))).toBe(BEFORE);
   expect(git("rev-parse", "HEAD")).toBe(before);
-}, 60_000);
+});
 
 test("hex status says whether the store hex points at answers", async () => {
   pointed();
@@ -462,4 +462,4 @@ test("a move is refused while hex runs on another machine, or is moving there", 
   const moving = await run(join(hex, "bin/hex"), "store", "move", store.url.origin, "hex");
   expect(moving.code).toBe(1);
   expect(moving.err).toContain("hex is moving between machines");
-}, 120_000);
+});

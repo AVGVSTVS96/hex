@@ -5797,6 +5797,7 @@ test("the owner's words held for a turn go to the session before a message that 
   });
 
   await Promise.all([ending, after]);
+  await until(() => received.length);
   await settled();
   expect(heard(received).map((turn) => turn.content)).toEqual(["held"]);
 });
