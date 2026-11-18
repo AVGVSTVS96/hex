@@ -53,8 +53,8 @@ fi
 # A commit hex went back from stays away until main moves past it. Asked again just before the merge, under the lock
 # hex rollback moves the checkout under, since a rollback may come while the check runs or sessions finish.
 leave_if_refused() {
-  "$hex/bin/hex" refused "$incoming" >/dev/null || return 0
-  why="hex went back from $(git rev-parse --short "$incoming"), or from a commit it's built on, so hex stays on $(git rev-parse --short HEAD) until main moves past it"
+  why=$("$hex/bin/hex" refused "$incoming") || return 0
+  why="$why, so hex stays on $(git rev-parse --short HEAD) until main moves past it"
   echo "not updated: $why"
   [ "$mode" != --when-quiet ] || tell all "didn't ship: $why"
   exit 1
@@ -124,7 +124,8 @@ fi
 exec 7>"$home/state/checkout.lock"
 flock 7
 leave_if_refused
-git merge -q --ff-only "$incoming"
+# git's cleanup after the merge runs on, without the lock.
+git merge -q --ff-only "$incoming" 7>&-
 exec 7>&-
 bun install --cwd "$hex" --silent
 "$hex/bin/optmem"
@@ -132,6 +133,11 @@ bun install --cwd "$hex" --silent
 # The new code, or a new memo, may write the wake differently.
 (. "$hex/bin/settings"; wake) || :
 
+# A hex rollback while this installed took hex back past it, and restarts the hub itself.
+if [ "$(git rev-parse HEAD)" != "$incoming" ]; then
+  echo "not updated: hex rollback took hex back to $(git rev-parse --short HEAD) while hex $(git rev-parse --short "$incoming") installed"
+  exit 1
+fi
 "$hex/bin/hex" restart "$before"
 echo "updated hex $before..$(git rev-parse --short HEAD); the hub restarts on it once no call is live, and each session at its next rest"
 tell "$(printf "$live" "$(git rev-parse --short HEAD)")"

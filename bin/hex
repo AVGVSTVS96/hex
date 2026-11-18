@@ -37,30 +37,32 @@ said() {
 }
 answers() { said | jq -er '.version | strings'; }
 
-limit=
-! command -v timeout >/dev/null || limit="timeout 10"
-
 # A service manager starts hex with a bare PATH, so hex takes the one the user's own shell builds,
 # rc files included, and sessions and jobs find what a terminal finds. A shell that hangs or fails leaves PATH as it is.
 shell_path() {
+  limit=
+  ! command -v timeout >/dev/null || limit="timeout 10"
   found=$($limit "${SHELL:-/bin/sh}" -ilc 'echo; echo hex-path; env' </dev/null 2>/dev/null | sed -n '/^hex-path$/,$s/^PATH=//p' | tail -n 1) || :
   [ -z "$found" ] || PATH=$(printf '%s:%s' "$found" "$PATH" | tr : '\n' | awk 'NF && !seen[$0]++' | paste -sd: -)
 }
 
 described() { git -C "$hex" log -1 --format='%h ("%s")' "$1"; }
 
-# Whether bin/update, or a machine taking hex over, leaves a commit: the one an automatic rollback left on this machine
-# (state/bad), or one a hex rollback went back from, here (state/refused) or on any machine whose hub told the store.
-# Each line of those is the newest commit refused, then the one hex went back to: every commit after that one, up to
-# the newest, is refused. A newest commit this machine hasn't seen is fetched first.
+# Whether bin/update, or a machine taking hex over, leaves a commit, and why: one hex rollback went back from, here
+# (state/refused) or on any machine whose hub told the store, or the one an automatic rollback left on this machine
+# (state/bad). Each line of the first is the newest commit refused, then the one hex went back to: every commit after
+# that one, up to the newest, is refused. Where the newest isn't here, every commit after the one gone back to is, since
+# none here can be past a commit this machine doesn't have.
 refused() {
   sha=$(git -C "$hex" rev-parse -q --verify "$1^{commit}") || return 1
-  [ "$(cat "$home/state/bad" 2>/dev/null)" != "$sha" ] || return 0
   { cat "$home/state/refused" 2>/dev/null || :; [ ! -e "$store" ] || said < "$store" | jq -r '.refused // [] | .[]' 2>/dev/null || :; } |
     while read -r newest to; do
-      git -C "$hex" cat-file -e "$newest^{commit}" 2>/dev/null || $limit git -C "$hex" fetch -q origin 2>/dev/null || :
-      git -C "$hex" merge-base --is-ancestor "$sha" "$newest" 2>/dev/null && ! git -C "$hex" merge-base --is-ancestor "$sha" "$to" 2>/dev/null && echo "$newest"
-    done | grep -q .
+      [ "$sha" != "$to" ] && git -C "$hex" merge-base --is-ancestor "$to" "$sha" 2>/dev/null || continue
+      ! git -C "$hex" cat-file -e "$newest^{commit}" 2>/dev/null || git -C "$hex" merge-base --is-ancestor "$sha" "$newest" || continue
+      echo "hex rollback went back from $(git -C "$hex" rev-parse --short "$sha"), or from a commit it's built on"
+      break
+    done | grep . && return
+  [ "$(cat "$home/state/bad" 2>/dev/null)" = "$sha" ] && echo "hex $(git -C "$hex" rev-parse --short "$sha") couldn't start here"
 }
 
 # A hub that exits three times within a minute can't start. If hex changed since General last
@@ -364,6 +366,8 @@ case "${1:-}" in
     left=$(git -C "$hex" rev-parse HEAD)
     if [ "$to" != "$left" ]; then
       git -C "$hex" merge-base --is-ancestor "$to" HEAD || { echo "hex rollback: hex goes back only to a commit it's built on, and $(described "$to") isn't one" >&2; exit 1; }
+      limit=
+      ! command -v timeout >/dev/null || limit="timeout 10"
       $limit git -C "$hex" fetch -q origin main 2>/dev/null || echo "hex rollback: GitHub didn't answer, so what main built on the commit hex leaves is refused as of this machine's last fetch" >&2
       # Under the lock bin/update merges under, so an update that asked before can't merge after. The refusal is
       # written before hex moves, so hex never goes back with nothing refused, and taken out if hex can't move.
@@ -372,14 +376,13 @@ case "${1:-}" in
       left=$(git -C "$hex" rev-parse HEAD)
       newest=$left
       ! git -C "$hex" merge-base --is-ancestor "$left" origin/main 2>/dev/null || newest=$(git -C "$hex" rev-parse origin/main)
-      printf '%s %s\n' "$newest" "$to" >> "$home/state/refused" || exit 1
-      git -C "$hex" reset -q --keep "$to" || { sed '$d' "$home/state/refused" > "$home/state/refused.new" && mv "$home/state/refused.new" "$home/state/refused"; exit 1; }
+      printf '%s %s\n' "$newest" "$to" >> "$home/state/refused" || { echo "hex rollback: hex couldn't write what it refuses to state/refused, so it stays on $(described "$left")" >&2; exit 1; }
+      git -C "$hex" reset -q --keep "$to" 9>&- || { sed '$d' "$home/state/refused" > "$home/state/refused.new" && mv "$home/state/refused.new" "$home/state/refused"; exit 1; }
       exec 9>&-
       # As roll_back writes it, for an older hex's bin/update, so going back across this one holds too.
       echo "$newest" > "$home/state/bad" || :
       rm -f "$home/state/good"
       echo "hex went back from $(described "$left") to $(described "$to") by \`hex rollback\`. bin/update won't take it, or what main had built on it, until main moves past them, on whichever machine runs hex." > "$home/state/rollback" || :
-      bun install --no-summary --cwd "$hex" >/dev/null || :
     elif [ "$(cat "$home/state/good" 2>/dev/null)" = "$to" ] && running; then
       echo "hex is on $(described "$to") already, and its hub runs it"
       exit 0
@@ -406,7 +409,7 @@ case "${1:-}" in
     ;;
   refused)
     [ -n "${2:-}" ] || { echo "usage: hex refused <commit>" >&2; exit 2; }
-    if refused "$2"; then echo "refused: hex went back from $2, or it's built on one hex went back from"; else echo "not refused: $2"; exit 1; fi
+    refused "$2" || { echo "not refused: $2"; exit 1; }
     ;;
   acp)
     exec bun "$hex/channels/t3/acp.ts" "$home/state/t3/acp.sock"
