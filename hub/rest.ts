@@ -16,6 +16,9 @@ type Rest = {
   // When the hub last had the session compact, until its context is back under compactAbove.
   compacting?: number | undefined;
   leaving?: ((session: string) => void) | undefined;
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // The stop a retire sends, once: the retire and the rest it meets both ask for it, and a stop can be over while its session still holds its channel, as when Claude doesn't list it.
+  stopped?: Promise<void> | undefined;
 };
 
 export type SessionRests = ReturnType<typeof sessionRests>;
@@ -77,7 +80,7 @@ export function sessionRests({
     if (thread === main) {
       quiet.timer = clock.setTimeout(() => void stopIfIdle(thread), cacheWarm);
     } else if (quiet.leaving) {
-      void stops.stop(thread);
+      quiet.stopped ??= stops.stop(thread);
     } else if (fresh(thread)) {
       const left = warmFor(thread);
 
@@ -161,7 +164,13 @@ export function sessionRests({
       quiet.compacting ??= failedAt;
     }
 
-    if (thread !== main) {
+    if (thread === main) {
+      return;
+    }
+
+    if (quiet.leaving) {
+      quiet.stopped ??= stops.stop(thread);
+    } else {
       void stops.stop(thread);
     }
   }
