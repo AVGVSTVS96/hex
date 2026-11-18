@@ -19,7 +19,7 @@ import { $ } from "bun";
 import { z } from "zod";
 
 import { besideOf, besideWhat } from "../hub/beside.ts";
-import { saved } from "../hub/claude.ts";
+import { saved, transcripts } from "../hub/claude.ts";
 import { origin } from "../hub/origin.ts";
 import { served } from "../hub/running.ts";
 import { hexDir, open, signalTo, stateDir, StopReasonColumn } from "../hub/store.ts";
@@ -564,7 +564,12 @@ if (mode === "--owner") {
     const continues = kept.command.some((arg) => /^(--continue|-c)$/u.test(arg));
     const session = kept.session ?? (forks ? undefined : resumes);
     const agent = basename(kept.command[0] ?? "") === "claude";
-    const conversation = agent && isSet(session) && saved(session);
+
+    const conversation =
+      agent &&
+      isSet(session) &&
+      (saved(session) ||
+        (machine !== here && now.state !== "down" && (await broughtFrom(machine, session))));
 
     const startsOver = (kept.startedOver ?? []).filter(
       (time) => Date.parse(at) - Date.parse(time) < WITHIN_MS,
@@ -801,6 +806,28 @@ function startArgs({ command, session }: JobSpec) {
   const itsOwnConversationAlready = valueAfter(command, /^(--resume|-r)$/u) === session;
 
   return isSet(session) && !itsOwnConversationAlready ? ["--session-id", session, ...args] : args;
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Nothing else carries a job's conversation between machines, so it is asked of the machine the job ran on before the job starts over without it.
+async function broughtFrom(machine: string, session: string) {
+  const sent = await onMachine(machine, [
+    "sh",
+    "-c",
+    '[ -n "$CLAUDE_CONFIG_DIR" ] || CLAUDE_CONFIG_DIR=$HOME/.claude; cd "$CLAUDE_CONFIG_DIR/projects" && tar -cf - -- */"$1".jsonl $(ls -d */"$1" 2>/dev/null)',
+    "sh",
+    session,
+  ]);
+
+  if (sent.exitCode !== 0) {
+    return false;
+  }
+
+  mkdirSync(transcripts(), { recursive: true });
+
+  const unpacked = Bun.spawnSync(["tar", "-C", transcripts(), "-xf", "-"], { stdin: sent.stdout });
+
+  return unpacked.exitCode === 0 && saved(session);
 }
 
 function valueAfter(args: string[], flag: RegExp) {
