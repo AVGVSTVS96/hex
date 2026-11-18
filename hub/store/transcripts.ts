@@ -3,18 +3,25 @@ import { z } from "zod";
 import type { Core, Sql, Write } from "./db.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Where the store's copy of a session's transcript stands. size, tail: how many of the file's bytes it holds, and a digest of the last of them, by which a machine tells whether its own file goes on from there. by: the machine whose file it is a copy of. of: how long that file's whole lines were when that machine last said, so a copy shorter than that is known to be short of its conversation. A session the store holds nothing of stands at nothing.
-export type End = { size: number; tail: string; of: number; by: string };
+// Where the store's copy of a file stands. size, tail: how many of the file's bytes it holds, and a digest of the last of them, by which a machine tells whether its own file goes on from there. by: the machine whose file it is a copy of. of, last: how long that file's whole lines were when that machine last said, and a digest of the last of those, so a copy shorter than that is known to be short of its conversation, and another machine's file to be that conversation or not. A file the store holds nothing of stands at nothing.
+export type End = { size: number; tail: string; of: number; last: string; by: string };
 
-export const NOTHING: End = { size: 0, tail: "", of: 0, by: "" };
+export const NOTHING: End = { size: 0, tail: "", of: 0, last: "", by: "" };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A stretch of a transcript, as text, and the byte of the file it ends before.
+// A stretch of a file and the byte it ends before: a transcript's as its text, and a file beside one's, which may be an image, as base64.
 export type Piece = { upto: number; text: string };
 
-const EndRow = z
-  .object({ size: z.number(), tail: z.string(), of: z.number(), by: z.string() })
-  .nullable();
+const Stands = z.object({
+  size: z.number(),
+  tail: z.string(),
+  of: z.number(),
+  last: z.string(),
+  by: z.string(),
+});
+
+const EndRow = Stands.nullable();
+const Besides = z.array(Stands.extend({ file: z.string() }));
 
 const PieceRows = z.array(z.object({ upto: z.number(), text: z.string() }));
 const Held = z.object({ held: z.number() });
@@ -23,14 +30,22 @@ const Held = z.object({ held: z.number() });
 // What one reply carries of a transcript, so a long one crosses the network a page at a time.
 const PAGE = 2 * 1024 * 1024;
 
-// Half of what a Durable Object holds (https://developers.cloudflare.com/durable-objects/platform/limits/), so the copies never fill it: an object that is full refuses every write, hex's records too.
+// Half of what a Durable Object holds (https://developers.cloudflare.com/durable-objects/platform/limits/), counted in the files' own bytes, so the copies never fill it, base64 and all: an object that is full refuses every write, hex's records too.
 const ROOM = 5 * 1024 * 1024 * 1024;
 
 const same = (one: End, other: End) =>
-  one.size === other.size && one.tail === other.tail && one.of === other.of && one.by === other.by;
+  one.size === other.size &&
+  one.tail === other.tail &&
+  one.of === other.of &&
+  one.last === other.last &&
+  one.by === other.by;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The transcripts of the sessions open threads are on, as Claude Code wrote them on the machine that ran each, so the session carries on from any machine that reaches the store. They are copies of files a machine holds, not records: their tables are the home's own, made by the first call that needs them, which no move or backup of the records carries, and a write to them tells no watcher (quiet), since a transcript grows with every line of every session.
+// A session's id is this long, and what Claude Code keeps beside its transcript is held as `<session>/<path>`.
+const SESSION = 36;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The transcripts of the sessions open threads are on, and the tool results Claude Code keeps beside each, as it wrote them on the machine that ran each, so the session carries on from any machine that reaches the store. They are copies of files a machine holds, not records: their tables are the home's own, made by the first call that needs them, which no move or backup of the records carries, and a write to them tells no watcher (quiet), since a transcript grows with every line of every session.
 export class Transcripts {
   private readonly db: Sql;
   private readonly quiet: Write;
@@ -52,7 +67,7 @@ export class Transcripts {
       "create table if not exists _transcripts (session text not null, upto integer not null, text text not null, primary key (session, upto))",
     );
     this.db.run(
-      'create table if not exists _transcript_ends (session text primary key, size integer not null, tail text not null, "of" integer not null, by text not null)',
+      'create table if not exists _transcript_ends (session text primary key, size integer not null, tail text not null, "of" integer not null, last text not null, by text not null)',
     );
     this.made = true;
   };
@@ -63,7 +78,7 @@ export class Transcripts {
     return (
       EndRow.parse(
         this.db
-          .query('select size, tail, "of", by from _transcript_ends where session = ?')
+          .query('select size, tail, "of", last, by from _transcript_ends where session = ?')
           .get(session),
       ) ?? NOTHING
     );
@@ -75,7 +90,7 @@ export class Transcripts {
     session: string,
     after: End,
     pieces: Piece[],
-    to: Pick<End, "tail" | "of" | "by">,
+    to: Pick<End, "tail" | "of" | "last" | "by">,
     over = false,
   ): End {
     return this.quiet(() => {
@@ -110,13 +125,13 @@ export class Transcripts {
         insert.run(session, upto, text);
       }
 
-      const now = { size, tail: size === 0 ? NOTHING.tail : to.tail, of: to.of, by: to.by };
+      const now = { ...to, size, tail: size === 0 ? NOTHING.tail : to.tail };
 
       this.db
         .query(
-          'insert into _transcript_ends (session, size, tail, "of", by) values (?1, ?2, ?3, ?4, ?5) on conflict (session) do update set size = ?2, tail = ?3, "of" = ?4, by = ?5',
+          'insert into _transcript_ends (session, size, tail, "of", last, by) values (?1, ?2, ?3, ?4, ?5, ?6) on conflict (session) do update set size = ?2, tail = ?3, "of" = ?4, last = ?5, by = ?6',
         )
-        .run(session, now.size, now.tail, now.of, now.by);
+        .run(session, now.size, now.tail, now.of, now.last, now.by);
 
       return now;
     });
@@ -135,13 +150,26 @@ export class Transcripts {
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Only a session an open thread is on, or forks from, is ever resumed, so the rest go: the machine that ran one keeps its file. Answers how many went.
+  // The files beside a session's transcript that the store holds a copy of, each with where its copy stands.
+  besides(session: string) {
+    this.tables();
+
+    return Besides.parse(
+      this.db
+        .query(
+          `select substr(session, ${SESSION + 2}) as file, size, tail, "of", last, by from _transcript_ends where session > ?1 || '/' and session < ?1 || '0' order by session`,
+        )
+        .all(session),
+    );
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Only a session an open thread is on, or forks from, is ever resumed, so the rest go, with what was beside them: the machine that ran one keeps its files. Answers how many files went.
   prune(): number {
     return this.quiet(() => {
       this.tables();
 
-      const unheld =
-        "session not in (select session from threads where open = 1 and session is not null union select fork from threads where open = 1 and fork is not null)";
+      const unheld = `substr(session, 1, ${SESSION}) not in (select session from threads where open = 1 and session is not null union select fork from threads where open = 1 and fork is not null)`;
 
       this.db
         .query(

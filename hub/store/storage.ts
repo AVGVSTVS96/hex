@@ -21,13 +21,20 @@ export type Storage = {
 /* oxlint-enable anti-slop/no-unsafe-dictionary-type -- end of SQLite's rows */
 
 const HomeRow = z
-  .object({ version: z.number(), tenure: z.number(), served: z.number(), lease: z.number() })
+  .object({
+    version: z.number(),
+    tenure: z.number(),
+    served: z.number(),
+    lease: z.number(),
+    hub: z.string(),
+  })
   .optional();
 
 const Claim = z.object({
   claimant: z.string().min(1).max(100),
   needs: OffersJson.optional(),
   lease: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+  hub: z.string().max(100).optional(),
 });
 
 const Claimed = z.object({ tenure: z.number() }).optional();
@@ -96,7 +103,11 @@ type Run = (
 
 type HomeNow = NonNullable<z.infer<typeof HomeRow>>;
 
-function claimed(run: Run, now: HomeNow, claimant: string, lease: number | undefined) {
+function claimed(
+  run: Run,
+  now: HomeNow,
+  { claimant, lease, hub = "" }: Pick<z.infer<typeof Claim>, "claimant" | "lease" | "hub">,
+) {
   const before = Claimed.parse(run("select tenure from _claims where claimant = ?", claimant)[0]);
 
   if (before !== undefined) {
@@ -116,7 +127,7 @@ function claimed(run: Run, now: HomeNow, claimant: string, lease: number | undef
   }
 
   const tenure = now.tenure + 1;
-  run("update _home set tenure = ?, lease = ?, served = 1", tenure, lease ?? 0);
+  run("update _home set tenure = ?, lease = ?, served = 1, hub = ?", tenure, lease ?? 0, hub);
   run("insert into _claims (claimant, tenure) values (?, ?)", claimant, tenure);
   run("delete from _claims where tenure <= ?", tenure - CLAIMS_KEPT);
 
@@ -209,6 +220,31 @@ function ownWrites(core: Core, changes: () => number) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The home's own tables, which no move or backup of the records carries, with the columns later hexes gave them.
+function homeTables(run: Run) {
+  run(
+    "create table if not exists _home (one integer primary key check (one = 1), version integer not null, tenure integer not null default 0, served integer not null default 0, lease integer not null default 0)",
+  );
+
+  run(
+    "create table if not exists _moving (one integer primary key check (one = 1), id text not null, step integer not null)",
+  );
+  run(
+    "create table if not exists _claims (claimant text primary key, tenure integer not null unique)",
+  );
+
+  for (const [column, kind] of [
+    ["served", "integer not null default 0"],
+    ["lease", "integer not null default 0"],
+    ["hub", "text not null default ''"],
+  ]) {
+    if (run("select 1 from pragma_table_info('_home') where name = ?", column).length === 0) {
+      run(`alter table _home add column ${column} ${kind}`);
+    }
+  }
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // hex's records in a Durable Object's storage. It starts empty and takes its records from a hex.db once (store/move.ts); from then on it migrates itself as a file does, counting its migrations in a table, since an object refuses pragma user_version.
 export function recordsIn(storage: Storage, dir = "") {
   const { sql } = storage;
@@ -217,7 +253,7 @@ export function recordsIn(storage: Storage, dir = "") {
   let answer: ReturnType<typeof answering> | undefined;
 
   const run = (text: string, ...values: unknown[]) => exec(sql, text, values).toArray();
-  const home = () => HomeRow.parse(run("select version, tenure, served, lease from _home")[0]);
+  const home = () => HomeRow.parse(run("select version, tenure, served, lease, hub from _home")[0]);
   const changes = () => Count.parse(run("select total_changes() as n")[0]).n;
 
   const own = ownWrites(core, changes);
@@ -241,22 +277,7 @@ export function recordsIn(storage: Storage, dir = "") {
     answer = answering(made, true);
   };
 
-  run(
-    "create table if not exists _home (one integer primary key check (one = 1), version integer not null, tenure integer not null default 0, served integer not null default 0, lease integer not null default 0)",
-  );
-
-  run(
-    "create table if not exists _moving (one integer primary key check (one = 1), id text not null, step integer not null)",
-  );
-  run(
-    "create table if not exists _claims (claimant text primary key, tenure integer not null unique)",
-  );
-
-  for (const column of ["served", "lease"]) {
-    if (run("select 1 from pragma_table_info('_home') where name = ?", column).length === 0) {
-      run(`alter table _home add column ${column} integer not null default 0`);
-    }
-  }
+  homeTables(run);
 
   if (home() !== undefined) {
     ready();
@@ -282,6 +303,10 @@ export function recordsIn(storage: Storage, dir = "") {
     migrations: () => home()?.version ?? null,
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // The commit of hex's code that the hub holding hex said it runs as it claimed, which a machine about to take hex over brings its own code to: the store's own version names only the commit its code last changed in.
+    hub: () => home()?.hub ?? "",
+
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // A hub sends the tenure the object gave it when it claimed hex. Only the last one given holds: a hub on any other lost hex, whether or not it knows yet, so nothing it sends is taken. What isn't one the object gave is never kept.
     lostTo(tenure: string | undefined): string | undefined {
       const seen = home()?.tenure ?? 0;
@@ -302,7 +327,7 @@ export function recordsIn(storage: Storage, dir = "") {
     claim(
       body: string,
     ): { tenure: number } | { lost: string } | { empty: string } | { other: string } {
-      const { claimant, lease, needs } = Claim.parse(JSON.parse(body));
+      const { needs, ...claim } = Claim.parse(JSON.parse(body));
       const now = home();
       const lacking = needs === undefined ? undefined : unmet(needs);
 
@@ -316,7 +341,7 @@ export function recordsIn(storage: Storage, dir = "") {
         return { empty: "hex's store is empty: hex store move brings a hex.db into it" };
       }
 
-      return claimed(run, now, claimant, lease);
+      return claimed(run, now, claim);
     },
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show

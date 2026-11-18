@@ -12,9 +12,10 @@ import { clients, engine, listen, up } from "./hub.ts";
 import { answered, payOwedFacts, takeOver, whenLost, whenMoved } from "./kept.ts";
 import { cantStart, tellOwner } from "./notice.ts";
 import { hexDir, open, stateDir, syncInBackground } from "./store.ts";
+import { sent } from "./transcripts.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Before the clients load: Telegram's bot module awaits its polling loop, which never ends. A restart (HUP) and a stop (TERM, INT) end the hub alike: live calls hang up, the clients sign off, a call that came in while they did hangs up too, and once each hub's store has what was written to it, it exits for bin/hex to start the next one, so two never run at once. A stop also ends a hub still waiting for the port, and the clients stop taking in messages first, since the next hub may already be running elsewhere, with a live call's caller told that nothing answers here meanwhile.
+// Before the clients load: Telegram's bot module awaits its polling loop, which never ends. A restart (HUP) and a stop (TERM, INT) end the hub alike: live calls hang up, the clients sign off, a call that came in while they did hangs up too, and once each hub's store has what was written to it, and what the sessions wrote of their transcripts, it exits for bin/hex to start the next one, so two never run at once. A stop also ends a hub still waiting for the port, and the clients stop taking in messages first, since the next hub may already be running elsewhere, with a live call's caller told that nothing answers here meanwhile.
 let stopping: Promise<void> | undefined;
 
 function tellACallAndDeafen() {
@@ -38,6 +39,7 @@ const hangUpSignOffAndExit = (signal: NodeJS.Signals | "lost") =>
       ),
     )
     .then(free)
+    .then(sent)
     .then(() =>
       Promise.allSettled(
         [...clients.values()].map(async (client) => {
@@ -91,13 +93,17 @@ if (waiting !== undefined && waiting !== "") {
 
 syncInBackground();
 
+const commit = Bun.spawnSync(["git", "-C", hex, "rev-parse", "-q", "--verify", "HEAD"])
+  .stdout.toString()
+  .trim();
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The hub takes hex over before it takes any message: every hub that claimed the store before it is refused from then on.
+// The hub takes hex over before it takes any message: every hub that claimed the store before it is refused from then on, and the store says which commit this one runs.
 await answered(
   stateDir(),
   "this hub takes hex over",
   async (store) => {
-    await takeOver(store);
+    await takeOver(store, commit);
   },
   { tell: cantStart(stateDir()) },
 );
@@ -106,9 +112,6 @@ await listen();
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Once General connects, hex works on the commit this hub runs, and bin/hex rolls a later one that can't start back to it. General then hears about a rollback that brought this hub up, or that hex is back after bin/hex told it hex couldn't start (state/down.<host>), and this hub backs up hex.db each night (backup.ts).
-const commit = Bun.spawnSync(["git", "-C", hex, "rev-parse", "-q", "--verify", "HEAD"])
-  .stdout.toString()
-  .trim();
 
 const home = hexDir();
 const state = join(home, "state");

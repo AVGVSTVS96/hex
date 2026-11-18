@@ -44,9 +44,9 @@ export function claimedAs(given: number | undefined) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// This process takes hex over: every hub that claimed the store before it is refused from then on.
-export async function takeOver(store: Store) {
-  claimedAs(await store.claim());
+// This process takes hex over: every hub that claimed the store before it is refused from then on. commit: the one of hex this hub runs, which the store then says to a machine that takes hex over next.
+export async function takeOver(store: Store, commit?: string) {
+  claimedAs(await store.claim(commit));
 }
 
 const ignore = (): void => undefined;

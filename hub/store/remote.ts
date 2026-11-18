@@ -85,10 +85,10 @@ const TIMES = {
 const PROBE = JSON.stringify({ domain: "clock", method: "now", args: [] });
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a store's home gives beside its records. claim: makes this process the hub, refusing every hub that claimed before it. watch: told after any write, by any process, and when a home that wasn't answering answers again. synced: resolves once this process's writes can't be lost, and rejects while one may be. read: a query that can change nothing, for what no method answers. copy: the records as a SQLite file.
+// What a store's home gives beside its records. claim: makes this process the hub, refusing every hub that claimed before it, and says which commit of hex it runs. watch: told after any write, by any process, and when a home that wasn't answering answers again. synced: resolves once this process's writes can't be lost, and rejects while one may be. read: a query that can change nothing, for what no method answers. copy: the records as a SQLite file.
 export type Home = {
   readonly dir: string;
-  readonly claim: () => Promise<number>;
+  readonly claim: (hub?: string) => Promise<number>;
   readonly watch: (listener: () => void) => () => void;
   readonly synced: () => Promise<void>;
   readonly read: (text: string, ...bound: Bound[]) => Promise<unknown[]>;
@@ -409,7 +409,7 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The object takes this process's calls as a hub's once it has given it a tenure of its own.
-  const claim = async () => {
+  const claim = async (hub?: string) => {
     const leased = lease === undefined || lease === "" ? undefined : Lease.safeParse(lease).data;
 
     if (leased === undefined && lease !== undefined && lease !== "") {
@@ -420,6 +420,7 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
       claimant,
       needs: OFFERS,
       ...(leased !== undefined && { lease: leased }),
+      ...(hub !== undefined && hub !== "" && { hub }),
     };
 
     return await inTurn(async () => {

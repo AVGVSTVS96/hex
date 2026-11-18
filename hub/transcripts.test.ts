@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
@@ -11,17 +12,20 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+
+import { z } from "zod";
 
 import * as claude from "./claude.ts";
 import { landed } from "./kept.ts";
 import type { Keep } from "./kept.ts";
 import { file } from "./store.ts";
 import type { Store } from "./store.ts";
+import { UnreachedError } from "./store/errors.ts";
 import { objectStorage } from "./store/fake.ts";
 import { recordsIn } from "./store/storage.ts";
 import { client } from "./store/wire.ts";
-import { sessionTranscripts } from "./transcripts.ts";
+import { sent, sessionTranscripts } from "./transcripts.ts";
 import { until } from "./until.ts";
 
 const SESSION = "0b9a51a2-3c44-4f0e-9d3a-6f1f5f1f7a10";
@@ -49,17 +53,36 @@ function objectIn(state: string) {
   return recordsIn(storage, state);
 }
 
+const Call = z.object({ domain: z.string(), method: z.string(), args: z.array(z.unknown()) });
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A store every machine reaches, as a folder's store.json names one: the object's own code over a database in memory. ring: what its watchers hear when it answers again.
+// A store every machine reaches, as a folder's store.json names one: the object's own code over a database in memory. ring: what its watchers hear when it answers again. net: what the way to it does to a call, by the call's name: drop it, take a while over it, or have the store refuse more of a file for want of room.
 function storeElsewhere() {
   const state = join(dir, "state");
   mkdirSync(state, { recursive: true });
   writeFileSync(join(state, "store.json"), "{}");
   const object = objectIn(state);
   const watching = new Set<() => void>();
+  const net = { drops: (_call: string) => false, takes: 0, full: false };
 
   const store: Store = {
-    ...client((call) => Promise.resolve(JSON.stringify(object.call(call).reply))),
+    ...client(async (text) => {
+      const { domain, method, args } = Call.parse(JSON.parse(text));
+
+      if (net.takes > 0) {
+        await Bun.sleep(net.takes);
+      }
+
+      if (net.drops(`${domain}.${method}`)) {
+        throw new UnreachedError("the store didn't answer");
+      }
+
+      return JSON.stringify(
+        net.full && method === "append" && z.array(z.unknown()).parse(args[2]).length > 0
+          ? { error: "hex's store keeps 5368709120 bytes of transcripts at most" }
+          : object.call(text).reply,
+      );
+    }),
     dir: state,
     claim: () => Promise.resolve(1),
     watch: (listener) => {
@@ -76,6 +99,7 @@ function storeElsewhere() {
 
   return {
     store,
+    net,
     ring: () => {
       for (const each of watching) {
         each();
@@ -95,11 +119,22 @@ function machine(name: string, store: Store, known: Known = {}) {
   const path = (session = SESSION) => join(transcripts, `${session}.jsonl`);
   mkdirSync(transcripts, { recursive: true });
   let reaches = true;
-  const kept: Keep = async (use, otherwise) => (reaches ? await use(store) : otherwise);
+
+  const kept: Keep = async (use, otherwise) => {
+    try {
+      return reaches ? await use(store) : otherwise;
+    } catch {
+      return otherwise;
+    }
+  };
+
+  const beside = (result: string, session = SESSION) =>
+    join(transcripts, session, "tool-results", result);
 
   return {
     path,
     transcripts,
+    beside,
     written: (session = SESSION) => readFileSync(path(session), "utf-8"),
     setAside: () => readdirSync(transcripts).filter((entry) => entry.includes(".set-aside-")),
     reaches: (now: boolean) => {
@@ -132,7 +167,7 @@ function machine(name: string, store: Store, known: Known = {}) {
         machine: name,
       }).land(THREAD);
 
-      await landed();
+      await sent();
 
       return whole;
     },
@@ -140,6 +175,9 @@ function machine(name: string, store: Store, known: Known = {}) {
 }
 
 const line = (said: string) => `${JSON.stringify({ type: "user", message: { content: said } })}\n`;
+
+const endOf = (written: string) =>
+  createHash("sha256").update(Buffer.from(written).subarray(-4096)).digest("hex");
 
 async function copyIn(store: Store, session = SESSION) {
   let text = "";
@@ -268,6 +306,7 @@ test("a copy still short of its file is resumed nowhere else, and an older file 
   await store.transcripts.append(SESSION, await store.transcripts.end(SESSION), [], {
     tail: "",
     of: Buffer.byteLength(whole),
+    last: endOf(whole),
     by: "server",
   });
 
@@ -284,21 +323,164 @@ test("a copy still short of its file is resumed nowhere else, and an older file 
   await until(async () => (await copyIn(store)) === whole);
 });
 
-test("a landing that can't write its file leaves the start to go on without it", async () => {
+test("a file as long as the one a short copy is of, and not that file, is no whole conversation either", async () => {
   const { store } = storeElsewhere();
+  const server = machine("server", store);
+  const twin = machine("twin", store);
+  const first = line("the plants are in the hall");
+  writeFileSync(server.path(), first);
+  await server.hub();
+  await until(async () => (await copyIn(store)) === first);
+
+  server.reaches(false);
+  appendFileSync(server.path(), line("water them on Friday"));
+  const { size, ...told } = await store.transcripts.end(SESSION);
+
+  await store.transcripts.append(SESSION, { size, ...told }, [], {
+    ...told,
+    of: Buffer.byteLength(server.written()),
+    last: endOf(server.written()),
+  });
+
+  writeFileSync(twin.path(), first + line("said to the twin long ago"));
+  expect(Buffer.byteLength(twin.written())).toBeGreaterThanOrEqual(
+    Buffer.byteLength(server.written()),
+  );
+  expect(await twin.hub()).toBe(false);
+  expect(await store.transcripts.end(SESSION)).toMatchObject({ size, by: "server" });
+});
+
+test("a machine holding an older file resumes nothing from it when the store doesn't say where the copy stands, or the copy can't be written there", async () => {
+  const { store, net } = storeElsewhere();
+  const server = machine("server", store);
+  const twin = machine("twin", store);
+  const older = line("the plants are in the hall");
+  writeFileSync(server.path(), older + line("water them on Friday"));
+  await server.hub();
+  await until(async () => (await copyIn(store)) === server.written());
+  writeFileSync(twin.path(), older);
+
+  net.drops = (call) => call.startsWith("transcripts.");
+  expect(await twin.hub()).toBe(false);
+  expect(twin.written()).toBe(older);
+
+  net.drops = () => false;
+  chmodSync(twin.transcripts, 0o500);
+
+  try {
+    expect(await twin.hub()).toBe(false);
+    expect(twin.written()).toBe(older);
+  } finally {
+    chmodSync(twin.transcripts, 0o700);
+  }
+
+  expect(await twin.hub()).toBe(true);
+  expect(twin.written()).toBe(server.written());
+});
+
+test("one call the store doesn't answer, of those that bring a copy, is asked again", async () => {
+  const { store, net } = storeElsewhere();
   const server = machine("server", store);
   const twin = machine("twin", store);
   writeFileSync(server.path(), line("the plants are in the hall"));
   await server.hub();
   await until(async () => (await copyIn(store)) === server.written());
-  chmodSync(twin.transcripts, 0o500);
 
-  try {
+  for (const dropped of ["transcripts.end", "transcripts.since"]) {
+    let once = true;
+
+    net.drops = (call) => {
+      const drops = once && call === dropped;
+      once &&= !drops;
+
+      return drops;
+    };
+
+    rmSync(twin.path(), { force: true });
     expect(await twin.hub()).toBe(true);
-    expect(existsSync(twin.path())).toBe(false);
-  } finally {
-    chmodSync(twin.transcripts, 0o700);
+    expect(twin.written()).toBe(server.written());
   }
+});
+
+test("a store with no room left is still told how long a transcript has grown, so its copy is resumed nowhere else", async () => {
+  const { store, net } = storeElsewhere();
+  const server = machine("server", store);
+  const twin = machine("twin", store);
+  const first = line("the plants are in the hall");
+  writeFileSync(server.path(), first);
+  await server.hub();
+  await until(async () => (await copyIn(store)) === first);
+
+  net.full = true;
+  appendFileSync(server.path(), line("water them on Friday"));
+  await until(async () => (await store.transcripts.end(SESSION)).of > Buffer.byteLength(first));
+  appendFileSync(server.path(), line("and the fern on Monday"));
+
+  await until(
+    async () => (await store.transcripts.end(SESSION)).of === Buffer.byteLength(server.written()),
+  );
+  await sent();
+
+  expect(await copyIn(store)).toBe(first);
+  expect(await twin.hub()).toBe(false);
+  expect(existsSync(twin.path())).toBe(false);
+});
+
+test("the store's other calls wait behind one piece of a long transcript, not the whole send, which a hub that stops waits for", async () => {
+  const { store, net } = storeElsewhere();
+  const server = machine("server", store);
+  writeFileSync(server.path(), line("x".repeat(100_000)).repeat(40));
+  net.takes = 20;
+  const hub = server.hub();
+  await until(async () => (await store.transcripts.end(SESSION)).size > 0);
+
+  const since = Date.now();
+  await landed();
+  expect(Date.now() - since).toBeLessThan(500);
+  expect((await store.transcripts.end(SESSION)).size).toBeLessThan(
+    Buffer.byteLength(server.written()),
+  );
+
+  await hub;
+  expect((await store.transcripts.end(SESSION)).size).toBe(Buffer.byteLength(server.written()));
+});
+
+test("the tool results beside a transcript, text or not, come with it, and one that grew is sent again", async () => {
+  const { store } = storeElsewhere();
+  const server = machine("server", store);
+  const twin = machine("twin", store);
+  const image = Buffer.from(Array.from({ length: 300_000 }, (_byte, at) => (at * 7) % 256));
+  mkdirSync(dirname(server.beside("toolu_01.txt")), { recursive: true });
+  writeFileSync(server.beside("toolu_01.txt"), "what the tool said, in full\n");
+  writeFileSync(server.beside("shot-1.png"), image);
+  writeFileSync(server.path(), line("the plants are in the hall"));
+  await server.hub();
+  await until(async () => (await copyIn(store)) === server.written());
+
+  writeFileSync(server.beside("toolu_01.txt"), "what the tool said, in full\nand its last line\n");
+  appendFileSync(server.path(), line("water them on Friday"));
+  await until(async () => (await copyIn(store)) === server.written());
+
+  expect(await twin.hub()).toBe(true);
+  expect(readFileSync(twin.beside("toolu_01.txt"), "utf-8")).toBe(
+    "what the tool said, in full\nand its last line\n",
+  );
+  expect(readFileSync(twin.beside("shot-1.png")).equals(image)).toBe(true);
+  expect(readdirSync(dirname(twin.beside("shot-1.png"))).toSorted()).toEqual([
+    "shot-1.png",
+    "toolu_01.txt",
+  ]);
+
+  await store.transcripts.append(
+    `${SESSION}/tool-results/../../escaped`,
+    await store.transcripts.end("nothing"),
+    [{ upto: 1, text: "eA==" }],
+    { tail: "t", of: 1, last: "", by: "server" },
+  );
+  rmSync(twin.beside("shot-1.png"));
+  await server.hub();
+  expect(await twin.hub()).toBe(true);
+  expect(existsSync(join(twin.transcripts, "escaped"))).toBe(false);
 });
 
 test("a line longer than a piece, in characters of several bytes, arrives as it was written, and so does the session a thread forks from", async () => {
@@ -337,12 +519,14 @@ test("a transcript growing wakes none of the store's watchers, as a record chang
 
   const grown = call("transcripts", "append", [
     SESSION,
-    { size: 0, tail: "", of: 0, by: "" },
+    { size: 0, tail: "", of: 0, last: "", by: "" },
     [{ upto: 3, text: "{}\n" }],
-    { tail: "t1", of: 3, by: "server" },
+    { tail: "t1", of: 3, last: "t1", by: "server" },
   ]);
 
-  expect(grown.reply).toEqual({ value: { size: 3, tail: "t1", of: 3, by: "server" } });
+  expect(grown.reply).toEqual({
+    value: { size: 3, tail: "t1", of: 3, last: "t1", by: "server" },
+  });
   expect(grown.wrote).toBe(false);
 
   expect(call("threads", "keep", ["telegram", { [THREAD]: { name: "plants" } }]).wrote).toBe(true);
