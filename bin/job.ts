@@ -809,7 +809,7 @@ function startArgs({ command, session }: JobSpec) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Syncthing can be hours behind the machine a job ran on, as it was when the server was starved on Nov 16, so a job's conversation is asked of that machine before the job starts over without it.
+// Nothing else carries a job's conversation between machines, so it is asked of the machine the job ran on before the job starts over without it.
 async function broughtFrom(machine: string, session: string) {
   const sent = await onMachine(machine, [
     "sh",
