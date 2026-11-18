@@ -210,6 +210,22 @@ test("the store says which commit of hex the hub that holds it runs, as that hub
   expect(object.hub()).toBe("");
 });
 
+test("the store keeps every commit a hub's machine went back from, as each hub said when it claimed, for a machine that takes hex over next", () => {
+  const object = startedEmpty();
+  const ship = "b".repeat(40);
+  const before = "a".repeat(40);
+  const older = "9".repeat(40);
+  expect(object.refused()).toEqual([]);
+  object.claim(JSON.stringify({ claimant: "a", refused: [`${ship} ${before}`] }));
+  expect(object.refused()).toEqual([`${ship} ${before}`]);
+  object.claim(by("b"));
+  object.claim(JSON.stringify({ claimant: "c", refused: [`${ship} ${before}`, older] }));
+  expect(object.refused()).toEqual([`${ship} ${before}`, older]);
+  expect(() =>
+    object.claim(JSON.stringify({ claimant: "d", refused: ["not a commit"] })),
+  ).toThrow();
+});
+
 test("a claim that arrives again gets its tenure while it holds hex, and one the network held back past a later claim takes nothing from it", () => {
   const object = startedEmpty();
   expect(object.claim(by("a"))).toEqual({ tenure: 1 });
@@ -522,7 +538,13 @@ test("the object answers only its owner's key, never without one, and refuses a 
           headers: { authorization: `Bearer ${KEY}` },
         })
       ).json(),
-    ).toEqual({ version: "v7", migrations: appendOnlyMigrations.length, offers: OFFERS, hub: "" });
+    ).toEqual({
+      version: "v7",
+      migrations: appendOnlyMigrations.length,
+      offers: OFFERS,
+      hub: "",
+      refused: [],
+    });
     expect(await (await post("/hex/claim", by("a"))).json()).toEqual({ value: 1 });
     expect(await (await post("/hex/claim", by("b"))).json()).toEqual({ value: 2 });
     expect((await post("/hex/call", "{}", { "hex-tenure": "2" })).status).toBe(200);

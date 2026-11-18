@@ -5,6 +5,14 @@ import type { Domains } from "./domains.ts";
 import { RefusedError, UnreachedError } from "./errors.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A commit hex went back from by bin/hex, as bin/hex keeps it in state/bad: the newest commit it refused, then the one it went back to; an older hex wrote the first alone.
+export const Refusal = z.string().regex(/^[0-9a-f]{40,64}( [0-9a-f]{40,64})?$/u);
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The most a claim says, and the store keeps, of them: the oldest are long behind main.
+export const REFUSALS_KEPT = 100;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // One call to a store, as it crosses to the store's home and back. JSON has no undefined, so an argument left out to take its default travels as a place in `absent`.
 const CallJson = z.object({
   domain: z.string(),
