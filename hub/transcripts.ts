@@ -495,9 +495,10 @@ function following(changed: (session: string, path: string) => void) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a hub knows of the copies. ends: where each stands, while this hub's own sends are all that move it. heard: where the store last said each stands. beside: the files beside each transcript that the store holds whole, and how long. besideHere: the sessions whose files beside them are all on this machine. changed: the files found changed in place on this machine, whose copies start over. written: the sessions whose transcript changed on this machine under this hub, which holds hex, so no other machine has more of them.
+// What a hub knows of the copies, and how it asks the store: a send in turn with every other send in the process (ask), a session's start at once (first), since it is a few calls a thread waits on and a hub's start may have hundreds of sends ahead of it. ends: where each stands, while this hub's own sends are all that move it. heard: where the store last said each stands. beside: the files beside each transcript that the store holds whole, and how long. besideHere: the sessions whose files beside them are all on this machine. changed: the files found changed in place on this machine, whose copies start over. written: the sessions whose transcript changed on this machine under this hub, which holds hex, so no other machine has more of them.
 type Known = {
   ask: Ask;
+  first: Ask;
   machine: string;
   ends: Map<string, End>;
   heard: Map<string, End>;
@@ -552,11 +553,11 @@ async function besidesSent({ ask, machine, beside }: Known, session: string, pat
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Whether this machine holds a session's whole conversation once the store's copy is here. The copy takes the place of a file that is it cut short, and of another machine's version of it, which is kept beside it for the lines the store never got, the only place they are; a file its own machine changed in place stays, and the copy starts over from it. A store that holds nothing of a session says nothing against the file here. One that doesn't answer leaves what it last said of the session to this hub, or that the session wrote here under this hub: without either, the file here may be an older one, and isn't resumed.
 async function brought(
-  { ask, machine, ends, heard, changed, written }: Known,
+  { first, machine, ends, heard, changed, written }: Known,
   session: string,
   to: string,
 ) {
-  const end = (await twice(ask)((store) => store.transcripts.end(session))) ?? heard.get(session);
+  const end = (await twice(first)((store) => store.transcripts.end(session))) ?? heard.get(session);
   const path = existsSync(to) ? to : (claude.transcriptOf(session) ?? to);
 
   if (end === undefined) {
@@ -584,7 +585,7 @@ async function brought(
     return true;
   }
 
-  const copy = end.size < end.of ? undefined : await fetched(ask, [session, end], path);
+  const copy = end.size < end.of ? undefined : await fetched(first, [session, end], path);
 
   if (copy === undefined) {
     return false;
@@ -647,7 +648,7 @@ async function landing(known: Known, session: string, path: string) {
   try {
     if (
       !known.besideHere.has(session) &&
-      (await besidesBrought(known.ask, known.machine, session, path))
+      (await besidesBrought(known.first, known.machine, session, path))
     ) {
       known.besideHere.add(session);
     }
@@ -681,6 +682,7 @@ export function sessionTranscripts({
 
   const known: Known = {
     ask: (use) => inLine(() => kept(use, undefined)),
+    first: (use) => kept(use, undefined),
     machine,
     ends: new Map(),
     heard: new Map(),
@@ -751,14 +753,11 @@ export function sessionTranscripts({
 
       const besides = declares || full ? true : await besidesSent(known, session, path);
 
-      if (
-        besides === true &&
-        !over &&
-        more.pieces.length === 0 &&
-        end.by === machine &&
-        end.of === more.of &&
-        end.last === more.last
-      ) {
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      // Nothing to say: the copy is this machine's and stands where its file does, or it is another machine's, whole, and this file is that one to the byte, as on a machine that just took hex over, which then takes a copy as its own only with the first line a session writes here.
+      const said = end.by === machine ? end.last === more.last : end.size === end.of;
+
+      if (besides === true && !over && more.pieces.length === 0 && end.of === more.of && said) {
         owed.delete(session);
 
         return;

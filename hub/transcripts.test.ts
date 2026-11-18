@@ -56,21 +56,28 @@ function objectIn(state: string) {
 const Call = z.object({ domain: z.string(), method: z.string(), args: z.array(z.unknown()) });
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A store every machine reaches, as a folder's store.json names one: the object's own code over a database in memory. ring: what its watchers hear when it answers again. net: what the way to it does to a call, by the call's name: drop it, take a while over it, or have the store refuse more of a file for want of room.
+// A store every machine reaches, as a folder's store.json names one: the object's own code over a database in memory. ring: what its watchers hear when it answers again. net: what the way to it does to a call, by the call's name: drop it, take a while over it, or have the store refuse more of a file for want of room, and how many calls were on their way at once.
 function storeElsewhere() {
   const state = join(dir, "state");
   mkdirSync(state, { recursive: true });
   writeFileSync(join(state, "store.json"), "{}");
   const object = objectIn(state);
   const watching = new Set<() => void>();
-  const net = { drops: (_call: string) => false, takes: 0, full: false };
+  const net = { drops: (_call: string) => false, takes: 0, full: false, out: 0, mostOut: 0 };
 
   const store: Store = {
     ...client(async (text) => {
       const { domain, method, args } = Call.parse(JSON.parse(text));
 
-      if (net.takes > 0) {
-        await Bun.sleep(net.takes);
+      net.out += 1;
+      net.mostOut = Math.max(net.mostOut, net.out);
+
+      try {
+        if (net.takes > 0) {
+          await Bun.sleep(net.takes);
+        }
+      } finally {
+        net.out -= 1;
       }
 
       if (net.drops(`${domain}.${method}`)) {
@@ -221,10 +228,11 @@ test("a session carries on from another machine with what it wrote on the first,
 
   expect(await twin.hub()).toBe(true);
   expect(twin.written()).toBe(server.written());
-  await until(async () => (await store.transcripts.end(SESSION)).by === "twin");
+  expect(await store.transcripts.end(SESSION)).toMatchObject({ by: "server" });
 
   appendFileSync(twin.path(), line("and the fern on Monday"));
   await until(async () => (await copyIn(store)) === twin.written());
+  expect(await store.transcripts.end(SESSION)).toMatchObject({ by: "twin" });
 
   expect(await server.hub()).toBe(true);
   expect(server.written()).toBe(twin.written());
@@ -495,7 +503,7 @@ test("the tool results beside a transcript, text or not, come with it, and one t
   expect(existsSync(join(twin.transcripts, "escaped"))).toBe(false);
 });
 
-test("a tool result comes at a later start when the first didn't bring it: the hub was up and held the same transcript before the thread started, or the store didn't list what is beside it", async () => {
+test("a tool result comes at a later start when the first didn't bring it, though the copy is this machine's own by then", async () => {
   const { store, net } = storeElsewhere();
   const server = machine("server", store);
   const twin = machine("twin", store);
@@ -505,14 +513,14 @@ test("a tool result comes at a later start when the first didn't bring it: the h
   await server.hub();
   await until(async () => (await store.transcripts.besides(SESSION)).length === 1);
 
-  writeFileSync(twin.path(), server.written());
   net.drops = (call) => call === "transcripts.besides";
   const start = await twin.started();
-  await until(async () => (await store.transcripts.end(SESSION)).by === "twin");
   expect(await start()).toBe(true);
   expect(existsSync(twin.beside("toolu_01.txt"))).toBe(false);
-
+  appendFileSync(twin.path(), line("water them on Friday"));
   net.drops = () => false;
+  await until(async () => (await store.transcripts.end(SESSION)).by === "twin");
+
   expect(await start()).toBe(true);
   expect(readFileSync(twin.beside("toolu_01.txt"), "utf-8")).toBe("what the tool said, in full\n");
 
@@ -522,6 +530,21 @@ test("a tool result comes at a later start when the first didn't bring it: the h
   expect(readFileSync(server.beside("toolu_01.txt"), "utf-8")).toBe(
     "what the tool said, in full\n",
   );
+});
+
+test("a session's start asks the store at once, while a send's call is still on its way", async () => {
+  const { store, net } = storeElsewhere();
+  const server = machine("server", store);
+  writeFileSync(server.path(), line("x".repeat(100_000)).repeat(40));
+  net.takes = 20;
+  const start = await server.started();
+  await until(async () => (await store.transcripts.end(SESSION)).size > 0);
+  net.mostOut = 0;
+
+  const starting = start();
+  await until(() => net.mostOut > 0);
+  expect(net.mostOut).toBe(2);
+  expect(await starting).toBe(true);
 });
 
 test("a file put back shorter than a copy of several pages gets the rest while its own hub's send is at the same copy", async () => {
