@@ -1845,7 +1845,7 @@ test("a pinned post that changes within an hour of the last pass waits for them 
     note: "Site: example.com",
   };
 
-  ledger([], { [DESK]: pin });
+  await ledger([], { [DESK]: pin });
   writeFileSync(
     join(state, "voice", "check.json"),
     JSON.stringify({
@@ -1866,9 +1866,19 @@ test("a pinned post that changes within an hour of the last pass waits for them 
     },
   });
 
-  open(state).pins.pinned({ app: "telegram", thread: DESK, ...pin, note: "Site: example.org" });
+  await open(state).pins.pinned({
+    app: "telegram",
+    thread: DESK,
+    ...pin,
+    note: "Site: example.org",
+  });
   await Bun.sleep(150);
-  open(state).pins.pinned({ app: "telegram", thread: DESK, ...pin, note: "Site: example.net" });
+  await open(state).pins.pinned({
+    app: "telegram",
+    thread: DESK,
+    ...pin,
+    note: "Site: example.net",
+  });
   await Bun.sleep(150);
   expect(checks).toEqual([]);
   questions.opened();
