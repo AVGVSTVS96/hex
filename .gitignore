@@ -1,2 +1,8 @@
 /vendor/
 node_modules/
+worktrees/
+.claude/worktrees/
+scratch*/
+scratch-cs.tsv
+scratchpad-*/
+none
