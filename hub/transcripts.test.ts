@@ -420,31 +420,63 @@ test("what a machine keeps of where a file and its copy agreed goes once no open
   await until(() => !existsSync(kept));
 });
 
-test("a copy sent before copies had digests reaches a machine that lacks it, and starts over from the file that holds its end", async () => {
-  const { store } = storeElsewhere();
-  const server = machine("server", store);
-  const twin = machine("twin", store);
-  const said = line("the plants are in the hall") + line("water them on Friday");
-
+async function sentBeforeDigests(store: Store, said: string, by: string) {
   await store.transcripts.append(
     SESSION,
     await store.transcripts.end(SESSION),
     [{ upto: Buffer.byteLength(said), text: said }],
-    { tail: endOf(said), of: Buffer.byteLength(said), last: endOf(said), by: "server" },
+    { tail: endOf(said), of: Buffer.byteLength(said), last: endOf(said), by },
   );
+}
+
+test("a copy sent before copies had digests reaches a machine that lacks it, and starts over from the file that holds its end", async () => {
+  const { store } = storeElsewhere();
+  const server = machine("server", store);
+  const twin = machine("twin", store);
+  await sentBeforeDigests(store, SECRET, "server");
 
   expect(await twin.hub()).toBe(true);
-  expect(twin.written()).toBe(said);
-  expect(await copyIn(store)).toBe(said);
+  expect(twin.written()).toBe(SECRET);
+  expect(await copyIn(store)).toBe(SECRET);
   expect(await store.transcripts.end(SESSION)).toMatchObject({ by: "twin" });
 
   expect(
     (await store.transcripts.marks(SESSION, 0)).map(({ upto, digest }) => [upto, digest]),
-  ).toEqual([[Buffer.byteLength(said), createHash("sha256").update(said).digest("hex")]]);
+  ).toEqual([[Buffer.byteLength(SECRET), createHash("sha256").update(SECRET).digest("hex")]]);
 
-  writeFileSync(server.path(), said);
+  writeFileSync(server.path(), SECRET);
   expect(await server.hub()).toBe(true);
   expect(await store.transcripts.end(SESSION)).toMatchObject({ by: "twin" });
+});
+
+test("a copy sent before copies had digests completes its own machine's file when that is the copy cut short, and starts over from it when it was changed in place", async () => {
+  const { store } = storeElsewhere();
+  const server = machine("server", store);
+  await sentBeforeDigests(store, SECRET, "server");
+
+  writeFileSync(server.path(), line("the sudo password is hunter2"));
+  expect(await server.hub()).toBe(true);
+  expect(server.written()).toBe(SECRET);
+  expect(await copyIn(store)).toBe(SECRET);
+
+  const { digest: _since, ...before } = await store.transcripts.end(SESSION);
+  const said = { tail: endOf(SECRET), of: Buffer.byteLength(SECRET), last: endOf(SECRET) };
+
+  await store.transcripts.append(
+    SESSION,
+    before,
+    [{ upto: Buffer.byteLength(SECRET), text: SECRET }],
+    { ...said, by: "server" },
+    true,
+  );
+
+  const other = machine("server", store);
+  writeFileSync(other.path(), REDACTED);
+  rmSync(join(dir, "state", "copies"), { recursive: true });
+  expect(await other.hub()).toBe(true);
+  expect(other.written()).toBe(REDACTED);
+  expect(await copyIn(store)).toBe(REDACTED);
+  expect(other.setAside()).toEqual([]);
 });
 
 async function besideIn(store: Store, name = RESULT) {
@@ -650,6 +682,7 @@ test("a machine holding an older file resumes nothing from it when the store doe
 
   expect(await twin.hub()).toBe(true);
   expect(twin.written()).toBe(server.written());
+  expect(twin.setAside()).toEqual([]);
 });
 
 test("one call the store doesn't answer, of those that bring a copy, is asked again", async () => {
