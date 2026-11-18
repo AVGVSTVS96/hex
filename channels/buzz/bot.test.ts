@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { open } from "@hex/hub";
-import { ATTACH, connect as connectSession, service, until } from "@hex/hub/testing";
+import { ATTACH, connect as connectSession, service, unawaited, until } from "@hex/hub/testing";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import type { ServerWebSocket, Subprocess } from "bun";
 import { matchFilter } from "nostr-tools/filter";
@@ -435,6 +435,15 @@ const running: {
   dir: string;
 }[] = [];
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A session's Stop hook, saying its turn is over: one line on a connection of its own to the hub.
+async function turnEnded(state: string, thread: string) {
+  const ending = connect(join(state, "hub.sock"));
+  await once(ending, "connect");
+  ending.end(`${JSON.stringify({ type: "state", thread, busy: false })}\n`);
+  await once(ending, "close");
+}
+
 afterEach(() => {
   for (const { bot, relay, sockets, dir } of running.splice(0)) {
     bot.kill(9);
@@ -593,14 +602,8 @@ exit 0
     sockets.push(socket);
     await once(socket, "connect");
 
-    async function ended() {
-      const ending = connect(join(state, "hub.sock"));
-      sockets.push(ending);
-      await once(ending, "connect");
-      ending.end(`${JSON.stringify({ type: "state", thread, busy: false })}\n`);
-      await once(ending, "close");
-    }
-
+    const ended = () => turnEnded(state, thread);
+    const hooked = unawaited();
     let answered = 0;
 
     return {
@@ -612,9 +615,11 @@ exit 0
         until(() => {
           const lines = inbounds(line.received);
 
+          hooked.check();
+
           if (lines.length < count && lines.length > answered) {
             answered = lines.length;
-            void ended();
+            ended().catch(hooked.keep);
           }
 
           return lines.length >= count ? lines : undefined;
