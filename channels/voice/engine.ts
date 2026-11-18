@@ -1422,7 +1422,6 @@ function follow(
         ...(about ? [about.claude] : []),
         ...lastCalls(record.id),
         talksLike(),
-        "Send the voice what it should know right away, with note.",
       ].join("\n"),
     { call: record.id, started: "true", from: record.from, ...(about && { task: about.id }) },
   );
