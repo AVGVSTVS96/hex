@@ -10,6 +10,7 @@ import { toolList } from "./mcp.ts";
 import type { ChannelServer } from "./mcp.ts";
 import { present } from "./present.ts";
 import type { Threads } from "./threads.ts";
+import { sessionTranscripts } from "./transcripts.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // What a session reads only as it starts: its launch arguments, its channel's instructions and tools, and the files and folders its launcher loads that way. hex.db keeps a digest of what each thread's session started with.
@@ -70,6 +71,7 @@ export function sessionStarts({
   fresh: (thread: string) => boolean;
 }) {
   const inherited = claude.inherited();
+  const transcripts = sessionTranscripts({ threads, kept });
 
   function chosen(thread: string) {
     const { model, effort } = threads.of(thread);
@@ -99,6 +101,8 @@ export function sessionStarts({
     fork?: string,
     daemonChecked?: Promise<void>,
   ) {
+    await transcripts.land(thread, fork);
+
     if (!present(fork)) {
       await rewound(thread);
     }
@@ -183,7 +187,7 @@ export function sessionStarts({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The transcript of a thread's saved session that a new session takes over from instead of resuming: one this machine doesn't have, like after a restore from hex.db, or one whose prompt cache has expired when it holds more than a new session costs to start and catch up. A start with a prompt, like /compact, needs the old conversation itself, so it resumes.
+  // The transcript of a thread's saved session that a new session takes over from instead of resuming: one neither this machine nor hex's store has, like after a restore from hex.db, or one whose prompt cache has expired when it holds more than a new session costs to start and catch up. A start with a prompt, like /compact, needs the old conversation itself, so it resumes.
   function expired(thread: string) {
     const session = threads.of(thread).session;
 

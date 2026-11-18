@@ -63,6 +63,10 @@ export type { NewTask, Status, Task, TaskChange, Words } from "./store/tasks.ts"
 
 export type { Kept, LaunchStamp, Thread } from "./store/threads.ts";
 
+export { NOTHING } from "./store/transcripts.ts";
+
+export type { End, Piece } from "./store/transcripts.ts";
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // hex's records, as every caller holds them: each call is answered by the store's home, which is this folder's hex.db (File) or, when the folder's store.json names one, a Durable Object every machine reaches (store/remote.ts, store/object.ts).
 export type Store = Client & Home;
@@ -100,6 +104,7 @@ export class File {
   readonly passes: Domains["passes"];
   readonly scheduler: Domains["scheduler"];
   readonly operations: Domains["operations"];
+  readonly transcripts: Domains["transcripts"];
   readonly clock: Domains["clock"];
   private readonly bell: string;
   private writing = false;
@@ -156,6 +161,7 @@ export class File {
     this.passes = records.passes;
     this.scheduler = records.scheduler;
     this.operations = records.operations;
+    this.transcripts = records.transcripts;
     this.clock = records.clock;
     migrate(
       core,

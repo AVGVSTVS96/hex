@@ -1575,3 +1575,40 @@ inEachHome(
     expect(existsSync(join(jobs, "plain.json"))).toBe(true);
   },
 );
+
+inEachHome(
+  "a transcript grows only from the end its sender read, a page at a time, and only an open thread's stays ($home)",
+  ({ open }) => {
+    const store = open(dir);
+    const first = [{ upto: 6, text: '{"a"}\n' }];
+    const nothing = store.transcripts.end("s-1");
+    expect(nothing).toEqual({ size: 0, tail: "" });
+    expect(store.transcripts.append("s-1", nothing, first, "t1")).toEqual({ size: 6, tail: "t1" });
+    expect(store.transcripts.append("s-1", nothing, first, "t1")).toEqual({ size: 6, tail: "t1" });
+    expect(
+      store.transcripts.append(
+        "s-1",
+        { size: 6, tail: "other" },
+        [{ upto: 9, text: "{}\n" }],
+        "t2",
+      ),
+    ).toEqual({ size: 6, tail: "t1" });
+
+    const long = "x".repeat(1024 * 1024);
+
+    const more = [1, 2, 3].map((nth) => ({ upto: 6 + nth * long.length, text: long }));
+    expect(store.transcripts.append("s-1", { size: 6, tail: "t1" }, more, "t3").tail).toBe("t3");
+    expect(store.transcripts.since("s-1", 0).map(({ upto }) => upto)).toEqual([6, 6 + long.length]);
+    expect(store.transcripts.since("s-1", 6 + long.length).map(({ text }) => text)).toEqual([
+      long,
+      long,
+    ]);
+
+    store.threads.keep("telegram", { "-100:7": { name: "plants", session: "s-1" } });
+    store.transcripts.append("s-2", nothing, first, "t1");
+    expect(store.transcripts.prune()).toBe(1);
+    expect(store.transcripts.end("s-1").tail).toBe("t3");
+    expect(store.transcripts.end("s-2")).toEqual(nothing);
+    expect(store.transcripts.since("s-2", 0)).toEqual([]);
+  },
+);

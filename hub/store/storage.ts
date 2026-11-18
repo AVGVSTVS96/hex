@@ -4,7 +4,7 @@ import { eachVariable, onlyReading } from "./db.ts";
 import type { Core } from "./db.ts";
 import { domains, migrate, OffersJson, unmet } from "./domains.ts";
 import type { Domains } from "./domains.ts";
-import { answering } from "./wire.ts";
+import { answeringByDomain } from "./wire.ts";
 import type { Reply } from "./wire.ts";
 
 // The part of a Durable Object's storage the store runs on: https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/
@@ -51,6 +51,10 @@ const Leftovers = z.array(
 
 const Arrived = z.object({ version: z.number().int().nonnegative() });
 const Query = z.object({ text: z.string(), bound: z.array(z.unknown()).default([]) });
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A watcher is told when hex's records change. A transcript growing changes none of them, and grows with every line of every session, so it wakes no one.
+const UNWATCHED = "transcripts";
 
 class UndoneError extends Error {
   override name = "UndoneError";
@@ -196,7 +200,7 @@ export function recordsIn(storage: Storage, dir = "") {
   const { sql } = storage;
   const core = sqlOver(storage);
   let records: Domains | undefined;
-  let answer: ReturnType<typeof answering> | undefined;
+  let answer: ReturnType<typeof answeringByDomain> | undefined;
 
   const run = (text: string, ...values: unknown[]) => exec(sql, text, values).toArray();
   const home = () => HomeRow.parse(run("select version, tenure, served, lease from _home")[0]);
@@ -218,7 +222,7 @@ export function recordsIn(storage: Storage, dir = "") {
     );
 
     records = made;
-    answer = answering(made, true);
+    answer = answeringByDomain(made, true);
   };
 
   run(
@@ -325,10 +329,11 @@ export function recordsIn(storage: Storage, dir = "") {
       const answered = answer;
       const before = changes();
       let reply: Reply = { error: "the call didn't run" };
+      let domain: string | undefined;
 
       try {
         core.write(() => {
-          reply = answered(text);
+          ({ reply, domain } = answered(text));
 
           if ("error" in reply) {
             throw new UndoneError();
@@ -342,7 +347,7 @@ export function recordsIn(storage: Storage, dir = "") {
         return { reply, wrote: false };
       }
 
-      return { reply, wrote: changes() !== before };
+      return { reply, wrote: changes() !== before && domain !== UNWATCHED };
     },
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show

@@ -17,6 +17,7 @@ import { Scheduler } from "./scheduler.ts";
 import { Seen } from "./seen.ts";
 import { Tasks } from "./tasks.ts";
 import { Threads } from "./threads.ts";
+import { Transcripts } from "./transcripts.ts";
 import { Turns } from "./turns.ts";
 
 export function domains(core: Core) {
@@ -40,6 +41,7 @@ export function domains(core: Core) {
     passes: new Passes(core),
     scheduler: new Scheduler(core, messages),
     operations: new Operations(core),
+    transcripts: new Transcripts(core),
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // The clock that stamps every record: what compares a time against those stamps asks it, since its own machine's can differ from the home's.
     clock: { now },
@@ -69,6 +71,7 @@ export const METHODS = {
   passes: methodsOfClass(Passes),
   scheduler: methodsOfClass(Scheduler),
   operations: methodsOfClass(Operations),
+  transcripts: methodsOfClass(Transcripts),
   clock: ["now"],
 } satisfies Record<keyof Domains, string[]>;
 
