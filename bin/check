@@ -25,8 +25,13 @@ if [ $# = 0 ]; then
   # workerd, which only CI fetches: `bun test ./hub/store/workerd.ts` runs them.
   bun build hub/store/object.ts --format=esm --target=browser --external 'cloudflare:workers' --external 'node:*' --outfile "$out/store/object.mjs" >/dev/null
 fi
-# A test's hex is one it makes in a temp folder (tools/sandbox.ts): the folder beside this checkout is where a hex that
-# runs from it keeps its records, so a test that makes one there would write to a live hex's.
+# A test's hex is one it makes in a temp folder (tools/sandbox.ts), which Bun preloads from the bunfig.toml of the folder
+# a test is started in and no other, so every folder that holds tests has one.
+for dir in $(git ls-files '*.test.ts' | xargs -n1 dirname | sort -u); do
+  grep -qs tools/sandbox.ts "$dir/bunfig.toml" || { echo "$dir holds tests and no bunfig.toml that preloads tools/sandbox.ts: a test started there would find the hex that runs on this machine" >&2; exit 1; }
+done
+# The folder beside this checkout is where a hex that runs from it keeps its records, so a test that makes one there
+# would write to a live hex's.
 beside=$(dirname "$hex")/state
 [ ! -e "$beside" ] || live=1
 # The preload (tools/sandbox.ts) clears these only from process.env, while a test's own /proc/<pid>/environ, which
