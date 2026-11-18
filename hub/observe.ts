@@ -44,6 +44,12 @@ const ANSWER = z.object({ notes: z.array(z.string()), profile: z.string().nullab
 
 export type Answer = z.infer<typeof ANSWER>;
 
+const CATCH_UP = `You keep the memories of hex, the owner's personal assistant, current. In a turn the owner said nothing in, hex told them something; you get the newest memories and what hex told them. Only where it finishes work a memory calls open, pending or not live, now done, live, stopped or failed, write one line saying where that work stands now, and name by number the memories it brings up to date. Otherwise, as for progress or a plan that moved, write no line and name none. The line is at most ${BYTES} bytes, written like the memories: the owner's local time, the thread, then where the thing stands, in plain words without double quotes.`;
+
+const CAUGHT_UP = z.object({ outdated: z.array(z.number()), line: z.string().nullable() });
+
+export type CaughtUp = z.infer<typeof CAUGHT_UP>;
+
 export const PASS = z.object({
   session: z.string(),
   by: z.string(),
@@ -56,10 +62,14 @@ const SUMMARY = z.object({ line: z.string() });
 
 type Look = {
   ask?: (input: string) => Promise<Answer>;
+  update?: (input: string) => Promise<CaughtUp>;
   memo?: string;
   by?: string;
   thread?: string | undefined;
 };
+
+const toldTheOwner = (row: Row) =>
+  replied(row) && row.from !== "terminal" && !given(row.meta?.failed);
 
 const whose = (row: Row) =>
   given(row.meta?.unsent)
@@ -73,7 +83,13 @@ const whose = (row: Row) =>
 export async function observe(
   state: string,
   session: string,
-  { ask = remember, memo = MEMO, by = new Date().toISOString(), thread }: Look = {},
+  {
+    ask = remember,
+    update = bringUp,
+    memo = MEMO,
+    by = new Date().toISOString(),
+    thread,
+  }: Look = {},
 ) {
   const recall = (pattern: string) =>
     Bun.spawnSync([memo, "recall", pattern], {
@@ -87,6 +103,7 @@ export async function observe(
   const store = open(state);
   const taken = await store.messages.observe(session, by, thread, LEASE_OUTLASTS_EVERY_TRY);
   const rows = owners(taken);
+  const told = rows.length > 0 ? [] : taken.filter(toldTheOwner);
   const written: string[] = [];
 
   try {
@@ -95,6 +112,12 @@ export async function observe(
     let wanted = false;
     let wrong = "";
     let reasons = "";
+
+    if (told.length > 0) {
+      const place = taken[0]?.to ?? thread;
+      const name = given(place) ? ((await store.threads.names())[place] ?? place) : "none";
+      written.push(...(await catchUp(told, name, update, recall, memo, store)));
+    }
 
     if (rows.length > 0) {
       const zone = zoneOf(hexDir()) ?? Temporal.Now.timeZoneId();
@@ -215,6 +238,68 @@ export async function observe(
   }
 }
 
+async function catchUp(
+  told: Row[],
+  thread: string,
+  update: (input: string) => Promise<CaughtUp>,
+  recall: (pattern: string) => string,
+  memo: string,
+  store: Store,
+): Promise<string[]> {
+  const zone = zoneOf(hexDir()) ?? Temporal.Now.timeZoneId();
+
+  const memories = [
+    ...new Set([
+      ...newestNotes(recall(".")).split("\n"),
+      ...newestNotes(recall(`${escape(thread)}:`)).split("\n"),
+    ]),
+  ]
+    .filter(Boolean)
+    .toSorted((a, b) => numberOf(a) - numberOf(b));
+
+  const said = told
+    .map(
+      (row) =>
+        `hex ${given(row.meta?.edited) ? "changed a message it had sent them to read" : "told them"}, ${clock(row.at, zone)} in ${thread}:\n${cut(row.body, 2000)}`,
+    )
+    .join("\n\n");
+
+  const named = new Set(memories.map(numberOf));
+  let wrong = "";
+
+  for (let tries = 0; tries < TRIES; tries++) {
+    const answer = await update(
+      `<newest memories>\n${memories.join("\n")}\n</newest memories>\n\n<what hex told the owner>\n${said}\n</what hex told the owner>${wrong}`,
+    );
+
+    const line = asMemoTakesIt(answer.line ?? "");
+
+    if (
+      line === "" ||
+      answer.outdated.length === 0 ||
+      !answer.outdated.every((n) => named.has(n))
+    ) {
+      return [];
+    }
+
+    const why = await unkept(line, store);
+
+    if (why.length > 0) {
+      wrong = notesBack([`${line}\n  ${why.join("\n  ")}`]);
+      continue;
+    }
+
+    return Bun.spawnSync([memo, "note", line], { stdout: "ignore", stderr: "ignore" }).exitCode ===
+      0
+      ? [line]
+      : [];
+  }
+
+  return [];
+}
+
+const numberOf = (memory: string) => Number(/^#(\d+)/u.exec(memory)?.[1] ?? 0);
+
 async function misquoted(profile: string | null, store: Store): Promise<string[]> {
   if (profile === null || profile.trim() === "") {
     return ["(empty)"];
@@ -316,6 +401,10 @@ const callWithNoTools = <T>(
 
 async function remember(input: string): Promise<Answer> {
   return (await callWithNoTools(input, SYSTEM, "high", ANSWER)).answer;
+}
+
+async function bringUp(input: string): Promise<CaughtUp> {
+  return (await callWithNoTools(input, CATCH_UP, "low", CAUGHT_UP)).answer;
 }
 
 // OptMem leaves due compressions to whoever writes a note, and only this agent writes notes: https://github.com/VictorTaelin/OptMem/blob/1fb164cf39028047781f72ac3bb1e5a691c1dcb0/README.md#while-working-register-memories-mandatory

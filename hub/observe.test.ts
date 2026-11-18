@@ -339,17 +339,74 @@ test("a time reads the way notes write it, on the owner’s clock", () => {
   expect(clock("2026-10-20T19:05:00.000Z", "America/Los_Angeles")).toBe("Oct 20 12:05pm");
 });
 
-test("a turn with no message of the owner's gets no pass, and its messages are done", async () => {
+test("a turn with no message of the owner's gets no pass, and its messages are done, unless hex told the owner something in it", async () => {
   await observe(dir, "s", { ask: answering([]), memo });
   const store = file(dir);
   store.messages.deliver(
     { key: "terminal:job", to: "s", from: "terminal", author: "hex", body: "Backup ran." },
     "s",
   );
+  store.messages.deliver(
+    {
+      key: "telegram:-100:59",
+      to: "-100:7",
+      from: "telegram",
+      author: "hex",
+      body: "Backup ran.",
+      meta: { failed: "true" },
+    },
+    "s",
+  );
   const asked: string[] = [];
-  expect(await observe(dir, "s", { ask: answering(asked), memo })).toEqual([]);
+
+  const update = (input: string) => {
+    asked.push(input);
+
+    return Promise.resolve({ outdated: [], line: null });
+  };
+
+  expect(await observe(dir, "s", { ask: answering(asked), update, memo })).toEqual([]);
   expect(asked).toEqual([]);
   expect(store.messages.observe("s", new Date().toISOString())).toEqual([]);
+});
+
+test("what hex tells the owner in a turn they said nothing in becomes a memory only where it brings named memories up to date", async () => {
+  await observe(dir, "s", { ask: answering([]), memo });
+  const store = file(dir);
+  const line = "Oct 20 9:02am -100:7: the login page is live";
+
+  const tell = (key: string, body: string, meta = {}) =>
+    store.messages.deliver({ key, to: "-100:7", from: "telegram", author: "hex", body, meta }, "s");
+
+  const updating = (seen: string[], outdated: number[]) => (input: string) => {
+    seen.push(input);
+
+    return Promise.resolve({ outdated, line });
+  };
+
+  tell("telegram:-100:60", "The login page is live.");
+  tell("telegram:-100:61", "1. Login page ✓ live", { edited: "true" });
+  const seen: string[] = [];
+  const asked: string[] = [];
+
+  expect(
+    await observe(dir, "s", { ask: answering(asked), update: updating(seen, [1]), memo }),
+  ).toEqual([line]);
+  expect(asked).toEqual([]);
+  expect(noted()).toEqual([line]);
+  expect(seen[0]).toContain(
+    '#1 2026-10-19 Oct 19 9pm: the owner wants "the login page fixed first"',
+  );
+  expect(seen[0]).toMatch(/hex told them, [^\n]* in -100:7:\nThe login page is live\./u);
+  expect(seen[0]).toMatch(
+    /hex changed a message it had sent them to read, [^\n]*:\n1\. Login page ✓ live/u,
+  );
+
+  tell("telegram:-100:62", "The login page is live.");
+  expect(await observe(dir, "s", { update: updating([], []), memo })).toEqual([]);
+  tell("telegram:-100:63", "The login page is live.");
+  expect(await observe(dir, "s", { update: updating([], [7]), memo })).toEqual([]);
+  expect(noted()).toEqual([line]);
 });
 
 test("a retry writes no note twice", async () => {
@@ -596,6 +653,23 @@ test("the memory agent asks claude over a turn in hex's folder, with no tools, s
   expect(asked.result).toEqual([note]);
   expect(noted()).toEqual([note]);
   expect(asked.stdin).toContain("[telegram:-100:50]");
+});
+
+test("the memory agent asks claude over what hex told the owner at low effort, with no tools, session or hex variables", async () => {
+  file(dir).messages.deliver(
+    { key: "telegram:-100:60", to: "-100:7", from: "telegram", author: "hex", body: "Live." },
+    "t",
+  );
+
+  const asked = await askedWithNoTools(
+    { structured_output: { outdated: [1], line: "Oct 20: the login page is live" } },
+    "low",
+    ["outdated", "line"],
+    () => observe(dir, "t", { memo }),
+  );
+
+  expect(asked.result).toEqual(["Oct 20: the login page is live"]);
+  expect(asked.stdin).toContain("Live.");
 });
 
 test("the memory agent asks claude for a compression memo wants, with no tools, session or hex variables", async () => {
