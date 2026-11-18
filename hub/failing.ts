@@ -25,6 +25,8 @@ type Starting = {
   failing?: { count: number; retried?: boolean; told?: boolean } | undefined;
 };
 
+export type FailedStarts = ReturnType<typeof failedStarts>;
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A thread's starts until its session connects: a start's prompt and the session it forks are kept, so the next start after a failed one, a retry or the thread's next message, starts with them, and so is the run of starts that failed in a row. Its chat hears of each one a message or prompt set off, but of one the hub set off on its own only as the run's first, and General hears once, from the third on. General's own failed starts reach only its chat, which needs no session to read them.
 export function failedStarts({

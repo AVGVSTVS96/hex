@@ -8,7 +8,7 @@ import { ordered } from "./ordered.ts";
 import { present } from "./present.ts";
 import type { Runs } from "./runs.ts";
 import type { Threads } from "./threads.ts";
-import type { sessionTurns } from "./turns.ts";
+import type { SessionTurns } from "./turns.ts";
 import type { MessagesWaiting } from "./waiting.ts";
 
 type Pause = {
@@ -16,6 +16,8 @@ type Pause = {
   // Claude Code paused the session on a choice for someone at its terminal, so it takes no message until it starts over.
   paused?: boolean | undefined;
 };
+
+export type SessionPauses = ReturnType<typeof sessionPauses>;
 
 // Claude Code can pause a session mid-turn on a choice for someone at its terminal, like a reply its model's safeguards stopped or a permission prompt, and no hook says so: its job record says it needs something and Claude lists it as waiting. The turn ends in hex's record, so what went unanswered isn't given to another session to pause on again, and the chat hears why. No shell command answers the dialog (https://code.claude.com/docs/en/agent-view#manage-sessions-from-the-shell), and its choices are a terminal's: another model, which the owner's settings can rule out, or editing the prompt in the terminal. So the session keeps running, with any agents it started, until the thread's next message starts it again, past a refused turn when the safeguards stopped it (rewound).
 export function sessionPauses({
@@ -31,7 +33,7 @@ export function sessionPauses({
   runs: Runs;
   threads: Threads;
   waiting: MessagesWaiting;
-  turns: ReturnType<typeof sessionTurns>;
+  turns: SessionTurns;
   kept: Keep;
   serving: () => boolean;
   turnEnded: (thread: string) => Promise<void>;

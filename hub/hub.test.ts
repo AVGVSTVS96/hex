@@ -21,6 +21,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import { free } from "./calls.ts";
 import * as claude from "./claude.ts";
 import { settled as commandsSettled } from "./claude.ts";
 import type { Job as JobRecord } from "./claude.ts";
@@ -28,7 +29,6 @@ import { clock, manual } from "./clock.ts";
 import {
   begin,
   clients,
-  free,
   history,
   mirror,
   move,
@@ -39,9 +39,10 @@ import {
   transcribe,
   writable,
 } from "./hub.ts";
-import type { Call, ChannelServer, Hub, HubLine, Message, Permission } from "./hub.ts";
+import type { Call, ChannelServer, Hub, Message, Permission } from "./hub.ts";
 import { claimedAs, landed, takeOver, whenLost, whenMoved } from "./kept.ts";
 import { pictureId } from "./pictures.ts";
+import type { HubLine } from "./socket.ts";
 import { stamp } from "./start.ts";
 import * as stores from "./store.ts";
 import { file, LostError, MovedError, RefusedError, UnreachedError } from "./store.ts";

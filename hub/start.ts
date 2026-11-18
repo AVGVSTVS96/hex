@@ -44,6 +44,8 @@ function contentsOf(path: string): Read {
   }
 }
 
+export type SessionStarts = ReturnType<typeof sessionStarts>;
+
 export function sessionStarts({
   threads,
   files,
