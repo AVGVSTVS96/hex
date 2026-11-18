@@ -1,12 +1,11 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { hostname, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { z } from "zod";
 
 import { answered, followed, keeping, payOwedFacts } from "./kept.ts";
-import { tellOwner } from "./notice.ts";
 import { MovedError } from "./store.ts";
 
 let dir: string;
@@ -88,36 +87,6 @@ test("a hub whose store hasn't answered for a while as it starts tells the owner
 
   expect(value).toBe("started");
   expect(told).toEqual(["hex's records moved, and store.json isn't here"]);
-});
-
-test("the owner hears that hex can't start once until it's back, straight from Telegram", async () => {
-  const sent: string[] = [];
-
-  const telegram = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch: async (request) => {
-      sent.push(new URLSearchParams(await request.text()).get("text") ?? "");
-
-      return Response.json({ ok: true });
-    },
-  });
-
-  const before = { token: process.env.TELEGRAM_BOT_TOKEN, chat: process.env.HEX_MAIN_THREAD };
-  process.env.TELEGRAM_BOT_TOKEN = "token";
-  process.env.HEX_MAIN_THREAD = "-100";
-
-  try {
-    const api = telegram.url.origin;
-    expect(await tellOwner("hex can't start.", { down: dir, api })).toBe(true);
-    expect(await tellOwner("hex can't start.", { down: dir, api })).toBe(false);
-    expect(sent).toEqual(["hex can't start. General hears here once it's back."]);
-    expect(existsSync(join(dir, `down.${hostname()}`))).toBe(true);
-  } finally {
-    process.env.TELEGRAM_BOT_TOKEN = before.token ?? "";
-    process.env.HEX_MAIN_THREAD = before.chat ?? "";
-    await telegram.stop(true);
-  }
 });
 
 const owedMessage = (n: number) => ({

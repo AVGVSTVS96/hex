@@ -12,11 +12,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { fakeClaude, flags } from "./claude.testing.ts";
+import type { Reply } from "./claude.testing.ts";
 import { clock, drain, nap, observe, record, within } from "./observe.ts";
 import type { Answer, Pass } from "./observe.ts";
 import { file } from "./store.ts";
-import { fakeClaude, flags } from "./testing.ts";
-import type { Reply } from "./testing.ts";
 
 let dir: string;
 const none: Answer = { notes: [], profile: null };

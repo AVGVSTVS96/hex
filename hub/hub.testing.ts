@@ -18,6 +18,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import { ATTACH } from "./claude.testing.ts";
 import { settled as commandsSettled } from "./claude.ts";
 import type { Job as JobRecord } from "./claude.ts";
 import { clock, manual } from "./clock.ts";
@@ -29,7 +30,7 @@ import { stamp } from "./start.ts";
 import * as stores from "./store.ts";
 import { file, LostError, MovedError, RefusedError, UnreachedError } from "./store.ts";
 import type { Store } from "./store.ts";
-import { ATTACH, hangUpAll, http as channelLine, port } from "./testing.ts";
+import { hangUpAll, http as channelLine, port } from "./testing.ts";
 import * as transcripts from "./transcripts.ts";
 import { until } from "./until.ts";
 
