@@ -1837,6 +1837,56 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
   expect(checks).toEqual(["a pinned post changed"]);
 });
 
+test("a pinned post that changes within an hour of the last pass waits for them to open Tasks", async () => {
+  const pin = {
+    message: 7,
+    text: "Site",
+    at: "2026-10-13T10:00:00.000Z",
+    note: "Site: example.com",
+  };
+
+  await ledger([], { [DESK]: pin });
+  writeFileSync(
+    join(state, "voice", "check.json"),
+    JSON.stringify({
+      at: new Date().toISOString(),
+      why: "a call ended",
+      read: {},
+      fixed: [],
+      flagged: [],
+      stuck: [],
+      asks: [],
+    }),
+  );
+  questions = new Questions(state, {
+    t3Database: "/nonexistent",
+    t3Home: "/nonexistent",
+    check: (why) => {
+      checks.push(why);
+    },
+  });
+
+  await open(state).pins.pinned({
+    app: "telegram",
+    thread: DESK,
+    ...pin,
+    note: "Site: example.org",
+  });
+  await Bun.sleep(150);
+  await open(state).pins.pinned({
+    app: "telegram",
+    thread: DESK,
+    ...pin,
+    note: "Site: example.net",
+  });
+  await Bun.sleep(150);
+  expect(checks).toEqual([]);
+  questions.opened();
+  expect(checks).toEqual(["you opened Tasks"]);
+  questions.opened();
+  expect(checks).toEqual(["you opened Tasks"]);
+});
+
 test("an answered ask the check lists again without buttons is flagged, not listed", () => {
   const ask = {
     id: "check:sign-in",
