@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { z } from "zod";
 
+import { keeping } from "./kept.ts";
 import { dispatch, endpoint, local, tool, toolList } from "./mcp.ts";
 import type { ToolArguments } from "./mcp.ts";
 import { open } from "./store.ts";
@@ -70,8 +71,19 @@ const Listing = z.object({ result: z.object({ tools: z.array(z.unknown()) }) });
 const nothing = (): void => undefined;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The hub's record of operations over a folder's store, as startHub hands it to an endpoint.
+const operationsIn = (dir: string) =>
+  keeping(dir, {
+    spool: join(dir, "owed.test.json"),
+    refused: join(dir, "refused.test.json"),
+    letGo: nothing,
+    queue: () => Promise.resolve(),
+  }).operations;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A channel whose reply tool answers when the test says, counting how often it ran. A call made with gaveUp is one the session stops waiting on, as Claude Code does at its timeout.
-function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operations-")))) {
+function channel(fails = false, dir = mkdtempSync(join(tmpdir(), "operations-"))) {
+  const store = open(dir);
   let ran = 0;
   const waiting: (() => void)[] = [];
 
@@ -97,7 +109,7 @@ function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operati
       open: nothing,
       close: nothing,
     },
-    store,
+    operationsIn(dir),
   );
 
   let ids = 0;
@@ -161,13 +173,13 @@ function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operati
     }
   };
 
-  return { ran: () => ran, call, answer, answerNow, reached, store, serve };
+  return { ran: () => ran, call, answer, answerNow, reached, store, dir, serve };
 }
 
 const text = (answer: Answer) => answer.result.content[0]?.text;
 
 test("an operation shares its running result and keeps it after an aborted request and a restart", async () => {
-  const { ran, call, answer, reached, store } = channel();
+  const { ran, call, answer, reached, dir } = channel();
   const gaveUp = new AbortController();
   const first = call({ text: "report" }, gaveUp);
   await reached();
@@ -178,7 +190,7 @@ test("an operation shares its running result and keeps it after an aborted reque
   expect(text(await again)).toBe("sent (id: 5389)");
   expect(text(await call({ text: "report" }))).toBe("sent (id: 5389)");
   expect(ran()).toBe(1);
-  const restarted = channel(false, store);
+  const restarted = channel(false, dir);
   expect(text(await restarted.call({ text: "report" }))).toBe("sent (id: 5389)");
   expect(restarted.ran()).toBe(0);
 });
@@ -365,7 +377,7 @@ test("a stock MCP client lists the tools and replies without an operation id", a
       open: nothing,
       close: nothing,
     },
-    open(mkdtempSync(join(tmpdir(), "operations-"))),
+    operationsIn(mkdtempSync(join(tmpdir(), "operations-"))),
   );
 
   const headers = {
@@ -424,7 +436,7 @@ test("a call whose arguments don't match its tool's schema fails with zod's mess
       open: nothing,
       close: nothing,
     },
-    open(mkdtempSync(join(tmpdir(), "operations-"))),
+    operationsIn(mkdtempSync(join(tmpdir(), "operations-"))),
   );
 
   const response = await serve(
@@ -485,7 +497,7 @@ test("tools/list serves each tool's input as JSON Schema, descriptions, enums an
       open: nothing,
       close: nothing,
     },
-    open(mkdtempSync(join(tmpdir(), "operations-"))),
+    operationsIn(mkdtempSync(join(tmpdir(), "operations-"))),
   );
 
   const listing = await serve(

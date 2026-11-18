@@ -3,9 +3,8 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 
 import { clock } from "./clock.ts";
-import { tracked } from "./kept.ts";
+import type { Operations } from "./kept.ts";
 import { ordered } from "./ordered.ts";
-import type { Store } from "./store.ts";
 
 export type ToolArguments = z.input<z.ZodObject>;
 
@@ -163,6 +162,18 @@ function besideOf(request: Request) {
   return session === null || session === "" ? undefined : session;
 }
 
+async function ended(answer: Promise<Result>, keep: (result: string) => Promise<void>) {
+  const answered = await answer;
+  await keep(JSON.stringify(answered));
+
+  return answered;
+}
+
+const uncertain = (toolName: string, id: string) =>
+  failure(
+    `${toolName} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`,
+  );
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A channel over MCP's Streamable HTTP transport, for sessions whose plugin's .mcp.json points here with their binding and the hub's token in headers. Every session id is taken as it comes, so a session that connected before the hub restarted carries on where it was without initializing again.
 export function endpoint(
@@ -171,7 +182,7 @@ export function endpoint(
   token: string,
   server: ChannelServer,
   hooks: Hooks,
-  store: Store,
+  operations: Operations,
   zone = () => Temporal.Now.timeZoneId(),
 ) {
   const starting = new Map<string, Handshake>();
@@ -183,10 +194,10 @@ export function endpoint(
     return thread === null || thread === "" ? undefined : thread;
   }
 
-  const active = new Map<string, Promise<Result>>();
+  const active = new Map<string, { input: string; answer: Promise<Result> }>();
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Each operation's begins in this process, one at a time, so a repeat's is answered only once the call before it is under way (active).
+  // Each operation's begins in this process, one at a time, and a call that begins is under way (active), with its input, before its begin is answered and until its end is with the store or owed to it. So a repeat that finds its call under way joins it without asking the store, and a different call under its id is told so.
   const beginning = ordered();
   const tools = new Map<string, Tool>(server.tools.map((each) => [each.name, each]));
   const list = toolList(server.tools);
@@ -223,36 +234,38 @@ export function endpoint(
     const key = JSON.stringify([scope, id]);
     const value = [toolName, args];
     const input = JSON.stringify(value);
-    const kept = await beginning(key, () => tracked(store.operations.begin(scope, id, input)));
 
-    if (!isDeepStrictEqual(JSON.parse(kept.input), value)) {
-      return failure(`${toolName} didn't run: identity ${id} already identifies a different call`);
-    }
-
-    if (!kept.fresh) {
-      if (kept.result !== null) {
-        return Kept.parse(JSON.parse(kept.result));
-      }
-
-      return await (active.get(key) ??
-        failure(
-          `${toolName} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`,
-        ));
-    }
-
-    const answer = call(thread, toolName, args, beside)
-      .then(async (answered) => {
-        await tracked(store.operations.finish(scope, id, JSON.stringify(answered)));
-
-        return answered;
-      })
-      .finally(() => {
+    const run = () => {
+      const answer = ended(call(thread, toolName, args, beside), (kept) =>
+        operations.finish(scope, id, input, kept),
+      ).finally(() => {
         active.delete(key);
       });
 
-    active.set(key, answer);
+      return active.set(key, { input, answer }).get(key);
+    };
 
-    return await answer;
+    const known = await beginning(key, async () => {
+      const running = active.get(key);
+
+      if (running !== undefined) {
+        return { input: running.input, result: null, running };
+      }
+
+      const kept = await operations.begin(scope, id, input);
+
+      return { input: kept.input, result: kept.result, running: kept.fresh ? run() : undefined };
+    });
+
+    if (!isDeepStrictEqual(JSON.parse(known.input), value)) {
+      return failure(`${toolName} didn't run: identity ${id} already identifies a different call`);
+    }
+
+    if (known.result !== null) {
+      return Kept.parse(JSON.parse(known.result));
+    }
+
+    return await (known.running?.answer ?? uncertain(toolName, id));
   }
 
   async function call(
