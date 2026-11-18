@@ -5,6 +5,7 @@ import { z } from "zod";
 import { clock } from "./clock.ts";
 import type { Operations } from "./kept.ts";
 import { ordered } from "./ordered.ts";
+import { local } from "./tag.ts";
 
 export type ToolArguments = z.input<z.ZodObject>;
 
@@ -576,25 +577,4 @@ function notification(payload: Payload, zone: string) {
     method: "notifications/claude/channel/permission",
     params: { request_id: payload.request_id, behavior: payload.behavior },
   };
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The apps stamp a message in UTC, and a session that reads 06:31Z writes it down as 6:31am, so the tag carries the owner's clock time with its offset instead.
-export function local(meta: Record<string, string>, zone: string): typeof meta {
-  const at = meta.ts === undefined || meta.ts === "" ? Number.NaN : Date.parse(meta.ts);
-
-  if (Number.isNaN(at)) {
-    return meta;
-  }
-
-  try {
-    return {
-      ...meta,
-      ts: Temporal.Instant.fromEpochMilliseconds(at)
-        .toZonedDateTimeISO(zone)
-        .toString({ timeZoneName: "never", smallestUnit: "second" }),
-    };
-  } catch {
-    return meta;
-  }
 }
