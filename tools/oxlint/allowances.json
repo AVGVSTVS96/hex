@@ -142,7 +142,7 @@
     "hub/transcripts.ts": 45,
     "hub/turns.ts": 3,
     "hub/waiting.ts": 14,
-    "tools/sandbox.ts": 3
+    "tools/sandbox.ts": 2
   },
   "flakes": {
     "bin/chat.test.ts": 4,

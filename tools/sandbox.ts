@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, setDefaultTimeout } from "bun:test";
+import { afterAll, beforeEach } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,17 +23,13 @@ Object.assign(process.env, {
 });
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The one time limit on tests, so a test fails on time only when it hangs: on a busy server one that takes a second here took 32.
-setDefaultTimeout(300_000);
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Bun preloads this once for each file only when it runs each in a world of its own, which bin/check's --parallel does and a single file is. Several files in one world would share the first one's sandbox, and the later ones would have Bun's five-second limit.
+// Bun preloads this once for each file only when it runs each in a world of its own, which bin/check's --parallel does and a single file is. Several files in one world would share the first one's sandbox.
 const mine = Bun.main;
 
 beforeEach(() => {
   if (Bun.main !== mine) {
     throw new Error(
-      `${Bun.main} runs in one process with ${mine}, without a sandbox or the time limit of its own: run several test files as \`bun test --isolate <files>\`, or \`bin/check <package>\``,
+      `${Bun.main} runs in one process with ${mine}, without a sandbox of its own: run several test files as \`bun test --isolate <files>\`, or \`bin/check <package>\``,
     );
   }
 });
