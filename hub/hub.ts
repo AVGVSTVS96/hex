@@ -26,6 +26,7 @@ import type { Owing } from "./kept.ts";
 import { STARTUP } from "./loaded.ts";
 import { endpoint } from "./mcp.ts";
 import type { ChannelServer, Line, Permission, ToolArguments } from "./mcp.ts";
+import { tellOwner } from "./notice.ts";
 import { PASS, queue } from "./observe.ts";
 import { ordered } from "./ordered.ts";
 import { sessionPauses } from "./pauses.ts";
@@ -614,6 +615,10 @@ export async function startHub({
       }
     },
     queue: (turn) => queue(storeDir, turn),
+    tell: (why) =>
+      void tellOwner(
+        `hex's store refuses what hex writes, so the hub keeps it in memory and on disk until it doesn't: ${why}`,
+      ),
   });
 
   const { kept, must } = owing;
@@ -1175,6 +1180,7 @@ export async function startHub({
   // The owner's words this hub had the store hold for a turn, so a turn that ends while the store can't let them go still gives them first, from memory (goneOnFromMemory), before anything that came after them.
   const heldHere = new Map<string, Message[]>();
   const goneOnFromMemory = new Set<string>();
+  const letGoNow = new Map<string, Set<string>>();
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // What a turn's end let go goes on: as it ends, or once the store answers again when it ended in an outage, less what went on from memory meanwhile.
@@ -1182,6 +1188,8 @@ export async function startHub({
     const name = threads.get(thread)?.name;
 
     for (const row of rows) {
+      letGoNow.get(thread)?.add(row.key);
+
       if (!goneOnFromMemory.delete(row.key) && name !== undefined) {
         forward(thread, name, toMessageWithKeyFirstForTheHook(row), true);
       }
@@ -1195,12 +1203,20 @@ export async function startHub({
     heldHere.delete(thread);
 
     try {
+      letGoNow.set(thread, new Set());
       await must({ kind: "letHeldGo", thread }, false);
       const name = threads.get(thread)?.name;
+      const owed = owing.owes({ kind: "letHeldGo", thread });
+      const letGoByStore = letGoNow.get(thread) ?? new Set();
+      letGoNow.delete(thread);
 
-      if (owing.owes({ kind: "letHeldGo", thread }) && name !== undefined) {
-        for (const message of remembered) {
-          goneOnFromMemory.add(message.meta.key ?? "");
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      // From memory: all of it while the store can't let it go, and otherwise what the store no longer held, which a hook took without the session hearing it (held.ts).
+      for (const message of remembered) {
+        const key = message.meta.key ?? "";
+
+        if (name !== undefined && (owed || !letGoByStore.has(key))) {
+          goneOnFromMemory.add(key);
           forward(thread, name, message, true);
         }
       }

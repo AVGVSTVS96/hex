@@ -24,7 +24,7 @@ import type { Home } from "./store/remote.ts";
 import { answering, client } from "./store/wire.ts";
 import type { Client } from "./store/wire.ts";
 
-export { awayFile } from "./store/remote.ts";
+export { awayFile, unlease } from "./store/remote.ts";
 
 export { LostError, MovedError, RefusedError, UnreachedError } from "./store/errors.ts";
 
@@ -117,6 +117,21 @@ export class File {
     this.db.run("pragma synchronous = normal");
     this.db.run("pragma foreign_keys = on");
 
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // A hex.db whose records moved refuses every write, so it's no home, as on a machine that restored a copy of it without the store.json that says where they went.
+    if (
+      this.db
+        .query("select 1 from sqlite_master where type = 'trigger' and name glob 'moved_*'")
+        .get() !== null
+    ) {
+      this.db.close();
+      openDatabases.delete(this.db);
+
+      throw new MovedError(
+        `hex's records in ${dir} moved to a Durable Object, and store.json, which says which, isn't here: copy state/store.json from a machine that runs hex`,
+      );
+    }
+
     const core = { db: this.db, write: <T>(fn: () => T) => this.write(fn) };
     const records = domains(core);
     this.messages = records.messages;
@@ -159,7 +174,7 @@ export class File {
 
     const home: Home = {
       dir,
-      claim: () => Promise.resolve(),
+      claim: () => Promise.resolve(0),
       watch: (listener) => this.watch(listener),
       synced: () => this.synced(),
       // oxlint-disable-next-line typescript/require-await -- async so a query SQLite refuses rejects, as a home that is elsewhere does
@@ -425,6 +440,12 @@ export function file(dir: string): File {
 }
 
 const remotes = new Map<string, Store>();
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A client of the folder's store of its own, which never claims hex, so no tenure refuses it, and keeps whether the object answers to itself: what a hub that lost hex still owes as plain fact, or a backup, goes through one.
+export function unclaimed(dir: string): Store {
+  return remote(dir, undefined, false) ?? file(dir).store;
+}
 
 export function open(dir: string): Store {
   const kept = remotes.get(dir);

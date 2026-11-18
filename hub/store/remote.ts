@@ -70,7 +70,7 @@ const PROBE = JSON.stringify({ domain: "clock", method: "now", args: [] });
 // What a store's home gives beside its records. claim: makes this process the hub, refusing every hub that claimed before it. watch: told after any write, by any process, and when a home that wasn't answering answers again. synced: resolves once this process's writes can't be lost, and rejects while one may be. read: a query that can change nothing, for what no method answers. copy: the records as a SQLite file.
 export type Home = {
   readonly dir: string;
-  readonly claim: () => Promise<void>;
+  readonly claim: () => Promise<number>;
   readonly watch: (listener: () => void) => () => void;
   readonly synced: () => Promise<void>;
   readonly read: (text: string, ...bound: Bound[]) => Promise<unknown[]>;
@@ -212,7 +212,26 @@ function word(dir: string, times: Times) {
   };
 }
 
-export function remote(dir: string, times = TIMES): (Client & Home) | undefined {
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Ends the lease the object keeps for hex, so a hub with no lease, on a hex that stopped using a lease tool, can claim it.
+export async function unlease(dir: string) {
+  const away = fromJson(StoreJson, readFileSync(awayFile(dir), "utf-8"));
+
+  const response = await fetch(at(away, "lease/clear"), {
+    method: "POST",
+    headers: { authorization: `Bearer ${away.key}` },
+    body: "{}",
+    signal: AbortSignal.timeout(TIMES.answerWithin),
+  });
+
+  decode(await response.text());
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// shared: whether this client tells the folder's other processes when the object stops answering, and hears them; a backup's slow page or a lost hub paying what it owed keeps that to itself.
+const alone = { say: (_why: string) => null, heard: (): string | null => null, clear: () => null };
+
+export function remote(dir: string, times = TIMES, shared = true): (Client & Home) | undefined {
   const named = awayFile(dir);
 
   if (!existsSync(named)) {
@@ -227,7 +246,7 @@ export function remote(dir: string, times = TIMES): (Client & Home) | undefined 
   const claimant = crypto.randomUUID();
   const headers: Asking = { authorization: `Bearer ${away.key}` };
   const socket = watcher(at(away, "watch"), headers, times);
-  const elsewhere = word(dir, times);
+  const elsewhere = shared ? word(dir, times) : alone;
 
   const reach = async (route: string, body: string) => {
     let response: Response;
@@ -347,14 +366,19 @@ export function remote(dir: string, times = TIMES): (Client & Home) | undefined 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The object takes this process's calls as a hub's once it has given it a tenure of its own.
   const claim = async () => {
-    const asked = {
-      claimant,
-      ...(lease !== undefined && lease !== "" && { lease: Lease.parse(lease) }),
-    };
+    const leased = lease === undefined || lease === "" ? undefined : Lease.safeParse(lease).data;
 
-    await inTurn(async () => {
+    if (leased === undefined && lease !== undefined && lease !== "") {
+      throw new LostError(`HEX_STORE_LEASE is ${JSON.stringify(lease)}, not a whole number`);
+    }
+
+    const asked = { claimant, ...(leased !== undefined && { lease: leased }) };
+
+    return await inTurn(async () => {
       const { value } = Claimed.parse(JSON.parse(await guarded("claim", JSON.stringify(asked))));
       headers["hex-tenure"] = String(value);
+
+      return value;
     });
   };
 

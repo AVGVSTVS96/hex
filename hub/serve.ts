@@ -8,7 +8,8 @@ import { ahead } from "./ahead.ts";
 import { nightly } from "./backup.ts";
 import { besideOf } from "./beside.ts";
 import { clients, engine, free, listen, up } from "./hub.ts";
-import { answered, whenLost, whenMoved } from "./kept.ts";
+import { answered, claimedAs, whenLost, whenMoved } from "./kept.ts";
+import { tellOwner } from "./notice.ts";
 import { hexDir, open, stateDir, syncInBackground } from "./store.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -86,9 +87,20 @@ syncInBackground();
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The hub takes hex over before it takes any message: every hub that claimed the store before it is refused from then on.
-await answered(stateDir(), "this hub takes hex over", async (store) => {
-  await store.claim();
-});
+await answered(
+  stateDir(),
+  "this hub takes hex over",
+  async (store) => {
+    claimedAs(await store.claim());
+  },
+  {
+    tell: (why) =>
+      void tellOwner(
+        `hex can't start on ${hostname()}: its store doesn't answer, so it waits for it (${why}).`,
+        { down: join(hexDir(), "state") },
+      ),
+  },
+);
 
 await listen();
 

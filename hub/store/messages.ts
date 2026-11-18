@@ -150,9 +150,9 @@ export class Messages {
     );
   }
 
-  takeHeld(thread: string, session: string): Row[] {
-    const at = now();
-
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Called again with the same at, as after a lost reply, it answers with every row it took under that at, so none is taken and never seen.
+  takeHeld(thread: string, session: string, at = now()): Row[] {
     return this.write(() => {
       this.db
         .query(

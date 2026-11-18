@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, mock, test } from "bun:test";
 import {
   existsSync,
@@ -13,15 +14,16 @@ import { join } from "node:path";
 
 import type { DurableObject, Namespace } from "cloudflare:workers";
 
-import { File, messagesSince, open } from "../store.ts";
+import { File, file as fileIn, messagesSince, open, unclaimed } from "../store.ts";
 import type { NewRow } from "../store.ts";
 import { until } from "../until.ts";
-import { bring, layout } from "./carry.ts";
+import { bring, layout, pages } from "./carry.ts";
 import type { Read } from "./carry.ts";
+import { CONTRACT } from "./domains.ts";
 import { objectStorage } from "./fake.ts";
 import { appendOnlyMigrations } from "./migrations.ts";
 import { move, MOVED } from "./move.ts";
-import { LostError, MovedError, RefusedError, remote, UnreachedError } from "./remote.ts";
+import { LostError, MovedError, RefusedError, remote, UnreachedError, unlease } from "./remote.ts";
 import { recordsIn } from "./storage.ts";
 import type { Storage } from "./storage.ts";
 import { answering, client } from "./wire.ts";
@@ -220,7 +222,7 @@ test("a claim that arrives again gets its tenure while it holds hex, and one the
   expect(object.lostTo("2")).toBeUndefined();
 });
 
-test("a lease tool's number never goes back: a hub on the same lease claims again, one on a lower lease is refused, and a hub with no lease runs hex outside any", () => {
+test("a lease tool's number never goes back: a hub on the same lease claims again, one on a lower lease or none is refused, until the owner ends the lease", () => {
   const object = startedEmpty();
   expect(object.claim(by("a", 6))).toEqual({ tenure: 1 });
   expect(object.claim(by("b", 6))).toEqual({ tenure: 2 });
@@ -230,8 +232,16 @@ test("a lease tool's number never goes back: a hub on the same lease claims agai
   expect(object.lostTo("2")).toBeUndefined();
   expect(object.claim(by("d", 7))).toEqual({ tenure: 3 });
   expect(object.lostTo("2")).toBe("tenure 2 no longer holds hex: tenure 3 does");
+  expect(object.claim(by("plain"))).toEqual({
+    lost: "hex runs under lease 7: start it with HEX_STORE_LEASE, or end the lease with hex store lease clear",
+  });
+  expect(object.lostTo("3")).toBeUndefined();
+  object.unlease();
   expect(object.claim(by("plain"))).toEqual({ tenure: 4 });
   expect(object.claim(by("e", 1))).toEqual({ tenure: 5 });
+  expect(object.claim(by("again"))).toEqual({
+    lost: "hex runs under lease 1: start it with HEX_STORE_LEASE, or end the lease with hex store lease clear",
+  });
   expect(() => object.claim(by("f", -1))).toThrow();
   expect(() => object.claim('{"claimant": "g", "lease": 1e999}')).toThrow();
 });
@@ -567,7 +577,7 @@ test("the object answers only its owner's key, never without one, and refuses a 
           headers: { authorization: `Bearer ${KEY}` },
         })
       ).json(),
-    ).toEqual({ version: "v7", migrations: appendOnlyMigrations.length });
+    ).toEqual({ version: "v7", migrations: appendOnlyMigrations.length, contract: CONTRACT });
     expect(await (await post("/hex/claim", by("a"))).json()).toEqual({ value: 1 });
     expect(await (await post("/hex/claim", by("b"))).json()).toEqual({ value: 2 });
     expect((await post("/hex/call", "{}", { "hex-tenure": "2" })).status).toBe(200);
@@ -921,7 +931,6 @@ test("a copy reads each table before the tables it references, so rows written w
   await bring(writing, to);
   const copy = new File(join(dir, "copy-dir"));
   copy.db.close();
-  const { Database } = await import("bun:sqlite");
   const db = new Database(to, { readonly: true });
   expect(db.query("pragma foreign_key_check").all()).toEqual([]);
   db.close();
@@ -942,10 +951,10 @@ test("a copy reads each table before the tables it references, so rows written w
 
 test("every message is read a page to a reply", async () => {
   const file = filled(dir);
-  const pages = await Array.fromAsync(messagesSince(file.store));
-  expect(pages.map((page) => page.length)).toEqual([500, 500, 202]);
-  expect(pages.flat()).toEqual(file.messages.since());
-  const later = pages[1]?.[0]?.at ?? "";
+  const read = await Array.fromAsync(messagesSince(file.store));
+  expect(read.map((page) => page.length)).toEqual([500, 500, 202]);
+  expect(read.flat()).toEqual(file.messages.since());
+  const later = read[1]?.[0]?.at ?? "";
   expect((await Array.fromAsync(messagesSince(file.store, later))).flat()).toEqual(
     file.messages.since(later),
   );
@@ -1286,4 +1295,130 @@ test("a move rides out pages that aren't the object's own, and never sends again
   } finally {
     await object.stop();
   }
+});
+
+test("a folder whose hex.db carries a move's triggers but no store.json isn't a home: it says what the folder is missing", async () => {
+  filled(dir).db.close();
+  const object = served();
+
+  try {
+    await move(dir, { url: object.url, name: "hex", key: KEY }, hear);
+    const twin = join(dir, "twin");
+    mkdirSync(twin);
+    writeFileSync(join(twin, "hex.db"), readFileSync(join(dir, MOVED)));
+    expect(() => open(twin)).toThrow(MovedError);
+    expect(() => fileIn(twin)).toThrow("store.json, which says which, isn't here");
+  } finally {
+    await object.stop();
+  }
+});
+
+test("a move keeps every last write with the file it leaves, even while another process reads it", async () => {
+  const file = filled(dir);
+  file.db.close();
+  const reader = new Database(join(dir, "hex.db"), { readonly: true });
+  reader.run("begin");
+  reader.query("select count(*) from messages").get();
+  const object = served();
+
+  try {
+    await move(dir, { url: object.url, name: "hex", key: KEY }, hear);
+  } finally {
+    reader.run("commit");
+    reader.close();
+    await object.stop();
+  }
+
+  const kept = new Database(join(dir, MOVED), { readonly: true });
+  expect(kept.query("select count(*) as n from messages").get()).toEqual({ n: 1202 });
+  expect(
+    kept.query("select count(*) as n from sqlite_master where name glob 'moved_*'").get(),
+  ).toEqual({
+    n:
+      3 *
+      (await layout(async (text) => await Promise.resolve(kept.query(text).all()))).tables.length,
+  });
+  kept.close();
+});
+
+test("a move refuses a Worker that runs another hex's store", async () => {
+  filled(dir).db.close();
+
+  const object = served(objectStorage(), undefined, async (route, answer) => {
+    const answered = await answer();
+
+    return route === "version"
+      ? Response.json({ ...(await answered.json()), contract: "another" })
+      : answered;
+  });
+
+  try {
+    expect(await failure(move(dir, { url: object.url, name: "hex", key: KEY }, hear))).toContain(
+      "the Worker runs another hex's store",
+    );
+    expect(existsSync(join(dir, "store.json"))).toBe(false);
+  } finally {
+    await object.stop();
+  }
+});
+
+const mark = (step: number) => ({ id: "m-1", step });
+
+const rows = (ids: number[]) =>
+  JSON.stringify({ table: "t", columns: ["id"], rows: ids.map((id) => [id]) });
+
+test("the object takes a move's step once: one sent again, or held back past a later one, changes nothing", () => {
+  const object = recordsIn(objectStorage());
+
+  object.moved("begin", "{}", mark(1));
+  object.moved("schema", JSON.stringify({ statements: ["create table t (id integer)"] }), mark(2));
+  expect(object.moved("rows", rows([1, 2]), mark(3))).toBe(2);
+  expect(object.moved("rows", rows([1, 2]), mark(3))).toBe(true);
+  expect(object.moved("rows", rows([3]), mark(4))).toBe(1);
+  expect(object.moved("rows", rows([1, 2]), mark(3))).toBe(true);
+  expect(object.read(sql("select count(*) as n from t"))).toEqual([{ n: 3 }]);
+  expect(object.moved("rows", rows([4]), { id: "m-2", step: 3 })).toBe(1);
+});
+
+test("a hex that stops using a lease tool ends the lease with hex store lease clear, and a lease that isn't a whole number is refused", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage);
+  const object = served(storage);
+  pointedAt(dir, object.url);
+
+  try {
+    process.env.HEX_STORE_LEASE = "7";
+    await remote(dir, quick)?.claim();
+    const plain = remote(dir, quick);
+    expect(await thrown(plain?.claim() ?? never)).toBeInstanceOf(LostError);
+    await unlease(dir);
+    expect(await remote(dir, quick)?.claim()).toBe(2);
+    process.env.HEX_STORE_LEASE = "seven";
+    const malformed = await thrown(remote(dir, quick)?.claim() ?? never);
+    expect(malformed).toBeInstanceOf(LostError);
+    expect(String(malformed)).toContain('HEX_STORE_LEASE is "seven", not a whole number');
+    expect(await unclaimed(dir).messages.deliver(message)).toBe(true);
+  } finally {
+    delete process.env.HEX_STORE_LEASE;
+    await object.stop();
+  }
+});
+
+test("a table of large rows is read a page of about 4 MB at a time", async () => {
+  const db = new Database(":memory:");
+  db.run("create table big (id integer primary key, body text)");
+
+  for (let n = 1; n <= 12; n += 1) {
+    db.query("insert into big (id, body) values (?, ?)").run(n, "a".repeat(1_000_000));
+  }
+
+  const read: Read = async (text) => await Promise.resolve(db.query(text).all());
+  const [table] = (await layout(read)).tables;
+
+  if (table === undefined) {
+    throw new Error("no table");
+  }
+
+  const sizes = (await Array.fromAsync(pages(read, table))).map((page) => page.length);
+  expect(sizes).toEqual([3, 3, 3, 3]);
 });

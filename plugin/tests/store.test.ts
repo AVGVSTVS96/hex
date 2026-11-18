@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -314,6 +315,35 @@ test("an update whose deployed store isn't the one hex points at, or doesn't ans
   expect(read(join(root, "deployed"))).toBe("the store before");
   expect(git("rev-parse", "HEAD")).toBe(before);
 }, 60_000);
+
+test("a move keeps the file an earlier move left, under the time it was set aside", async () => {
+  writeFileSync(
+    join(hex, "hub/store/move.ts"),
+    `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(join(root, "moves"))}, process.argv.slice(3).join(" ") + "\\n");\n`,
+  );
+  writeFileSync(join(home, "state/hex.db.moved"), "an earlier move's file");
+
+  const moved = await run(join(hex, "bin/hex"), "store", "move", WORKERS_DEV, "restored");
+  const kept = readdirSync(join(home, "state")).filter((name) => name.startsWith("hex.db.moved."));
+
+  expect(moved.code).toBe(0);
+  expect(read(join(root, "moves"))).toBe(`${WORKERS_DEV} restored\n`);
+  expect(kept).toHaveLength(1);
+  expect(read(join(home, "state", kept[0] ?? ""))).toBe("an earlier move's file");
+});
+
+test("hex status says whether the store hex points at answers", async () => {
+  pointed();
+  writeFileSync(join(root, "deployed"), "the store now");
+  expect((await run(join(hex, "bin/hex"), "status")).out).toContain(
+    `store: ${store.url.origin} answers, as the store now`,
+  );
+
+  answering = () => null;
+  expect((await run(join(hex, "bin/hex"), "status")).out).toContain(
+    `store: ${store.url.origin} doesn't answer, so the hub waits for it`,
+  );
+});
 
 test("a move is refused while hex runs on another machine, or is moving there", async () => {
   const marker = join(root, "xdg-state/hex/elsewhere");

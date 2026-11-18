@@ -70,6 +70,18 @@ export const METHODS = {
   clock: ["now"],
 } satisfies Record<keyof Domains, string[]>;
 
+const LARGEST_PRIME_UNDER_2_32 = 4_294_967_291;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What a client and a home have to agree on, the methods each answers and the migrations each runs, in a few characters both can compare: a Worker that runs another hex's store says another.
+export const CONTRACT = JSON.stringify([appendOnlyMigrations.length, METHODS])
+  .split("")
+  .reduce(
+    (hash, character) => (hash * 33 + (character.codePointAt(0) ?? 0)) % LARGEST_PRIME_UNDER_2_32,
+    5381,
+  )
+  .toString(36);
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Where a home keeps how many migrations its database has had: a file in pragma user_version, a Durable Object, which refuses that pragma, in a table.
 export type Version = { get: () => number; set: (version: number) => void };

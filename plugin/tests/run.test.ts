@@ -303,10 +303,10 @@ test("a hub that lost hex to another machine stays stopped: hex exits with its c
   const running = run({ HEX_STORE_LEASE: "7", PATH });
   expect(await running.exited).toBe(3);
   expect(await new Response(running.stderr).text()).toContain(
-    "another machine holds hex now, so its hub stays stopped here",
+    "its store gave hex to another hub, so it stays stopped here",
   );
   expect(read()).toContain("chat_id=-100");
-  expect(read()).toContain("another machine holds hex now");
+  expect(read()).toContain("its store gave hex to another hub");
   expect(hubs()).toEqual(["start lease=7"]);
   expect(git("rev-parse", "HEAD")).toBe(lost);
   expect(existsSync(join(home, "state/bad"))).toBe(false);
@@ -314,6 +314,37 @@ test("a hub that lost hex to another machine stays stopped: hex exits with its c
   expect(readFileSync(join(BIN, "../systemd/hex.service"), "utf-8")).toMatch(
     /^RestartPreventExitStatus=3$/mu,
   );
+
+  for (const lease of [{}, { HEX_STORE_LEASE: "7" }]) {
+    const restartedByASupervisor = run({ PATH, ...lease });
+    expect(await restartedByASupervisor.exited).toBe(3);
+  }
+
+  expect(hubs()).toHaveLength(1);
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub again");
+
+  const givenHexBackOnANewerLease = run({ PATH, HEX_STORE_LEASE: "8" });
+  await until(() => hubs().length === 2);
+  givenHexBackOnANewerLease.kill("SIGTERM");
+  expect(await givenHexBackOnANewerLease.exited).toBe(0);
+  expect(existsSync(join(home, "state/lost"))).toBe(false);
+
+  writeFileSync(join(home, "state/lost"), "9\nhex stopped here\n");
+  expect(Bun.spawnSync([join(hex, "bin/hex"), "start"]).exitCode).toBe(0);
+  await until(() => existsSync(join(home, "state/hub.pid")) && hubs().length === 4);
+  expect(hubs()[3]).toStartWith("start ");
+  expect(await Bun.spawn([join(hex, "bin/hex"), "stop"]).exited).toBe(0);
+});
+
+test("a HEX_STORE_LEASE that isn't a whole number stops hex as failed before any hub starts, and says so", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+
+  const running = run({ HEX_STORE_LEASE: "7x" });
+  expect(await running.exited).toBe(1);
+  expect(await new Response(running.stderr).text()).toContain(
+    "HEX_STORE_LEASE is 7x, not a whole number",
+  );
+  expect(hubs()).toEqual([]);
 });
 
 test("a restart in place starts the hub again even when the login shell leaves something behind", async () => {

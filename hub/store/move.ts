@@ -1,11 +1,12 @@
 import { Database } from "bun:sqlite";
-import { existsSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { z } from "zod";
 
 import { batches, carriedOf, layout, pages } from "./carry.ts";
 import type { Read } from "./carry.ts";
+import { CONTRACT } from "./domains.ts";
 import { UnreachedError } from "./errors.ts";
 import { appendOnlyMigrations } from "./migrations.ts";
 import { at, awayFile, StoreJson } from "./remote.ts";
@@ -24,6 +25,10 @@ type Posted =
   | { statements: string[] }
   | { table: string; columns: string[]; rows: unknown[][] }
   | { version: number };
+
+const CHECKPOINT_WITHIN = 2000;
+
+const TheirContract = z.object({ contract: z.string() });
 
 const MoveState = z.object({
   arrived: z.boolean(),
@@ -59,7 +64,7 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // One request, answered by the object, or rejected with UnreachedError when the answer isn't the object's own (none, a page of Cloudflare's, a 5xx or 429).
-  const once = async (route: string, body?: Posted, mark?: string) => {
+  const reply = async (route: string, body?: Posted, mark?: string) => {
     let response: Response;
     let text: string;
 
@@ -82,8 +87,11 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
       throw new UnreachedError(`the object answered ${response.status}: ${text.slice(0, 200)}`);
     }
 
-    return decode(text);
+    return text;
   };
+
+  const once = async (route: string, body?: Posted, mark?: string) =>
+    decode(await reply(route, body, mark));
 
   const waitedOut = async <T>(work: () => Promise<T>): Promise<T> => {
     const started = Date.now();
@@ -189,6 +197,14 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
       );
     }
 
+    const { contract } = TheirContract.parse(JSON.parse(await waitedOut(() => reply("version"))));
+
+    if (contract !== CONTRACT) {
+      throw new Error(
+        `the Worker runs another hex's store (${contract}, this hex's is ${CONTRACT}): deploy this checkout's with hex store deploy, then move`,
+      );
+    }
+
     const before = await state();
 
     if (before.served) {
@@ -234,9 +250,17 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
     }
 
     db.run("commit");
+    db.run(`pragma busy_timeout = ${CHECKPOINT_WITHIN}`);
     db.run("pragma wal_checkpoint(truncate)");
     db.close();
     renameSync(file, join(dir, MOVED));
+
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // A process that still reads hex.db, like a backup streaming it, keeps the last writes from reaching the file, so they go with it in its WAL.
+    if (existsSync(`${file}-wal`) && statSync(`${file}-wal`).size > 0) {
+      renameSync(`${file}-wal`, join(dir, `${MOVED}-wal`));
+    }
+
     say(
       `hex's records are in the object ${away.name} at ${away.url}; ${awayFile(dir)} points hex there, and hex.db is kept as ${MOVED}`,
     );

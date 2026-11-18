@@ -8,10 +8,11 @@ import { z } from "zod";
 
 import { File, messagesSince, open } from "../store.ts";
 import { until } from "../until.ts";
+import { CONTRACT } from "./domains.ts";
 import { LostError, RefusedError, UnreachedError } from "./errors.ts";
 import type { NewRow } from "./messages.ts";
 import { move } from "./move.ts";
-import { remote } from "./remote.ts";
+import { remote, unlease } from "./remote.ts";
 
 const KEY = "a key long enough that nobody guesses it";
 const HEX = join(import.meta.dir, "../..");
@@ -441,9 +442,13 @@ test("a hub that claims refuses every hub that claimed before it, a lease never 
   expect(await hook?.messages.deliver({ ...message, key: "telegram:-100:44", body: "hook" })).toBe(
     true,
   );
-  await plain?.claim();
+  expect(String(await thrown(plain?.claim()))).toContain("hex runs under lease 6");
+  expect(await second?.messages.untaken()).not.toHaveLength(0);
+  await unlease(dir);
+  await lease()?.claim();
   expect(await thrown(second?.messages.untaken())).toBeInstanceOf(LostError);
   await lease("1")?.claim();
+  expect(String(await thrown(lease("one")?.claim()))).toContain("not a whole number");
 }, 60_000);
 
 test("hex sql reads what only reads, and nothing it's given changes the object's settings", async () => {
@@ -587,3 +592,24 @@ test("a move rides out Cloudflare's own pages partway through, and the object ta
     await proxy.stop(true);
   }
 }, 120_000);
+
+test("the object says which hex's store it runs, as this checkout counts it", async () => {
+  const answer = z
+    .object({ contract: z.string() })
+    .parse(await (await fetch(`${url}/hex/version`, { headers: auth })).json());
+
+  expect(answer.contract).toBe(CONTRACT);
+});
+
+test("words a lost reply took mid-turn come back when the take is made again with the same time", async () => {
+  const store = remote(await movedInto("held"), QUICK);
+  const at = "2026-11-17T10:00:00.000Z";
+
+  await store?.messages.deliver(message);
+  await store?.messages.hold(message.key, "s-1");
+  await store?.messages.takeHeld(message.to, "s-1", at);
+
+  expect((await store?.messages.takeHeld(message.to, "s-1", at))?.map((row) => row.key)).toEqual([
+    message.key,
+  ]);
+}, 60_000);

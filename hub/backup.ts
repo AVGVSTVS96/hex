@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { besideOf } from "./beside.ts";
-import { open } from "./store.ts";
+import { open, unclaimed } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
 const QUIETEST_HOUR = 3;
@@ -28,7 +28,7 @@ export async function backup(
   rmSync(part, { force: true });
 
   try {
-    await open(storeDir).copy(part);
+    await unclaimed(storeDir).copy(part);
     const copy = new Database(part, { readonly: true });
     const { quick_check } = QuickCheck.parse(copy.query("pragma quick_check").get());
     copy.close();

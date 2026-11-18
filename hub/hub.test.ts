@@ -39,7 +39,7 @@ import {
   writable,
 } from "./hub.ts";
 import type { Call, ChannelServer, Hub, HubLine, Message, Permission } from "./hub.ts";
-import { landed, whenLost, whenMoved } from "./kept.ts";
+import { claimedAs, landed, whenLost, whenMoved } from "./kept.ts";
 import { pictureId } from "./pictures.ts";
 import { stamp } from "./start.ts";
 import * as stores from "./store.ts";
@@ -83,7 +83,11 @@ function refusal(name: string | symbol, args: unknown[]) {
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Every call the store's client makes, on any domain, answered as the outage says: a test seam over a client whose methods are a table built from names (store/wire.ts), so it reads them by name too. A store moved from answers nothing as it did.
-function answering<Domain extends object>(domain: Domain, movedFrom = false): Domain {
+function answering<Domain extends object>(
+  domain: Domain,
+  movedFrom = false,
+  claimed = true,
+): Domain {
   return new Proxy(domain, {
     get(target, name) {
       // oxlint-disable-next-line anti-slop/no-reflect-get -- any method of any domain, by name
@@ -95,11 +99,11 @@ function answering<Domain extends object>(domain: Domain, movedFrom = false): Do
 
       // oxlint-disable-next-line unicorn/no-instanceof-builtins -- as above
       if (!(value instanceof Function)) {
-        return answering(value, movedFrom);
+        return answering(value, movedFrom, claimed);
       }
 
       return async (...args: unknown[]) => {
-        const refusing = refusal(name, args);
+        const refusing = claimed || outage !== "lost" ? refusal(name, args) : undefined;
 
         if (refusing !== undefined && (outage !== "moved" || movedFrom)) {
           throw refusing;
@@ -120,7 +124,28 @@ function withOutages(dir: string): Store {
   return known;
 }
 
-await mock.module("./store.ts", () => ({ ...stores, open: withOutages }));
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A client that never claimed hex, which no tenure refuses.
+const unclaimedFirst = stores.unclaimed;
+const unclaimedWithOutages = (dir: string): Store => answering(unclaimedFirst(dir), false, false);
+
+await mock.module("./store.ts", () => ({
+  ...stores,
+  open: withOutages,
+  unclaimed: unclaimedWithOutages,
+}));
+
+const toldOwner: string[] = [];
+
+const ignoreLost = (): void => undefined;
+
+await mock.module("./notice.ts", () => ({
+  tellOwner: (text: string) => {
+    toldOwner.push(text);
+
+    return Promise.resolve(true);
+  },
+}));
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Once what the hub set going has ended: its commands to Claude, and its calls to the store, which a home across the network answers late (late.ts).
@@ -243,6 +268,8 @@ exit 0
 
 afterEach(() => {
   outage = undefined;
+  toldOwner.length = 0;
+  claimedAs(undefined);
   refusingOver = undefined;
   movedTo = undefined;
 
@@ -4849,10 +4876,11 @@ async function toolCall(thread: string, input: Record<string, string> = {}) {
       JSON.stringify({ session_id: SESSION, hook_event_name: "PostToolUse", ...input }),
     ]),
     stdout: "pipe",
-    env: { ...process.env, HEX_STORE: dir, HEX_THREAD: thread },
+    env: { ...process.env, HEX_STORE: dir, HEX_THREAD: thread, HEX_HUB: join(dir, "hub.sock") },
   });
 
   expect(await run.exited).toBe(0);
+  await settled();
 
   return (await new Response(run.stdout).text()).trim();
 }
@@ -6046,4 +6074,98 @@ test("a turn's last words a hook handed the hub during an outage keep the time i
       .messages.observe(SESSION, turnEnded, "chat:7")
       .map(({ key }) => key),
   ).toEqual(["terminal:2"]);
+});
+
+test("a hub that learns another machine holds hex still lands what it owed as fact, through a client that never claimed, and lets go of its own state", async () => {
+  await onCall();
+  outage = "unreached";
+  await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:80" });
+  await hub.sent("chat:7", { key: "reply-80", content: "on it" });
+  hub.register("chat:9", "New topic");
+  await settled();
+
+  const unlisten = whenLost(ignoreLost);
+  outage = "lost";
+
+  try {
+    const synced = await settles(hub.synced());
+    expect(synced.status === "rejected" && synced.reason instanceof LostError).toBe(true);
+    expect(keysKept()).toEqual(["telegram:1:80", "telegram:reply-80"]);
+    expect(registry()["chat:9"]).toBeUndefined();
+    expect(existsSync(join(dir, "owed.telegram.json"))).toBe(false);
+  } finally {
+    unlisten();
+  }
+});
+
+test("what a hub owed from before another hub held hex keeps its facts and lets go of its old threads", async () => {
+  await onCall();
+  claimedAs(4);
+  outage = "unreached";
+  await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:81" });
+  hub.register("chat:9", "Old topic");
+  await settled();
+  hub.close();
+  hangUpAll();
+
+  outage = undefined;
+  file(dir).threads.keep("telegram", { "chat:7": { name: "Desk anchors", session: "newer" } });
+  claimedAs(9);
+  await start();
+  await hub.synced();
+  await settled();
+  expect(keysKept()).toContain("telegram:1:81");
+  expect(registry()).toEqual({ "chat:7": { name: "Desk anchors", session: "newer" } });
+});
+
+test("a message hex's store refuses even as a note is owed, not dropped, and the owner hears once that the store refuses what hex writes", async () => {
+  const { received } = await onCall();
+  refusingOver = 0;
+
+  await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:82" });
+  await hub.deliver("chat:7", "Desk anchors", { ...message, content: "again", key: "1:83" });
+  await until(() => heard(received).some(({ content }) => content === "again"));
+  expect(await settles(hub.synced())).toMatchObject({ status: "rejected" });
+  expect(toldOwner).toHaveLength(1);
+  expect(toldOwner[0]).toContain("refuses what hex writes");
+
+  refusingOver = undefined;
+  await hub.synced();
+  expect(keysKept()).toEqual(["telegram:1:82", "telegram:1:83"]);
+});
+
+test("the owner's words a hook took for the session without the session hearing them go to it from memory as the turn ends", async () => {
+  await start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: 42 }],
+  });
+  const { received, send } = await session("chat:7");
+  await send({ type: "state", thread: "chat:7", busy: true });
+  await hub.deliver("chat:7", "Desk anchors", {
+    author: "owner",
+    content: "held",
+    meta: {},
+    key: "1:84",
+  });
+  await settled();
+  file(dir).messages.takeHeld("chat:7", SESSION);
+
+  await send({ type: "state", thread: "chat:7", busy: false });
+  await until(() => received.length);
+  await settled();
+  expect(heard(received).map((turn) => turn.content)).toEqual(["held"]);
+});
+
+test("a hub's spool gains a line for each write it owes rather than being written whole each time", async () => {
+  await onCall();
+  outage = "unreached";
+  await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:85" });
+  const spool = join(dir, "owed.telegram.json");
+  const { ino } = statSync(spool);
+  await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:86" });
+  await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:87" });
+  await settled();
+
+  expect(statSync(spool).ino).toBe(ino);
+  expect(readFileSync(spool, "utf-8").trim().split("\n")).toHaveLength(3);
 });

@@ -88,6 +88,40 @@ const exec = (sql: Storage["sql"], text: string, values: unknown[]) => {
   return values.length === 0 ? sql.exec(text) : sql.exec(cast, ...bind);
 };
 
+type Run = (
+  text: string,
+  ...values: unknown[]
+) => ReturnType<ReturnType<Storage["sql"]["exec"]>["toArray"]>;
+
+type HomeNow = NonNullable<z.infer<typeof HomeRow>>;
+
+function claimed(run: Run, now: HomeNow, claimant: string, lease: number | undefined) {
+  const before = Claimed.parse(run("select tenure from _claims where claimant = ?", claimant)[0]);
+
+  if (before !== undefined) {
+    return before.tenure === now.tenure
+      ? { tenure: now.tenure }
+      : { lost: `tenure ${before.tenure} no longer holds hex: tenure ${now.tenure} does` };
+  }
+
+  if (lease === undefined && now.lease > 0) {
+    return {
+      lost: `hex runs under lease ${now.lease}: start it with HEX_STORE_LEASE, or end the lease with hex store lease clear`,
+    };
+  }
+
+  if (lease !== undefined && lease < now.lease) {
+    return { lost: `lease ${lease} no longer holds hex: lease ${now.lease} does` };
+  }
+
+  const tenure = now.tenure + 1;
+  run("update _home set tenure = ?, lease = ?, served = 1", tenure, lease ?? 0);
+  run("insert into _claims (claimant, tenure) values (?, ?)", claimant, tenure);
+  run("delete from _claims where tenure <= ?", tenure - CLAIMS_KEPT);
+
+  return { tenure };
+}
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A step that arrives again, sent again after its answer was lost or held back by the network, has landed already.
 const landedBefore = (moving: Step | null, mark: Step | undefined) =>
@@ -252,26 +286,13 @@ export function recordsIn(storage: Storage, dir = "") {
         return { empty: "hex's store is empty: hex store move brings a hex.db into it" };
       }
 
-      const before = Claimed.parse(
-        run("select tenure from _claims where claimant = ?", claimant)[0],
-      );
+      return claimed(run, now, claimant, lease);
+    },
 
-      if (before !== undefined) {
-        return before.tenure === now.tenure
-          ? { tenure: now.tenure }
-          : { lost: `tenure ${before.tenure} no longer holds hex: tenure ${now.tenure} does` };
-      }
-
-      if (lease !== undefined && lease < now.lease) {
-        return { lost: `lease ${lease} no longer holds hex: lease ${now.lease} does` };
-      }
-
-      const tenure = now.tenure + 1;
-      run("update _home set tenure = ?, lease = ?, served = 1", tenure, lease ?? 0);
-      run("insert into _claims (claimant, tenure) values (?, ?)", claimant, tenure);
-      run("delete from _claims where tenure <= ?", tenure - CLAIMS_KEPT);
-
-      return { tenure };
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // The owner ends hex's lease, for a hex that no longer runs under a lease tool: a hub with no lease can claim it from then on.
+    unlease() {
+      run("update _home set lease = 0");
     },
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show

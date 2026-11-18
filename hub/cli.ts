@@ -10,7 +10,7 @@ import { history } from "./loaded.ts";
 import { holds, keysOf, problems, verdict } from "./notes.ts";
 import { busy, running, served, serving } from "./running.ts";
 import type { Session } from "./running.ts";
-import { asked, awayFile, messagesSince, open as openStore, sent } from "./store.ts";
+import { asked, awayFile, messagesSince, open as openStore, sent, unlease } from "./store.ts";
 import type { Row, Status, Store, Task, Thread } from "./store.ts";
 import { entry, render, waiting } from "./tasks.ts";
 import { zoneOf } from "./zone.ts";
@@ -42,6 +42,7 @@ const USAGE = `usage:
   hex recall <regex, in any case>
   hex sql '<a query, which can change nothing>'
   hex store copy <file>
+  hex store lease clear
   hex store move <the address of the Worker that takes hex's records> <the name of its object>, with its key in HEX_STORE_KEY
   hex watch`;
 
@@ -1068,6 +1069,17 @@ try {
 
     case "store": {
       const [what, to] = args;
+
+      if (what === "lease" && to === "clear") {
+        if (!existsSync(awayFile(state))) {
+          console.error("hex store lease: this hex's records are in hex.db, which has no lease");
+          process.exit(1);
+        }
+
+        await unlease(state);
+        console.log("hex's lease is cleared: a hub with no HEX_STORE_LEASE can take hex now");
+        break;
+      }
 
       if (what !== "copy" || !filled(to)) {
         usage();

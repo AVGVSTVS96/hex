@@ -191,6 +191,16 @@ case "${1:-}" in
       down "hex can't start on $(uname -n): $why."
       exit 1
     }
+    lease=$(. "$hex/bin/settings"; printf %s "${HEX_STORE_LEASE:-}")
+    case $lease in *[!0-9]*) down "hex can't start on $(uname -n): HEX_STORE_LEASE is $lease, not a whole number."; exit 1 ;; esac
+    # A hub that lost hex to another machine leaves hex stopped here, whatever starts it again, until `hex start`, or a
+    # start on a newer lease than the one it was lost under, which is the lease tool giving this machine hex again.
+    # state/lost holds that lease on its first line, then why.
+    lost="$home/state/lost"
+    if [ -e "$lost" ]; then
+      under=$(head -n 1 "$lost")
+      if [ -n "$lease" ] && { [ -z "$under" ] || [ "$lease" -gt "$under" ]; }; then rm -f "$lost"; else tail -n +2 "$lost" >&2; exit 3; fi
+    fi
     export HEX_DIR="$home" HEX_LAUNCHER="$hex/bin/session" HEX_NAME="${HEX_NAME:-hex}"
     # The hex whose plugin and launcher sessions start from: a change to what they read only at start renews them at their next rest.
     export HEX_STARTUP="$hex"
@@ -248,7 +258,12 @@ case "${1:-}" in
       fi
       # The store refused the hub for an older tenure: another machine holds hex, so a hub here would fight it. hex stays
       # stopped here, with the same code, which hex.service doesn't restart.
-      [ "$exited" != 3 ] || { down "hex stopped on $(uname -n): hex's store says another machine holds hex now, so its hub stays stopped here. If no other machine runs hex, start it here again with \`hex start\`."; rm -f "$pidfile"; exit 3; }
+      if [ "$exited" = 3 ]; then
+        { echo "$lease"; echo "hex stopped on $(uname -n): its store gave hex to another hub, so it stays stopped here, whatever starts it, until \`hex start\` (the hub's log says why). Start it here again only if no other machine runs hex; if hex no longer runs under a lease, run \`hex store lease clear\` first."; } > "$lost"
+        down "$(tail -n +2 "$lost")"
+        rm -f "$pidfile"
+        exit 3
+      fi
       first=$second second=$third third=$(date +%s)
       if [ -n "$first" ] && [ $((third - first)) -le 60 ]; then
         # A store that doesn't answer stops a hub whatever its commit, so hex stays on the commit and tries again.
@@ -264,6 +279,7 @@ case "${1:-}" in
     done
     ;;
   start)
+    rm -f "$home/state/lost"
     running && exit 0
     if own_unit; then systemctl --user start --no-block hex.service; echo "hex started, as hex.service"; exit 0; fi
     nohup "$0" run >> "$home/state/hub.log" 2>&1 &
@@ -356,6 +372,9 @@ case "${1:-}" in
       where=$(elsewhere) || moved=$?
       [ "$moved" != 2 ] || { echo "hex is moving between machines: move its records once it's done, from where it runs" >&2; exit 1; }
       [ "$moved" != 0 ] || { echo "hex runs on $where, whose records are the newest: stop it there and move them from there" >&2; exit 1; }
+      # A file kept from an earlier move stays, under the time this one set it aside.
+      kept="$home/state/hex.db.moved"
+      [ ! -e "$kept" ] || mv "$kept" "$kept.$(date +%Y%m%d%H%M%S)"
       # The key `hex store deploy` made is in .env, as HEX_STORE_KEY.
       . "$hex/bin/settings"
       exec bun "$hex/hub/store/move.ts" "$home/state" "${3:-}" "${4:-}"
@@ -383,6 +402,10 @@ case "${1:-}" in
     ;;
   status)
     if running; then echo "hub: running (pid $(cat "$pidfile"))"; else echo "hub: stopped"; fi
+    [ ! -e "$home/state/lost" ] || echo "hub: stays stopped, since another machine took hex (\`hex start\` starts it)"
+    if [ -e "$store" ]; then
+      if version=$(answers < "$store"); then echo "store: $(jq -r .url "$store") answers, as $version"; else echo "store: $(jq -r .url "$store") doesn't answer, so the hub waits for it"; fi
+    fi
     bun "$hex/hub/cli.ts" "$home/state" running || echo "sessions: hex running failed"
     units=$(systemctl --user list-units --type=service --state=running --no-legend --plain 2>/dev/null | awk '{print $1}')
     if [ -n "$units" ]; then
@@ -443,6 +466,8 @@ case "${1:-}" in
       echo "wrote $managed"
     fi
     "$hex/bin/trust" "$home"
+    # Setting a machine up to run hex is starting it here, as `hex start` is.
+    rm -f "$home/state/lost"
     if systemd; then
       link_units
       # hex.service runs ~/hex; a folder elsewhere gets a drop-in that runs it instead.
@@ -543,6 +568,10 @@ case "${1:-}" in
         || fix "services stop when you log out: run \`sudo loginctl enable-linger $(id -un)\`"
       systemctl is-active -q systemd-oomd.service && ok "systemd-oomd stops what stalls the machine on memory" \
         || fix "nothing stops a job that runs the machine out of memory: install systemd-oomd and run \`sudo systemctl enable --now systemd-oomd\`"
+    fi
+    if [ -e "$store" ]; then
+      version=$(answers < "$store") && ok "hex's records at $(jq -r .url "$store") answer, as $version" \
+        || fix "hex's records at $(jq -r .url "$store") don't answer, so the hub waits for them: check the address, the key and the Worker (INSTALL.md, On more than one machine)"
     fi
     if running; then
       ok "hub running (pid $(cat "$pidfile"))"
