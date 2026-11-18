@@ -144,6 +144,8 @@ hex runs on one machine at a time: a hub that starts takes hex, and the one that
 
 `.hex/bin/update` runs every morning from `schedules.json`. It pulls hex once `bin/check` passes on the new version, and restarts the hub and hex's sessions. When the records are in a Durable Object, it first deploys the store the new version is built with, if it differs, and goes on only once the object `state/store.json` names answers as that store, which it has restart on the new code at once. If the object still answers as the store before after five and a half minutes, past the longest Cloudflare would put the restart off, the new one stays deployed and hex ships at the next update; if it doesn't answer at all, the store before it goes back. Either way hex stays as it was until then. Nothing deploys over a store that doesn't answer, or that was built from a commit made after the new version's.
 
+A version that starts but misbehaves goes back with `~/hex/.hex/bin/hex rollback <commit>`, naming the commit it should go back to: in seconds, with no check and no store deploy, since an older hex runs on a newer store. It runs where hex runs, restarts the hub once no call is live, tells General, and `bin/update` won't take the commit it left again until main moves past it, so revert that commit on main next.
+
 ## Backups
 
 Every night at 3:00 on their clock, General's hub copies hex's records (`state/hex.db`, or what the Durable Object holds) to `state/backups/hex-<date>.db`, and to `~/hex-backups` on hex's computer when `HEX_COMPUTER` names one, keeping the last seven in each place. A night that fails tells General. To bring one back:
