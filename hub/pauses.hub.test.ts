@@ -239,6 +239,32 @@ test("a session already paused on a refusal when the hub connects to it, its own
   expect(bgStarts()).toEqual([]);
 });
 
+test("a paused session whose job record doesn't say what it waits on, stopped with its owner's message unanswered, has its chat told by the stop", async () => {
+  bound("chat:7");
+  file(dir).messages.deliver({
+    key: "telegram:1:5",
+    to: "chat:7",
+    from: "telegram",
+    author: "owner",
+    body: "jamming?",
+    meta: {},
+  });
+  file(dir).turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
+  file(dir).messages.take("telegram:1:5", SESSION);
+  await start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION, model: "fable" } },
+    agents: [{ sessionId: SESSION, pid: EXITED, status: "waiting" }],
+  });
+  await session("chat:7");
+  await until(() => calls().some((each) => each[0] === "stop"));
+  expect(failures).toEqual([
+    [
+      "chat:7",
+      "its session stopped on a question only its terminal can answer, so your message got no answer. Your next message starts it again.",
+    ],
+  ]);
+});
+
 test("a turn Claude Code paused on a dialog isn't given to the thread's next session when the paused one ends", async () => {
   await start({ reconnect: 50 });
   await hub.deliver("chat:7", "Desk anchors", message);

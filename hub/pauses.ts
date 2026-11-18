@@ -98,7 +98,9 @@ export function sessionPauses({
       return;
     }
 
-    process.stderr.write(`hub: ${thread}'s session paused mid-turn: ${needs}\n`);
+    process.stderr.write(
+      `hub: ${thread}'s session paused mid-turn: ${needs ?? "Claude lists it as waiting"}\n`,
+    );
     void turnEnded(thread);
     const refusal = claude.refused(claude.transcript(threads.cwd(thread), session));
     const { model } = threads.of(thread);
@@ -107,7 +109,7 @@ export function sessionPauses({
       thread,
       refusal
         ? `the model's safety filter flagged your message${present(refusal.category) ? ` as ${refusal.category}` : ""}, so it got no answer. Your next message starts this topic again from just before it, still on ${model ?? "the same model"}, with the flagged message left out: send what you need in other words.`
-        : `its session stopped on a question only its terminal can answer ("${needs}"), so your message got no answer. Your next message starts it again.`,
+        : `its session stopped on a question only its terminal can answer${present(needs) ? ` ("${needs}")` : ""}, so your message got no answer. Your next message starts it again.`,
       true,
     );
   }
