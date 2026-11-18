@@ -539,7 +539,15 @@ test("a fresh thread's warm session that started with what the hub no longer giv
 test("a warm DM session the last hub started but never saved takes the next message, and hands over in its turn, instead of a second session", async () => {
   bound("dm", NEXT, "job99999");
   await dm(
-    [{ id: "job99999", sessionId: NEXT, pid: 42, status: "idle", startedAt: clock.now() + 60_000 }],
+    [
+      {
+        id: "job99999",
+        sessionId: NEXT,
+        pid: EXITED,
+        status: "idle",
+        startedAt: clock.now() + 60_000,
+      },
+    ],
     { reconnect: 60_000 },
   );
   await hub.deliver("dm", "DM", message);
@@ -553,5 +561,8 @@ test("a warm DM session the last hub started but never saved takes the next mess
     "stop",
     NEXT.slice(0, 8),
   ]);
-  expect(calls().some((each) => each[0] === "--bg")).toBe(false);
+
+  const made = calls().map((each) => each[0]);
+
+  expect(made.slice(0, made.indexOf("stop"))).not.toContain("--bg");
 });
