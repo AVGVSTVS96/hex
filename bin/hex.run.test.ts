@@ -432,7 +432,9 @@ test("when the commit hex went back to can't start, hex stays down and says so, 
 
   const rolled = rollback(crashing, { HEX_ROLLBACK_WAIT: "20" });
   expect(rolled.exitCode).toBe(1);
-  expect(rolled.stderr.toString()).toContain("no hub is up on it: none stays up");
+  expect(rolled.stderr.toString()).toContain(
+    "no hub is up on it: what its hub printed is in the hub's log",
+  );
   expect(await running.exited).toBe(1);
   expect(await new Response(running.stderr).text()).toContain(
     "there's no earlier hex to go back to",
@@ -523,7 +525,7 @@ test("an update that asked before a rollback asks again just before it merges, s
   writeFileSync(join(home, "go"), "");
   expect(await update.exited).toBe(1);
   expect(await new Response(update.stdout).text()).toContain(
-    `not updated: hex went back from ${onTop.slice(0, 7)}`,
+    `not updated: hex went back from ${onTop.slice(0, 7)}, or from a commit it's built on, so hex stays on ${before.slice(0, 7)}`,
   );
   expect(git("rev-parse", "HEAD")).toBe(before);
 });

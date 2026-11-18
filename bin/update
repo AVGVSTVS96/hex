@@ -54,8 +54,9 @@ fi
 # hex rollback moves the checkout under, since a rollback may come while the check runs or sessions finish.
 leave_if_refused() {
   "$hex/bin/hex" refused "$incoming" >/dev/null || return 0
-  echo "not updated: hex went back from $(git rev-parse --short "$incoming"), or from a commit it's built on, so hex stays on $before until main moves past it"
-  [ "$mode" != --when-quiet ] || tell all "didn't ship: hex went back from $(git rev-parse --short "$incoming"), or from a commit it's built on, so hex stays on $before until main moves past it"
+  why="hex went back from $(git rev-parse --short "$incoming"), or from a commit it's built on, so hex stays on $(git rev-parse --short HEAD) until main moves past it"
+  echo "not updated: $why"
+  [ "$mode" != --when-quiet ] || tell all "didn't ship: $why"
   exit 1
 }
 leave_if_refused

@@ -168,9 +168,6 @@ restart_hub() {
   fi
 }
 
-# The hub hex runs here now, if any.
-hub_pid() { ! running || pgrep -P "$(cat "$pidfile")" -f hub/serve.ts || :; }
-
 # The channels hex ships with a server of their own, for Claude Code's managed settings to allow.
 channels() { for mcp in "$hex"/channels/*/.mcp.json; do basename "$(dirname "$mcp")"; done; }
 
@@ -388,19 +385,16 @@ case "${1:-}" in
       exit 0
     fi
     # From here on, run again, it finishes a rollback that stopped half way: HEAD@{1} is the commit hex left.
-    was=$(hub_pid)
+    was=$(! running || pgrep -P "$(cat "$pidfile")" -f hub/serve.ts || :)
     restart_hub "$(git -C "$hex" rev-parse -q --verify 'HEAD@{1}')" || { echo "hex rollback: hex's code is on $(described "$to"), but no hub restarted on it (above). \`hex rollback $(git -C "$hex" rev-parse --short "$to")\` again finishes the rollback." >&2; exit 1; }
     # A hub starts in seconds, and General connects to it in a few more; past two minutes, what's in the way is said.
     waited=0
     until [ "$(cat "$home/state/good" 2>/dev/null)" = "$to" ] && running; do
       if [ "$waited" -ge "${HEX_ROLLBACK_WAIT:-120}" ]; then
-        now=$(hub_pid)
         if [ -n "$was" ] && kill -0 "$was" 2>/dev/null; then
           why="the hub from before (pid $was) hasn't stopped: it waits for a live call to end, or its stop hangs, and \`kill $was\` ends it"
-        elif [ -n "$now" ]; then
-          why="a hub runs it (pid $now), but General hasn't connected to that hub"
         else
-          why="none stays up, and what it printed is in the hub's log (state/hub.log, or the journal of the unit that runs hex), and \`hex rollback <an earlier commit>\` goes further back"
+          why="what its hub printed is in the hub's log (state/hub.log, or the journal of the unit that runs hex), and \`hex rollback <an earlier commit>\` goes further back"
         fi
         echo "hex rollback: hex's code is on $(described "$to"), but after ${waited}s no hub is up on it: $why. \`hex rollback $(git -C "$hex" rev-parse --short "$to")\` again finishes the rollback." >&2
         exit 1
