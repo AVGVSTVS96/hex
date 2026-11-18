@@ -595,6 +595,7 @@ exit 0
 
     async function ended() {
       const ending = connect(join(state, "hub.sock"));
+      sockets.push(ending);
       await once(ending, "connect");
       ending.end(`${JSON.stringify({ type: "state", thread, busy: false })}\n`);
       await once(ending, "close");
