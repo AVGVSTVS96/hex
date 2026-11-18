@@ -5297,7 +5297,12 @@ test("a session started before hex kept messages has the hub take them for it", 
   const { HEX_STORE: _store, ...env } = process.env;
 
   const hook = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "busy"], {
-    env: { ...env, HEX_HUB: join(dir, "hub.sock"), HEX_THREAD: "chat:7" },
+    env: {
+      ...env,
+      HEX_DIR: join(dir, "hex"),
+      HEX_HUB: join(dir, "hub.sock"),
+      HEX_THREAD: "chat:7",
+    },
     stdin: new Blob([JSON.stringify({ prompt, session_id: SESSION })]),
   });
 
@@ -5795,6 +5800,7 @@ test("the owner's words held for a turn go to the session before a message that 
   });
 
   await Promise.all([ending, after]);
+  await until(() => received.length);
   await settled();
   expect(heard(received).map((turn) => turn.content)).toEqual(["held"]);
 });

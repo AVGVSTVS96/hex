@@ -270,7 +270,7 @@ test("a commit whose hub can't start goes back to the last one General connected
     `not updated: hex ${bad.slice(0, 7)} couldn't start here`,
   );
   expect(git("rev-parse", "HEAD")).toBe(good);
-}, 20_000);
+});
 
 test("a hub that keeps exiting while the store holding its records doesn't answer isn't taken for a bad commit: hex stays on it and keeps starting the hub", async () => {
   const good = commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
@@ -298,7 +298,7 @@ test("a hub that keeps exiting while the store holding its records doesn't answe
   expect(await new Response(running.stderr).text()).toContain(
     `can't reach its records at ${url}: its hub keeps starting again, on the same commit`,
   );
-}, 30_000);
+});
 
 test("a hub that lost hex to another machine stays stopped: hex exits with its code, which hex.service doesn't restart, and isn't taken for a bad commit", async () => {
   const good = commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
@@ -394,7 +394,7 @@ test("a restart in place starts the hub again even when the login shell leaves s
   } finally {
     Bun.spawnSync(["kill", ...readFileSync(join(home, "strays"), "utf-8").trim().split("\n")]);
   }
-}, 30_000);
+});
 
 test("hex without flock says so and stops as failed", async () => {
   commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
@@ -532,7 +532,7 @@ test("on a store that answers, a commit whose hub can't start goes back to the l
   } finally {
     await store.stop(true);
   }
-}, 30_000);
+});
 
 const curlThatRecordsWhatGeneralIsTold = () => {
   const bin = join(home, "fake-bin");
@@ -617,4 +617,4 @@ test("a hub that can't start, with no earlier hex to go back to, stops hex as fa
   const { PATH, read } = curlThatRecordsWhatGeneralIsTold();
   expect(await run({ PATH }).exited).toBe(1);
   expect(read()).toContain("its hub exited three times within a minute");
-}, 20_000);
+});

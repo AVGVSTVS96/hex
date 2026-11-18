@@ -114,7 +114,7 @@ function pointedAt(name: string, address = url) {
 
 beforeAll(async () => {
   url = await runtime({ KEY, VERSION: "v-test" });
-}, 120_000);
+});
 
 afterAll(() => {
   for (const running of runtimes) {
@@ -142,7 +142,7 @@ test("a Worker with no key, or one too short to guess, answers no one", async ()
 
     expect(statuses).toEqual([503, 503, 503]);
   }
-}, 120_000);
+});
 
 test("a wrong key gets 401, and an empty object answers its version with no migrations", async () => {
   const wrong = await fetch(`${url}/hex/sql`, {
@@ -287,7 +287,7 @@ test("a move carries every row, a lost last reply is finished by running it agai
   } finally {
     await proxy.stop(true);
   }
-}, 120_000);
+});
 
 test("the runtime answers a watch socket's ping without waking the object, and a watch with heartbeats hears each write", async () => {
   const dir = pointedAt("watching");
@@ -330,7 +330,7 @@ test("the runtime answers a watch socket's ping without waking the object, and a
   stop?.();
 
   expect([before, rang]).toEqual([1, 2]);
-}, 30_000);
+});
 
 test("numbers bound as the runtime binds them, as doubles, still find their rows", async () => {
   const store = remote(pointedAt("numbers"));
@@ -383,7 +383,7 @@ test("one call whose connection resets fails alone, and the calls behind it, her
   } finally {
     await front.stop();
   }
-}, 60_000);
+});
 
 const progress: string[] = [];
 
@@ -420,7 +420,7 @@ test("the store says which no it gave: a refused call is refused, a wrong key or
   await store?.synced();
   expect(await thrown(remote(wrong, QUICK)?.messages.untaken())).toBeInstanceOf(UnreachedError);
   expect(await thrown(remote(empty, QUICK)?.messages.untaken())).toBeInstanceOf(UnreachedError);
-}, 60_000);
+});
 
 test("a tenure the object didn't give out gets the object's 409, and never wedges it", async () => {
   const dir = await movedInto("tenures");
@@ -438,7 +438,7 @@ test("a tenure the object didn't give out gets the object's 409, and never wedge
 
   expect((await fetch(`${url}/tenures/version`, { headers: auth })).status).toBe(200);
   expect(await remote(dir, QUICK)?.messages.untaken()).toEqual([]);
-}, 60_000);
+});
 
 test("a hub that claims refuses every hub that claimed before it, a lease never goes back, and a hook is never refused", async () => {
   const dir = await movedInto("claims");
@@ -478,7 +478,7 @@ test("a hub that claims refuses every hub that claimed before it, a lease never 
   expect(await thrown(second?.messages.untaken())).toBeInstanceOf(LostError);
   await lease("1")?.claim();
   expect(String(await thrown(lease("one")?.claim()))).toContain("not a whole number");
-}, 60_000);
+});
 
 test("hex sql reads what only reads, and nothing it's given changes the object's settings", async () => {
   for (const text of [
@@ -523,7 +523,7 @@ test("whole numbers keep their type in the object, a late message keeps its time
       ),
     ),
   ).toContain("messages_in_time");
-}, 60_000);
+});
 
 test("the object keeps a value or row of 8 MiB and refuses one past it, as the stand-in does", async () => {
   const store = remote(await movedInto("sizes"), { ...QUICK, answerWithin: 60_000 });
@@ -549,7 +549,7 @@ test("the object keeps a value or row of 8 MiB and refuses one past it, as the s
       }),
     ),
   ).toBeInstanceOf(RefusedError);
-}, 120_000);
+});
 
 test("a process that finds the object not answering tells the next, which fails at once", async () => {
   const dir = pointedAt("told", `http://127.0.0.1:${await freePort()}`);
@@ -620,7 +620,7 @@ test("a move rides out Cloudflare's own pages partway through, and the object ta
   } finally {
     await proxy.stop(true);
   }
-}, 120_000);
+});
 
 test("the object says what its store offers, the migrations and methods this checkout has", async () => {
   const answer = z
@@ -641,7 +641,7 @@ test("words a lost reply took mid-turn come back when the take is made again wit
   expect((await store?.messages.takeHeld(message.to, "s-1", at))?.map((row) => row.key)).toEqual([
     message.key,
   ]);
-}, 60_000);
+});
 
 const claimNeeding = async (claimant: string, needs: typeof OFFERS) =>
   await fetch(`${url}/contracts/claim`, {
@@ -665,7 +665,7 @@ test("a claim from a hex newer than the object's store is answered as another st
   const older = await claimNeeding("older", { migrations: 1, methods: OFFERS.methods.slice(1) });
   expect(older.status).toBe(200);
   expect(await older.json()).toEqual({ value: 1 });
-}, 60_000);
+});
 
 test("hex store back, run as its command, brings the object's rows home into hex.db, and the hub that held hex is lost", async () => {
   const dir = await movedInto("back");
@@ -687,7 +687,7 @@ test("hex store back, run as its command, brings the object's rows home into hex
   expect((await Array.fromAsync(messagesSince(open(dir)))).flat().map((row) => row.key)).toEqual([
     message.key,
   ]);
-}, 60_000);
+});
 
 test("an object whose store's code doesn't fit its own records answers every call alike, never as a bad row", async () => {
   const dir = join(scratch, "unfit-state");
@@ -703,7 +703,7 @@ test("an object whose store's code doesn't fit its own records answers every cal
   const failed = await thrown(store?.messages.hold(message.key, "s-1"));
   expect(failed).toBeInstanceOf(UnreachedError);
   expect(String(failed)).toContain("held_for");
-}, 60_000);
+});
 
 test("the log of large messages is read in pages of about 4 MB", async () => {
   const store = remote(await movedInto("pages"), { ...QUICK, answerWithin: 60_000 });
@@ -718,4 +718,4 @@ test("the log of large messages is read in pages of about 4 MB", async () => {
 
   const read = store === undefined ? [] : await Array.fromAsync(messagesSince(store));
   expect(read.map((page) => page.length)).toEqual([3, 3, 1]);
-}, 120_000);
+});

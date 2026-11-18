@@ -1,3 +1,7 @@
 [install]
 linker = "isolated"
 exact = true
+
+[test]
+preload = ["./tools/sandbox.ts"]
+pathIgnorePatterns = ["worktrees/**", ".claude/**"]

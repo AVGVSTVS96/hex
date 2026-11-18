@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import {
   chmodSync,
   cpSync,
@@ -34,8 +34,6 @@ const launches = join(home, "launches.jsonl");
 const folders = join(home, "folders.txt");
 const here = hostname();
 const clockTime = String.raw`[A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2}\s[AP]M [A-Z][A-Za-z0-9+:-]+`;
-
-setDefaultTimeout(30_000);
 
 const env = Object.fromEntries(
   Object.entries(process.env).filter(

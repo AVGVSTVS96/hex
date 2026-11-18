@@ -76,7 +76,7 @@ if [ "$(git rev-parse HEAD)" = "$incoming" ]; then
   exit 0
 fi
 # The check gets a folder of its own outside hex's, where no agent takes it for a checkout to work in, laid out
-# like a hex folder, since tests write a state folder beside the checkout.
+# like a hex folder with nothing beside the checkout, so the check sees a test that writes there.
 check="${XDG_CACHE_HOME:-$HOME/.cache}/hex-check-$(printf %s "$hex" | cksum | cut -d' ' -f1)/.hex"
 clean() {
   rm -rf "$(dirname "$check")"

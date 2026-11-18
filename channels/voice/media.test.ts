@@ -95,30 +95,22 @@ test("what a call was sent is named in a few words", () => {
   expect(counted([photo, photo, video])).toBe("2 photos and a video");
 });
 
-test.skipIf(!ffmpeg)(
-  "a clip becomes stills across it and the words said in it",
-  async () => {
-    const item = await media.add("video/mp4", await clip(12, true));
-    expect(item).toMatchObject({ kind: "video", seconds: 12, words: "look at the crack here" });
-    expect(item.images.map((image) => existsSync(image))).toEqual([true, true]);
-    expect(heard).toHaveLength(1);
-    expect(heard.map((recording) => existsSync(recording))).toEqual([false]);
-    expect(line(item)).toBe('(video 0:12, 2 stills; said in it: "look at the crack here")');
-  },
-  30_000,
-);
+test.skipIf(!ffmpeg)("a clip becomes stills across it and the words said in it", async () => {
+  const item = await media.add("video/mp4", await clip(12, true));
+  expect(item).toMatchObject({ kind: "video", seconds: 12, words: "look at the crack here" });
+  expect(item.images.map((image) => existsSync(image))).toEqual([true, true]);
+  expect(heard).toHaveLength(1);
+  expect(heard.map((recording) => existsSync(recording))).toEqual([false]);
+  expect(line(item)).toBe('(video 0:12, 2 stills; said in it: "look at the crack here")');
+});
 
-test.skipIf(!ffmpeg)(
-  "a clip without sound says so, and nothing is transcribed",
-  async () => {
-    const item = await media.add("video/mp4", await clip(3, false));
-    expect(item).toMatchObject({ seconds: 3, mute: true });
-    expect(item.images).toHaveLength(1);
-    expect(heard).toEqual([]);
-    expect(line(item)).toBe("(video 0:03, 1 still, no sound)");
-  },
-  30_000,
-);
+test.skipIf(!ffmpeg)("a clip without sound says so, and nothing is transcribed", async () => {
+  const item = await media.add("video/mp4", await clip(3, false));
+  expect(item).toMatchObject({ seconds: 3, mute: true });
+  expect(item.images).toHaveLength(1);
+  expect(heard).toEqual([]);
+  expect(line(item)).toBe("(video 0:03, 1 still, no sound)");
+});
 
 test.skipIf(!ffmpeg)("a file that isn't the video it says leaves nothing behind", async () => {
   const refused = await media.add("video/mp4", new Blob(["not a video"])).then(
