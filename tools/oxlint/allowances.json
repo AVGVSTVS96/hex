@@ -139,7 +139,7 @@
     "hub/threads.ts": 5,
     "hub/through.ts": 1,
     "hub/transcripts.test.ts": 5,
-    "hub/transcripts.ts": 45,
+    "hub/transcripts.ts": 43,
     "hub/turns.ts": 3,
     "hub/waiting.ts": 14,
     "tools/sandbox.ts": 3
