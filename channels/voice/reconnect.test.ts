@@ -438,7 +438,7 @@ async function ends(engine: Engine) {
   return await engine.call();
 }
 
-test("hanging up while the connection to the call is coming back ends the call once it is back", async () => {
+test.concurrent("hanging up while the connection to the call is coming back ends the call once it is back", async () => {
   await using engine = await appCall();
   await started(engine);
   await engine.drop();
@@ -450,7 +450,7 @@ test("hanging up while the connection to the call is coming back ends the call o
   expect(engine.closes).toEqual([`${ID} close-you-app`]);
 });
 
-test("hanging up a new call before its connection has opened ends it once open", async () => {
+test.concurrent("hanging up a new call before its connection has opened ends it once open", async () => {
   await using engine = await appCall();
   engine.hold();
   expect(
@@ -469,7 +469,7 @@ test("hanging up a new call before its connection has opened ends it once open",
   expect(engine.closes).toEqual([`${ID} close-you-app`]);
 });
 
-test("a call hung up again or replaced before OpenAI says it closed gets a close each time, and ends by the first hang-up", async () => {
+test.concurrent("a call hung up again or replaced before OpenAI says it closed gets a close each time, and ends by the first hang-up", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.holdAcks();
@@ -494,7 +494,7 @@ test("a call hung up again or replaced before OpenAI says it closed gets a close
   ]);
 });
 
-test("a hang-up sent on a connection that drops before OpenAI says it closed goes out again once the connection is back", async () => {
+test.concurrent("a hang-up sent on a connection that drops before OpenAI says it closed goes out again once the connection is back", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.holdAcks();
@@ -507,7 +507,7 @@ test("a hang-up sent on a connection that drops before OpenAI says it closed goe
   expect(engine.closes).toEqual([`${ID} close-you-app`, `${ID} close-you-app`]);
 });
 
-test("a call hung up while its connection comes back and then replaced is closed on the reattach that opens late, too", async () => {
+test.concurrent("a call hung up while its connection comes back and then replaced is closed on the reattach that opens late, too", async () => {
   await using engine = await appCall();
   await started(engine);
   await engine.drop();
@@ -527,7 +527,7 @@ test("a call hung up while its connection comes back and then replaced is closed
   expect(engine.closes).toEqual([`${ID} close-you-app`, `${ID} close-you-app`]);
 });
 
-test("OpenAI closing a call on a later hang-up's close still records the first hang-up", async () => {
+test.concurrent("OpenAI closing a call on a later hang-up's close still records the first hang-up", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.holdAcks();
@@ -538,7 +538,7 @@ test("OpenAI closing a call on a later hang-up's close still records the first h
   expect(await ends(engine)).toMatchObject({ end: "hex", reason: "close_requested" });
 });
 
-test("a call a new one replaces before its connection opened is still closed", async () => {
+test.concurrent("a call a new one replaces before its connection opened is still closed", async () => {
   await using engine = await appCall();
   engine.hold();
 
@@ -558,7 +558,7 @@ test("a call a new one replaces before its connection opened is still closed", a
   expect(await engine.call()).toMatchObject({ end: "you", reason: "moved to a new call" });
 });
 
-test("a hung-up call a new one replaces before its connection opened ends as hung up", async () => {
+test.concurrent("a hung-up call a new one replaces before its connection opened ends as hung up", async () => {
   await using engine = await appCall();
   engine.hold();
 
@@ -579,7 +579,7 @@ test("a hung-up call a new one replaces before its connection opened ends as hun
   expect(await engine.call()).toMatchObject({ end: "you", reason: "close_requested" });
 });
 
-test("hanging up a call the engine is attaching back to after a restart ends it once attached, from the app or from hex", async () => {
+test.concurrent("hanging up a call the engine is attaching back to after a restart ends it once attached, from the app or from hex", async () => {
   const ways = [
     { hangUp: (engine: Engine) => engine.hangUp(), end: "you", close: "close-you-app" },
     { hangUp: (engine: Engine) => engine.tool("hang_up"), end: "hex", close: "close_hex_" },
@@ -604,7 +604,7 @@ test("hanging up a call the engine is attaching back to after a restart ends it 
   }
 });
 
-test("a call a new one replaces while the engine attaches back to it after a restart ends then, and is closed once attached", async () => {
+test.concurrent("a call a new one replaces while the engine attaches back to it after a restart ends then, and is closed once attached", async () => {
   await using engine = await appCall({ callStillGoingAtStart: true });
   await engine.attaching();
   expect(
@@ -633,7 +633,7 @@ test("a call a new one replaces while the engine attaches back to it after a res
   ).toEqual([`${ID} ended`, "renew", `${ID}-1 told`]);
 });
 
-test("work sent while the connection to the call is coming back still goes out and is followed", async () => {
+test.concurrent("work sent while the connection to the call is coming back still goes out and is followed", async () => {
   await using engine = await appCall();
   await started(engine);
   await engine.drop();
@@ -661,7 +661,7 @@ test("work sent while the connection to the call is coming back still goes out a
   ]);
 });
 
-test("a say the voice never confirms gives the voice session an answer instead of holding its turn", async () => {
+test.concurrent("a say the voice never confirms gives the voice session an answer instead of holding its turn", async () => {
   await using engine = await appCall();
   await started(engine);
   const asked = Date.now();
@@ -671,7 +671,7 @@ test("a say the voice never confirms gives the voice session an answer instead o
   expect((await engine.tool("note", { text: "still here" })).result).toBe("noted");
 });
 
-test("a handoff id hex copied wrong reaches the voice as the handoff it nearly matches, or as none, since the voice rejects an unknown one", async () => {
+test.concurrent("a handoff id hex copied wrong reaches the voice as the handoff it nearly matches, or as none, since the voice rejects an unknown one", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.send({
@@ -691,7 +691,7 @@ test("a handoff id hex copied wrong reaches the voice as the handoff it nearly m
   ]);
 });
 
-test("an answer waits for the voice to take up what the caller said after the handoff, so those words still get handed off", async () => {
+test.concurrent("an answer waits for the voice to take up what the caller said after the handoff, so those words still get handed off", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.send({
@@ -721,7 +721,7 @@ test("an answer waits for the voice to take up what the caller said after the ha
   expect(engine.handoffs.at(-1)).toBe("d1");
 });
 
-test("an answer goes once the caller has been quiet a while, even when the voice never takes up their newest words", async () => {
+test.concurrent("an answer goes once the caller has been quiet a while, even when the voice never takes up their newest words", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.confirmAnswers();
@@ -740,7 +740,7 @@ test("an answer goes once the caller has been quiet a while, even when the voice
   expect(Date.now() - asked).toBeLessThan(5000);
 });
 
-test("an answer written before a send failed comes back unsaid with the failure, so the voice never says it went", async () => {
+test.concurrent("an answer written before a send failed comes back unsaid with the failure, so the voice never says it went", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.confirmAnswers();
@@ -765,7 +765,7 @@ test("an answer written before a send failed comes back unsaid with the failure,
   expect(engine.handoffs.length).toBe(sent + 1);
 });
 
-test("the same answer sent twice in a row reaches the voice once", async () => {
+test.concurrent("the same answer sent twice in a row reaches the voice once", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.confirmAnswers();
@@ -779,7 +779,7 @@ test("the same answer sent twice in a row reaches the voice once", async () => {
   expect(engine.handoffs.length).toBe(sent + 1);
 });
 
-test("a task change reaches the voice as background, since it reads a bare one aloud", async () => {
+test.concurrent("a task change reaches the voice as background, since it reads a bare one aloud", async () => {
   await using engine = await appCall();
   await started(engine);
   await engine.tool("task", { id: "build", state: "running", text: "the build" });
@@ -788,7 +788,7 @@ test("a task change reaches the voice as background, since it reads a bare one a
   );
 });
 
-test("a photo sent during the call shows in its transcript, reaches hex to look at, and has the voice hand off", async () => {
+test.concurrent("a photo sent during the call shows in its transcript, reaches hex to look at, and has the voice hand off", async () => {
   await using engine = await appCall();
 
   const png = await fetch(`${engine.base}/media`, {
@@ -893,7 +893,7 @@ function stream(engine: Engine, audio: () => string) {
   };
 }
 
-test("hex hangs up a moment after the voice goes quiet, though its audio streams silence the whole call", async () => {
+test.concurrent("hex hangs up a moment after the voice goes quiet, though its audio streams silence the whole call", async () => {
   await using engine = await appCall();
   await started(engine);
   let talking = true;
@@ -907,7 +907,7 @@ test("hex hangs up a moment after the voice goes quiet, though its audio streams
   expect(Date.now() - asked).toBeLessThan(5000);
 });
 
-test("a handoff the caller keeps talking past waits for their pause and carries all of it", async () => {
+test.concurrent("a handoff the caller keeps talking past waits for their pause and carries all of it", async () => {
   await using engine = await appCall();
   await started(engine);
 
@@ -936,7 +936,7 @@ test("a handoff the caller keeps talking past waits for their pause and carries 
   expect(handoffs()[0]?.content).toContain("I mean orchestrators");
 });
 
-test("the phone's audio blinking tells the voice nothing, and a pause that holds tells it once each way", async () => {
+test.concurrent("the phone's audio blinking tells the voice nothing, and a pause that holds tells it once each way", async () => {
   await using engine = await appCall();
   await started(engine);
 
@@ -966,7 +966,7 @@ test("the phone's audio blinking tells the voice nothing, and a pause that holds
   ).toEqual(["paused", "resumed"]);
 });
 
-test("an app that starts a call on its questions has the voice and Claude open on them", async () => {
+test.concurrent("an app that starts a call on its questions has the voice and Claude open on them", async () => {
   await using engine = await appCall();
 
   const opened = await fetch(`${engine.base}/session`, {
@@ -983,7 +983,7 @@ test("an app that starts a call on its questions has the voice and Claude open o
   );
 });
 
-test("a call that spends the last of OpenAI's credit warns hex once, before the next call fails", async () => {
+test.concurrent("a call that spends the last of OpenAI's credit warns hex once, before the next call fails", async () => {
   await using engine = await appCall();
   await until(() => engine.probes());
   await started(engine);
@@ -1007,7 +1007,7 @@ test("a call that spends the last of OpenAI's credit warns hex once, before the 
   expect(warned()).toHaveLength(1);
 });
 
-test("saying mute yourself mutes the voice through Jev: hex's answers wait, silently, until the caller unmutes it", async () => {
+test.concurrent("saying mute yourself mutes the voice through Jev: hex's answers wait, silently, until the caller unmutes it", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.send({
@@ -1036,7 +1036,7 @@ test("saying mute yourself mutes the voice through Jev: hex's answers wait, sile
   ]);
 });
 
-test("calling off a handoff hex is working on stops its turn at once, then hands it the caller's words", async () => {
+test.concurrent("calling off a handoff hex is working on stops its turn at once, then hands it the caller's words", async () => {
   await using engine = await appCall();
   await started(engine);
 
@@ -1065,7 +1065,7 @@ test("calling off a handoff hex is working on stops its turn at once, then hands
   expect((await engine.call()).moments).toMatchObject([{ kind: "stopped" }]);
 });
 
-test("the app's data channel hears only what the app uses, so an error the engine's commands cause never reaches it", async () => {
+test.concurrent("the app's data channel hears only what the app uses, so an error the engine's commands cause never reaches it", async () => {
   await using engine = await appCall();
   await started(engine);
   expect(engine.created[0]).toMatchObject({
@@ -1086,7 +1086,7 @@ test("the app's data channel hears only what the app uses, so an error the engin
   });
 });
 
-test("an app call whose connection stays down past every retry goes on, and the engine comes back to it once it can", async () => {
+test.concurrent("an app call whose connection stays down past every retry goes on, and the engine comes back to it once it can", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.cut("refused");
@@ -1104,7 +1104,7 @@ test("an app call whose connection stays down past every retry goes on, and the 
 const drifts = (engine: Engine) =>
   engine.told.flatMap((told) => (told.hub === "adrift" || told.hub === "back" ? [told.hub] : []));
 
-test("an app call the engine can't reach holds up no restart or stop of the hub until it's reattached", async () => {
+test.concurrent("an app call the engine can't reach holds up no restart or stop of the hub until it's reattached", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.cut("refused");
@@ -1119,7 +1119,7 @@ test("an app call the engine can't reach holds up no restart or stop of the hub 
   expect(await ends(engine)).toMatchObject({ end: "you" });
 });
 
-test("hanging up a call the engine can't reach holds the hub again until its close goes out", async () => {
+test.concurrent("hanging up a call the engine can't reach holds the hub again until its close goes out", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.cut("refused");
@@ -1130,7 +1130,7 @@ test("hanging up a call the engine can't reach holds the hub again until its clo
   expect(await ends(engine)).toMatchObject({ end: "you" });
 });
 
-test("a call whose connection drops and comes right back holds up the hub's restart or stop the whole time", async () => {
+test.concurrent("a call whose connection drops and comes right back holds up the hub's restart or stop the whole time", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.cut("open");
@@ -1177,7 +1177,7 @@ async function waitsToCarryOn(engine: Engine) {
   expect((await engine.call()).ended).toBeUndefined();
 }
 
-test("an app call whose session OpenAI ends carries on in the one the app opens next: same call, the call so far, one clock", async () => {
+test.concurrent("an app call whose session OpenAI ends carries on in the one the app opens next: same call, the call so far, one clock", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.send({
@@ -1218,7 +1218,7 @@ test("an app call whose session OpenAI ends carries on in the one the app opens 
   expect(engine.closes).toEqual([`${ID}-2 close-you-app`]);
 });
 
-test("hanging up while the call waits to carry on ends it at once, and it can't be carried on after", async () => {
+test.concurrent("hanging up while the call waits to carry on ends it at once, and it can't be carried on after", async () => {
   await using engine = await appCall();
   await started(engine);
   await waitsToCarryOn(engine);
@@ -1229,7 +1229,7 @@ test("hanging up while the call waits to carry on ends it at once, and it can't 
   expect(engine.created).toHaveLength(1);
 });
 
-test("after a restart, the engine keeps coming back to a call it can't attach to yet, and once OpenAI says it's gone closes it out when nothing carried it on for a lost call's wait", async () => {
+test.concurrent("after a restart, the engine keeps coming back to a call it can't attach to yet, and once OpenAI says it's gone closes it out when nothing carried it on for a lost call's wait", async () => {
   for (const after of ["open", "gone"] as const) {
     await using engine = await appCall({ callStillGoingAtStart: true, graceSeconds: 8 });
     await engine.attaching();
@@ -1254,7 +1254,7 @@ test("after a restart, the engine keeps coming back to a call it can't attach to
   }
 });
 
-test("an app call whose session OpenAI stops serving, with nothing carrying it on, ends as dropped once a lost call's wait is up, and hex can ring again", async () => {
+test.concurrent("an app call whose session OpenAI stops serving, with nothing carrying it on, ends as dropped once a lost call's wait is up, and hex can ring again", async () => {
   await using engine = await appCall({ graceSeconds: 4 });
   await started(engine);
   engine.cut("refused");
@@ -1266,7 +1266,7 @@ test("an app call whose session OpenAI stops serving, with nothing carrying it o
   expect(engine.rang).toEqual(["+15550000001"]);
 });
 
-test("an app call carried on while the engine still can't attach back to its old session goes on in the new one", async () => {
+test.concurrent("an app call carried on while the engine still can't attach back to its old session goes on in the new one", async () => {
   await using engine = await appCall({ graceSeconds: 4 });
   await started(engine);
   engine.cut("refused");
@@ -1281,7 +1281,7 @@ test("an app call carried on while the engine still can't attach back to its old
   expect(await ends(engine)).toMatchObject({ end: "you" });
 });
 
-test("after a restart, a call the engine can't attach back to for a lost call's wait is closed out, and hex can ring again", async () => {
+test.concurrent("after a restart, a call the engine can't attach back to for a lost call's wait is closed out, and hex can ring again", async () => {
   await using engine = await appCall({ callStillGoingAtStart: true, graceSeconds: 4 });
   await engine.attaching();
   engine.attachIs("refused");
@@ -1292,7 +1292,7 @@ test("after a restart, a call the engine can't attach back to for a lost call's 
   expect((await engine.tool("phone")).result).toContain("ringing");
 });
 
-test("hex's hang-up holds off when the caller speaks after it was asked for", async () => {
+test.concurrent("hex's hang-up holds off when the caller speaks after it was asked for", async () => {
   await using engine = await appCall();
   await started(engine);
   const hungUp = engine.tool("hang_up");
@@ -1309,7 +1309,7 @@ test("hex's hang-up holds off when the caller speaks after it was asked for", as
   expect(await engine.tool("hang_up")).toEqual({ result: "hanging up" });
 });
 
-test("after a restart, a call whose session ended while hex was down carries on in the session the app opens, while hex is still attaching back or once it knows the session is gone", async () => {
+test.concurrent("after a restart, a call whose session ended while hex was down carries on in the session the app opens, while hex is still attaching back or once it knows the session is gone", async () => {
   for (const when of ["attaching", "gone"] as const) {
     await using engine = await appCall({ callStillGoingAtStart: true });
     await engine.attaching();
@@ -1337,7 +1337,7 @@ test("after a restart, a call whose session ended while hex was down carries on 
   }
 });
 
-test("an app call whose connection to the voice goes silent without closing is dropped and attached back to once the network is back", async () => {
+test.concurrent("an app call whose connection to the voice goes silent without closing is dropped and attached back to once the network is back", async () => {
   await using engine = await appCall({ quietSeconds: 2, throughANetworkThatCanBeLost: true });
   await started(engine);
   expect(engine.attaches()).toBe(1);
@@ -1351,7 +1351,7 @@ test("an app call whose connection to the voice goes silent without closing is d
   expect(await ends(engine)).toMatchObject({ end: "you" });
 });
 
-test("a call OpenAI closes as a lost connection after the caller hung up ends as theirs", async () => {
+test.concurrent("a call OpenAI closes as a lost connection after the caller hung up ends as theirs", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.closesAs("connection_lost");
@@ -1359,7 +1359,7 @@ test("a call OpenAI closes as a lost connection after the caller hung up ends as
   expect(await ends(engine)).toMatchObject({ end: "you" });
 });
 
-test("a handoff hex can't answer gets that as its result, so the caller hears why instead of more checking", async () => {
+test.concurrent("a handoff hex can't answer gets that as its result, so the caller hears why instead of more checking", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.send({
@@ -1385,7 +1385,7 @@ test("a handoff hex can't answer gets that as its result, so the caller hears wh
   );
 });
 
-test("a turn that fails once its answer went out says nothing to the caller", async () => {
+test.concurrent("a turn that fails once its answer went out says nothing to the caller", async () => {
   await using engine = await appCall();
   await started(engine);
   engine.confirmAnswers();
@@ -1401,7 +1401,7 @@ test("a turn that fails once its answer went out says nothing to the caller", as
   expect(engine.instructed).toEqual([]);
 });
 
-test("hex stopping on the machine reaches the caller at once, and so does every handoff after it", async () => {
+test.concurrent("hex stopping on the machine reaches the caller at once, and so does every handoff after it", async () => {
   await using engine = await appCall();
   await started(engine);
   await engine.tool("hex stops");
@@ -1418,7 +1418,7 @@ test("hex stopping on the machine reaches the caller at once, and so does every 
   expect(engine.spoken[0]?.content).toContain("hex is stopping on this machine");
 });
 
-test("with no call live, hex failing to answer tells nobody", async () => {
+test.concurrent("with no call live, hex failing to answer tells nobody", async () => {
   await using engine = await appCall();
   expect(
     (await engine.tool("hex cannot answer", { why: "its session couldn't start." })).result,
