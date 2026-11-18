@@ -1,4 +1,4 @@
-import { afterAll } from "bun:test";
+import { afterAll, setDefaultTimeout } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +21,10 @@ Object.assign(process.env, {
   CLAUDE_CONFIG_DIR: join(sandbox, "claude"),
   XDG_STATE_HOME: join(sandbox, "state"),
 });
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The one time limit on tests, so a test fails on time only when it hangs: on a busy server one that takes a second here took 32.
+setDefaultTimeout(300_000);
 
 afterAll(() => {
   rmSync(sandbox, { recursive: true, force: true });
