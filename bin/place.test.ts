@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const HEX = join(import.meta.dir, "../..");
+const HEX = join(import.meta.dir, "..");
 const home = mkdtempSync(join(tmpdir(), "place-"));
 const fake = join(home, "fake");
 const here = Bun.spawnSync(["uname", "-n"]).stdout.toString().trim();

@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const room = join(import.meta.dir, "../../bin/room");
+const room = join(import.meta.dir, "room");
 const home = mkdtempSync(join(tmpdir(), "room-"));
 
 afterAll(() => {

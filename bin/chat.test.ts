@@ -15,9 +15,9 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
-import { until } from "../../hub/until.ts";
+import { until } from "../hub/until.ts";
 
-const HEX = join(import.meta.dir, "../..");
+const HEX = join(import.meta.dir, "..");
 const THREAD = "1000001";
 const CHANNEL = "plugin:telegram@hex";
 

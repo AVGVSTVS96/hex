@@ -21,7 +21,7 @@ beforeEach(() => {
   mkdirSync(join(home, "fake"));
 
   for (const script of ["vault", "settings"]) {
-    copyFileSync(join(import.meta.dir, "../../bin", script), join(home, ".hex/bin", script));
+    copyFileSync(join(import.meta.dir, script), join(home, ".hex/bin", script));
   }
 
   writeFileSync(

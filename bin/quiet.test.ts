@@ -3,10 +3,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { file } from "../../hub/store.ts";
-import { until } from "../../hub/until.ts";
+import { file } from "../hub/store.ts";
+import { until } from "../hub/until.ts";
 
-const HEX = join(import.meta.dir, "../..");
+const HEX = join(import.meta.dir, "..");
 const home = mkdtempSync(join(tmpdir(), "quiet-"));
 const sessions = join(home, "config/sessions");
 const state = join(home, "state");

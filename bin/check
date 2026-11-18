@@ -33,5 +33,5 @@ beside=$(dirname "$hex")/state
 # a check runs on is often the one hex runs on.
 bun test --parallel=4 "$@"
 # The hub's tests again on a store that answers late, as a home across the network does: there a write lands after the call, not at it.
-[ $# -gt 0 ] || bun test --isolate --preload ./hub/late.ts hub/hub.test.ts
+[ $# -gt 0 ] || bun test --isolate --preload ./hub/late.testing.ts .hub.test.
 [ -n "${live:-}" ] || [ ! -e "$beside" ] || { echo "a test wrote to $beside: give what it starts a hex folder of its own (HEX_DIR, or HEX_STORE)" >&2; exit 1; }

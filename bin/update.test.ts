@@ -6,9 +6,9 @@ import { dirname, join } from "node:path";
 
 import { z } from "zod";
 
-import { file } from "../../hub/store.ts";
+import { file } from "../hub/store.ts";
 
-const HEX = join(import.meta.dir, "../..");
+const HEX = join(import.meta.dir, "..");
 const home = mkdtempSync(join(tmpdir(), "update-"));
 const hex = join(home, ".hex");
 const state = join(home, "state");

@@ -13,7 +13,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
-const HEX = join(import.meta.dir, "../..");
+const HEX = join(import.meta.dir, "..");
 
 let home: string;
 let hex: string;

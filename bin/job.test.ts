@@ -17,7 +17,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
-import { file } from "../../hub/store.ts";
+import { file } from "../hub/store.ts";
 
 const Args = z.array(z.string());
 
@@ -26,7 +26,7 @@ const containing = (text: string): unknown => expect.stringContaining(text);
 const matching = (pattern: RegExp): unknown => expect.stringMatching(pattern);
 // oxlint-enable anti-slop/no-unknown-returns -- the matchers end here
 
-const HEX = join(import.meta.dir, "../..");
+const HEX = join(import.meta.dir, "..");
 const home = mkdtempSync(join(tmpdir(), "job-"));
 const job = join(home, ".hex/bin/job");
 const ran = join(home, "ran.json");
