@@ -56,9 +56,9 @@ const nothing = (): void => undefined;
 // The hub's record of operations over a folder's store, as startHub hands it to an endpoint.
 const operationsIn = (dir: string) =>
   keeping(dir, {
-    spool: join(dir, "owed.test.json"),
-    refused: join(dir, "refused.test.json"),
+    app: "test",
     letGo: nothing,
+    cut: nothing,
     queue: () => Promise.resolve(),
   }).operations;
 

@@ -35,6 +35,7 @@ import {
   launched,
   time,
   bgStarts,
+  fold,
 } from "./hub.testing.ts";
 import { claimedAs, takeOver, whenLost, whenMoved } from "./kept.ts";
 import { Ledger } from "./ledger.ts";
@@ -349,6 +350,122 @@ test("a message hex's store keeps, waiting on a running session with no channel 
   await time.lapse(50);
   await settled();
   expect(bgStarts()).toHaveLength(1);
+});
+
+test("what a session took and never answered, when it dies while hex's store can't be reached, goes to the thread's next session once the store answers", async () => {
+  await start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: 42 }],
+    reconnect: 50,
+  });
+  await hub.deliver("chat:7", "Desk anchors", { ...message, content: "hanging" });
+  const first = await session("chat:7");
+  await until(() => first.received.length);
+  file(dir).turns.turned(SESSION, true);
+  fold(first.received);
+  fault.outage = "unreached";
+  writeFileSync(join(dir, "agents"), "[]");
+  first.close();
+  await time.lapse(50);
+  await settled();
+  expect(bgStarts()).toHaveLength(0);
+
+  fault.outage = undefined;
+  await hub.synced();
+  await settled();
+  expect(bgStarts()).toHaveLength(1);
+  const next = await session("chat:7");
+  await until(() => next.received.length);
+  expect(heard(next.received).map(({ content }) => content)).toEqual(["hanging"]);
+});
+
+test("a cut the store missed as a session started, paid once that session has taken its message, leaves the message with it", async () => {
+  const cutAsked: (() => void)[] = [];
+
+  storeWaits.set(
+    "cut",
+    new Promise<void>((resolve) => {
+      cutAsked.push(resolve);
+    }),
+  );
+
+  await start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } }, agents: [] });
+  storeCalls.length = 0;
+  await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:66" });
+  await until(() => storeCalls.includes("cut"));
+  fault.outage = "unreached";
+  cutAsked[0]?.();
+  await launched();
+  fault.outage = undefined;
+
+  const { received } = await session("chat:7");
+  await until(() => received.length);
+  file(dir).turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
+  fold(received);
+  await hub.synced();
+  await settled();
+
+  expect(file(dir).messages.untaken("chat:7")).toEqual([]);
+  expect(heard(received).map(({ content }) => content)).toEqual(["hi"]);
+});
+
+test("a session that died with its agents working while hex's store couldn't be reached has its thread told so once the store answers, though the hub restarted meanwhile", async () => {
+  await start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: 42 }],
+    reconnect: 50,
+  });
+  const first = await session("chat:7");
+  file(dir).turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
+  file(dir).turns.turned(SESSION, false, "2026-01-01T00:01:00.000Z");
+  file(dir).turns.waitsOnAgents(SESSION, "2026-01-01T00:01:00.000Z");
+  fault.outage = "unreached";
+  writeFileSync(join(dir, "agents"), "[]");
+  first.close();
+  await time.lapse(50);
+  await settled();
+  hub.close();
+  hangUpAll();
+
+  const restarting = start();
+  await Bun.sleep(300);
+  fault.outage = undefined;
+  await restarting;
+  await hub.synced();
+  await settled();
+
+  expect(
+    file(dir)
+      .messages.untaken("chat:7")
+      .map(({ from, body }) => [from, body]),
+  ).toEqual([["hub", matching(/cut short after it started background agents/u)]]);
+});
+
+test("a cut the hub owed gives back what a session it never saved the id of had taken, as a cut made at once does", async () => {
+  const UNSAVED = "0a1b2c3d-0000-4000-8000-000000000009";
+  await start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } }, agents: [] });
+  file(dir).messages.deliver({
+    key: "telegram:1:67",
+    to: "chat:7",
+    from: "telegram",
+    author: "owner",
+    body: "held",
+    meta: {},
+  });
+  file(dir).turns.turned(UNSAVED, true, "2026-01-01T00:00:00.000Z");
+  file(dir).messages.take("telegram:1:67", UNSAVED);
+  fault.outage = "unreached";
+  await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:68" });
+  await launched();
+
+  fault.outage = undefined;
+  await hub.synced();
+  await settled();
+  expect(
+    file(dir)
+      .messages.untaken("chat:7")
+      .map((row) => row.key),
+  ).toContain("telegram:1:67");
 });
 
 test("what a session's hooks couldn't keep while hex's store was unreachable, the hub keeps once it answers", async () => {

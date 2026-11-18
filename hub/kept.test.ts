@@ -102,10 +102,10 @@ const owedMessage = (n: number) => ({
 
 const owing = (earlier: string[] = []) =>
   keeping(dir, {
-    spool: join(dir, "owed.telegram.json"),
+    app: "telegram",
     earlier,
-    refused: join(dir, "refused.telegram.json"),
     letGo: (): void => undefined,
+    cut: (): void => undefined,
     queue: async () => {
       await Promise.resolve();
     },

@@ -184,14 +184,14 @@ export async function startHub({
   let started = false;
 
   const owing = keeping(storeDir, {
-    spool: join(storeDir, `owed.${app}.json`),
+    app,
     earlier: stateDir === storeDir ? [] : [join(stateDir, `owed.${app}.json`)],
-    refused: join(storeDir, `refused.${app}.json`),
     letGo: (thread, rows) => {
       if (started) {
         inbox.heldLetGo(thread, rows);
       }
     },
+    cut: (thread, made) => void (started && waiting.cutLate(thread, made, inbox.wake)),
     queue: (turn, store) => queue(storeDir, turn, store),
     tell: (why) => void tellOwner(why),
   });
@@ -211,7 +211,7 @@ export async function startHub({
   started = true;
   const words = wordsSent({ threads, owing, app });
   const turns = sessionTurns({ overdue: (thread) => void inbox.letHeldGo(thread) });
-  const waiting = messagesWaiting({ runs, kept, waits });
+  const waiting = messagesWaiting({ runs, kept, owe: owing.owe, waits });
 
   const files = sessionFiles({
     stateDir,
