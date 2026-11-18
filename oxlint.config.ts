@@ -92,7 +92,6 @@ export default defineConfig({
     "landmines-testing/no-test-doubles": "error",
     "landmines-testing/no-unsignaled-poll": "error",
     "landmines-testing/strict-msw": "error",
-    "no-comments/most": ["error", { allow: allowances.comments }],
     "no-comments/no-comments": "error",
     "oxc/no-accumulating-spread": "error",
   },
