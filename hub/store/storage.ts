@@ -4,7 +4,7 @@ import { eachVariable, onlyReading } from "./db.ts";
 import type { Core, Write } from "./db.ts";
 import { domains, migrate, OffersJson, unmet } from "./domains.ts";
 import type { Domains } from "./domains.ts";
-import { answering } from "./wire.ts";
+import { answering, ReplyJson } from "./wire.ts";
 import type { Reply } from "./wire.ts";
 
 // The part of a Durable Object's storage the store runs on: https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/
@@ -43,6 +43,12 @@ const Claimed = z.object({ tenure: z.number() }).optional();
 // The claims kept, so one that arrives again (a retry, or a request the network held back) is known by its claimant; older ones go.
 const CLAIMS_KEPT = 100;
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The replies kept of calls that wrote, so one sent again after its reply was lost is answered from them, not run twice; a client sends again at once, so older ones go.
+const CALLS_KEPT = 1000;
+
+const Kept = z.object({ reply: z.string() }).optional();
+
 const Count = z.object({ n: z.number() });
 const Statements = z.object({ statements: z.array(z.string()) });
 
@@ -63,7 +69,7 @@ class UndoneError extends Error {
   override name = "UndoneError";
 }
 
-type Called = { reply: Reply; wrote: boolean };
+type Called = { reply: Reply; wrote: boolean; again?: true };
 
 type Step = { id: string; step: number };
 
@@ -232,6 +238,9 @@ function homeTables(run: Run) {
   run(
     "create table if not exists _claims (claimant text primary key, tenure integer not null unique)",
   );
+  run(
+    "create table if not exists _calls (n integer primary key, id text not null unique, reply text not null)",
+  );
 
   for (const [column, kind] of [
     ["served", "integer not null default 0"],
@@ -351,8 +360,8 @@ export function recordsIn(storage: Storage, dir = "") {
     },
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // Each call is one write: one that fails leaves nothing of itself behind.
-    call(text: string): Called {
+    // Each call is one write: one that fails leaves nothing of itself behind, and one that wrote keeps its reply with it under the name it came with, so the same call sent again is answered from it.
+    call(text: string, id?: string): Called {
       if (answer === undefined) {
         return {
           reply: {
@@ -367,8 +376,18 @@ export function recordsIn(storage: Storage, dir = "") {
         run("update _home set served = 1");
       }
 
+      const kept =
+        id === undefined
+          ? undefined
+          : Kept.parse(run("select reply from _calls where id = ?", id)[0]);
+
+      if (kept !== undefined) {
+        return { reply: ReplyJson.parse(JSON.parse(kept.reply)), wrote: false, again: true };
+      }
+
       const answered = answer;
-      const before = changes() - own.unheard();
+      const all = changes();
+      const before = all - own.unheard();
       let reply: Reply = { error: "the call didn't run" };
 
       try {
@@ -377,6 +396,14 @@ export function recordsIn(storage: Storage, dir = "") {
 
           if ("error" in reply) {
             throw new UndoneError();
+          }
+
+          if (id !== undefined && changes() !== all) {
+            const said = JSON.stringify(reply);
+            own.quiet(() => {
+              run("insert into _calls (id, reply) values (?, ?)", id, said);
+              run("delete from _calls where n <= last_insert_rowid() - ?", CALLS_KEPT);
+            });
           }
         });
       } catch (error) {

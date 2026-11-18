@@ -201,7 +201,9 @@ function watcher(address: URL, headers: Asking, times: Times) {
   };
 }
 
-const WORKER_UNKNOWN_TO_EDGE_TRIES = 4;
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The object answers in JSON, so any other reply is a page Cloudflare gave in its place, the call unanswered: a Worker its edge doesn't know yet after a deploy (404), an object reset as its code or Cloudflare's runtime changed (500, with no body), or one of its own errors. The call goes again, under its name.
+const TRIES_PAST_EDGE_PAGES = 4;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A process that finds the object not answering says so in the state folder, so the next process, like a hook, fails at once instead of waiting out its own time, until one gets an answer again or the word is older than the longest wait between tries.
@@ -268,12 +270,13 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
   const socket = watcher(at(away, "watch"), headers, times);
   const elsewhere = shared ? word(dir, times) : alone;
 
-  const sent = async (route: string, body: string) => {
+  const sent = async (route: string, body: string, call: string, fresh = false) => {
     try {
       const response = await fetch(at(away, route), {
         method: "POST",
-        headers,
+        headers: { ...headers, "hex-call": call },
         body,
+        keepalive: !fresh,
         signal: AbortSignal.timeout(times.answerWithin),
       });
 
@@ -285,15 +288,22 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
     }
   };
 
-  const reach = async (route: string, body: string) => {
-    let { response, text } = await sent(route, body);
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Cloudflare can carry a connection to a data center far from this machine and drop it there, along with the others it carried, so a call that got no answer goes once more on a connection of its own. It goes with the same name, and the object answers a call it took already with the reply it kept, so a write sent twice lands once.
+  const carried = async (route: string, body: string, call: string) => {
+    try {
+      return await sent(route, body, call);
+    } catch {
+      return await sent(route, body, call, true);
+    }
+  };
 
-    for (
-      let again = 0;
-      again < WORKER_UNKNOWN_TO_EDGE_TRIES && response.status === 404 && !text.startsWith("{");
-      again++
-    ) {
-      ({ response, text } = await sent(route, body));
+  const reach = async (route: string, body: string) => {
+    const call = crypto.randomUUID();
+    let { response, text } = await carried(route, body, call);
+
+    for (let again = 0; again < TRIES_PAST_EDGE_PAGES && !text.startsWith("{"); again++) {
+      ({ response, text } = await carried(route, body, call));
     }
 
     const lostTo = response.status === 409 ? lostIn(text) : null;

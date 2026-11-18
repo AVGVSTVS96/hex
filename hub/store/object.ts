@@ -12,6 +12,7 @@ type Env = { STORE: Namespace; KEY?: string; VERSION?: string };
 // A Worker's address is public, so the key is long enough that guessing it is hopeless.
 const SHORTEST_KEY = 32;
 const NAME = /^[a-z0-9][a-z0-9-]{0,62}$/u;
+const CALL = /^[\w-]{1,64}$/u;
 
 type Version = { version: string | null; migrations: number | null; offers: Offers; hub: string };
 
@@ -109,7 +110,14 @@ export class Records extends DurableObject<Env> {
       }
 
       if (route === "call") {
-        const { reply, wrote } = records.call(body);
+        const { reply, wrote, again } = records.call(
+          body,
+          CALL.exec(request.headers.get("hex-call") ?? "")?.[0],
+        );
+
+        if (again) {
+          console.log(`hex's store answered a call it took already from the reply it kept`);
+        }
 
         if (wrote) {
           for (const socket of this.ctx.getWebSockets()) {

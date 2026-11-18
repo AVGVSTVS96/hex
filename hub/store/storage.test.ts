@@ -973,7 +973,7 @@ test("a file home whose records moved since it opened says so on every call, so 
   }
 });
 
-test("one call whose connection resets fails alone: the store answers a probe, so no call behind it, in this process or another, is failed unasked", async () => {
+test("a call whose connection drops is sent again and lands once, whether the store took it before the drop or not, and one dropped each time fails alone", async () => {
   const storage = objectStorage();
   startedEmpty(storage);
   const object = served(storage);
@@ -984,23 +984,21 @@ test("one call whose connection resets fails alone: the store answers a probe, s
     const hub = remote(dir, quick);
     await hub?.claim();
     expect(await hub?.messages.deliver(message)).toBe(true);
+    const task = { title: "Fix it", message: message.key, owner: "-100:7" };
 
-    front.arm();
+    front.arm("asked");
+    expect((await hub?.tasks.create(task))?.id).toBe("t-1");
+    front.arm("answered");
+    expect((await hub?.tasks.create(task))?.id).toBe("t-2");
+    expect(front.resets()).toBe(2);
+    expect((await hub?.tasks.list())?.map(({ id }) => id)).toEqual(["t-2", "t-1"]);
 
-    const reset = await thrown(
-      hub?.messages.deliver({ ...message, key: "telegram:-100:43" }) ?? never,
-    );
-
+    front.arm("asked", 2);
+    const reset = await thrown(hub?.tasks.create(task) ?? never);
     expect(reset).toBeInstanceOf(UnreachedError);
     expect(reset).not.toBeInstanceOf(UnaskedError);
-    expect(front.resets()).toBe(1);
     expect(existsSync(join(dir, "store.down"))).toBe(false);
-
-    expect(await hub?.messages.deliver({ ...message, key: "telegram:-100:43" })).toBe(true);
-    await hub?.synced();
-    expect(await remote(dir, quick)?.messages.get("telegram:-100:43")).toMatchObject({
-      body: message.body,
-    });
+    expect((await remote(dir, quick)?.tasks.list())?.length).toBe(2);
   } finally {
     await front.stop();
     await object.stop();
@@ -1194,7 +1192,7 @@ test("a page Cloudflare's edge answers in place of the Worker, as it does for mi
   }
 });
 
-test("a first claim the network holds back until after its retry never makes a lone hub refuse itself", async () => {
+test("a first claim the network holds back until after its resend never makes a lone hub refuse itself", async () => {
   const storage = objectStorage();
   startedEmpty(storage);
   const object = served(storage);
@@ -1234,8 +1232,8 @@ test("a first claim the network holds back until after its retry never makes a l
 
   try {
     const hub = remote(dir, quick);
-    expect(await thrown(hub?.claim() ?? never)).toBeInstanceOf(UnreachedError);
-    await until(async () => (await thrown(hub?.claim() ?? never)) === "it didn't throw");
+    expect(await hub?.claim()).toBe(1);
+    expect(held).toHaveLength(1);
     expect(await hub?.messages.deliver(message)).toBe(true);
 
     for (const release of held) {
