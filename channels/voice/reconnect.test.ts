@@ -57,7 +57,8 @@ const withImage = (told: Line) => told.meta?.image_path !== undefined;
 
 const engineScript = (
   state: string,
-) => `import { cantAnswer, serve, stopsHere, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
+) => `import { serve } from ${JSON.stringify(join(import.meta.dir, "serve.ts"))}
+import { cantAnswer, stopsHere, tool } from ${JSON.stringify(join(import.meta.dir, "engine.ts"))}
 const server = serve({ deliver: (content, meta) => console.log(JSON.stringify({ hub: 'deliver', content, meta })), keep: async () => {}, renew: () => console.log(JSON.stringify({ hub: 'renew' })), adrift: (away) => console.log(JSON.stringify({ hub: away ? 'adrift' : 'back' })), session: () => 'brain', interrupt: async () => console.log(JSON.stringify({ hub: 'interrupt' })) }, ${JSON.stringify(state)})
 console.log(JSON.stringify({ port: server.port }))
 for await (const line of console) {
@@ -963,6 +964,23 @@ test("the phone's audio blinking tells the voice nothing, and a pause that holds
   expect(
     (await engine.call()).moments?.map((each) => z.object({ kind: z.string() }).parse(each).kind),
   ).toEqual(["paused", "resumed"]);
+});
+
+test("an app that starts a call on its questions has the voice and Claude open on them", async () => {
+  await using engine = await appCall();
+
+  const opened = await fetch(`${engine.base}/session`, {
+    method: "POST",
+    body: JSON.stringify({ sdp: "offer", from: "app", about: "asks" }),
+  });
+
+  expect(opened.status).toBe(201);
+  const hello = await until(() => engine.told.find((line) => line.meta?.started === "true"));
+  expect(hello.meta?.task).toBe("asks");
+  expect(hello.content).toContain("The caller tapped Go through them with hex");
+  expect(JSON.stringify(engine.created[0])).toContain(
+    "The caller wants to go through what's waiting on them, one at a time.",
+  );
 });
 
 test("a call that spends the last of OpenAI's credit warns hex once, before the next call fails", async () => {

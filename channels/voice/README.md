@@ -24,9 +24,18 @@ Claude to stop that task.
 It runs in hex's hub service (`bun hub/serve.ts`), next to Telegram and the
 other apps:
 
-- `server.ts` is the call engine: the call page and app API on `VOICE_PORT`,
-  each call's `gpt-live-1` connection, Twilio's media streams, call records,
-  the board and the questions. It lives as long as the service, not a session.
+- `serve.ts` holds `VOICE_PORT`, the one address the call page, the apps and
+  Twilio reach: Twilio's routes, then the token, then the call engine's routes
+  and the app API's.
+- `engine.ts` is the call engine: each call's `gpt-live-1` connection,
+  Twilio's media streams, call records, and the routes a call needs
+  (`/session`, `/calls`, `/settings`, `/activity`, `/phone`). It lives as long
+  as the service, not a session.
+- `app.ts` is the API hex's apps read and act through: the board, questions,
+  feed, goals, ideas and photos. It reaches a call only where the caller asks:
+  Talk it through, Discuss and Go through them start the live call on a
+  thread, an entry or the questions, and a card the call put on screen hears
+  what the caller does with it in the app.
 - `bot.ts` starts the hub for the `voice` thread and the engine, and hands the
   engine the hub's side: deliver, keep, renew.
 - `channel.ts` is the channel the hub serves the voice session over HTTP, with
@@ -35,7 +44,8 @@ other apps:
   so no process runs per session.
 
 ```
- voice session ── HTTP ──► hub ──► call engine (server.ts) ◄── page, app, Twilio
+ page, apps, Twilio ──► serve.ts ─┬─► call engine (engine.ts) ◄── hub ◄── HTTP ── voice session
+                                  └─► app API (app.ts)
 ```
 
 ## How a call flows

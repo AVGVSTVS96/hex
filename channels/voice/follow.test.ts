@@ -86,7 +86,7 @@ async function engineResumingACallTask({ callStillLive = false } = {}) {
   const stillWorkingOnWhatCameAfter = "busy";
   status(SESSION, stillWorkingOnWhatCameAfter);
 
-  const engine = `import { serve } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
+  const engine = `import { serve } from ${JSON.stringify(join(import.meta.dir, "serve.ts"))}
 const server = serve({ deliver() {}, keep: async () => {}, renew() {}, session: () => undefined }, ${JSON.stringify(state)})
 console.log(server.port)`;
 
