@@ -1,4 +1,3 @@
-import landmines from "@interfere/landmines/configs/recommended.json" with { type: "json" };
 import { defineConfig } from "oxlint";
 import antiSlop from "ultracite/oxlint/anti-slop";
 import core from "ultracite/oxlint/core";
@@ -43,11 +42,13 @@ const doublesIn = [
 ];
 
 export default defineConfig({
-  extends: [core, antiSlop, landmines],
+  extends: [core, antiSlop],
   ignorePatterns: [...(core.ignorePatterns ?? []), "site/**", "media/**", "watch/**"],
   jsPlugins: [
     { name: "no-comments", specifier: "./tools/oxlint/no-comments.ts" },
     { name: "no-bun-mocks", specifier: "./tools/oxlint/no-bun-mocks.ts" },
+    { name: "landmines-testing", specifier: "@interfere/landmines/testing" },
+    { name: "landmines-structure", specifier: "@interfere/landmines/structure" },
   ],
   overrides: [
     ...Object.entries(longestFunctionIn).map(([file, lines]) => ({
@@ -83,10 +84,14 @@ export default defineConfig({
     "unicorn/no-await-expression-member": "off",
     "import/no-cycle": "error",
     "no-bun-mocks/no-bun-mocks": ["error", { allow: bunMocksIn }],
-    "landmines-style/no-comments": "off",
+    "landmines-structure/colocated-tests": "error",
+    "landmines-structure/package-exports": "error",
+    "landmines-structure/test-file-names": "error",
     "landmines-testing/no-fixed-sleep": ["error", { allow: allowances.sleeps }],
     "landmines-testing/no-flake-masking": ["error", { allow: allowances.flakes }],
-    "landmines-types/no-explicit-return-types": "off",
+    "landmines-testing/no-test-doubles": "error",
+    "landmines-testing/no-unsignaled-poll": "error",
+    "landmines-testing/strict-msw": "error",
     "no-comments/most": ["error", { allow: allowances.comments }],
     "no-comments/no-comments": "error",
     "oxc/no-accumulating-spread": "error",
