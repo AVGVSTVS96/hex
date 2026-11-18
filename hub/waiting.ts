@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 
-import type { Keep } from "./kept.ts";
+import type { Keep, Owed } from "./kept.ts";
 import type { Line } from "./mcp.ts";
 import { present } from "./present.ts";
 import type { Runs } from "./runs.ts";
-import type { Author, Row } from "./store.ts";
+import type { Author, Cut, NewRow, Row } from "./store.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // key: the app's own id for what the message is, so the app sending it again changes nothing. author: who wrote it, which every message a client delivers says (Store.deliver).
@@ -43,10 +43,12 @@ export type MessagesWaiting = ReturnType<typeof messagesWaiting>;
 export function messagesWaiting({
   runs,
   kept,
+  owe,
   waits,
 }: {
   runs: Runs;
   kept: Keep;
+  owe: (write: Owed) => void;
   waits: Waits | undefined;
 }) {
   const waiting = runs.part((): Waiting => ({ queue: [], handed: new Set(), told: new Map() }));
@@ -89,15 +91,36 @@ export function messagesWaiting({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session that died mid-turn ran no Stop hook, so its turn ends in hex's record of it here, and what it took without answering waits for the thread's next session. One that had started background agents lost any still working, so the hub's own line waits for the next session too, and starts it when nothing else does. Only for a thread none of whose sessions runs.
+  // A session that died mid-turn ran no Stop hook, so its turn ends in hex's record of it here, and what it took without answering waits for the thread's next session. One that had started background agents lost any still working, so the hub's own line waits for the next session too (the note, kept with the cut), and starts it when nothing else does. Only for a thread none of whose sessions runs. A store that doesn't answer is owed the cut as of now, which then leaves what the thread's sessions did since.
   async function cut(thread: string, session: string | undefined) {
-    const { given, waited } = await kept((store) => store.turns.cut(thread, session), {
-      given: [],
-      waited: false,
-    });
+    const at = new Date().toISOString();
 
+    const note: NewRow = {
+      key: `hub:${thread}:agents-ended@${randomUUID()}`,
+      to: thread,
+      from: "hub",
+      author: "prompt",
+      body: "[hub] This thread's session was cut short after it started background agents, and any still working ended with it. Check what they finished, then carry on.",
+      meta: { user: "hub" },
+    };
+
+    const made = await kept<Cut | undefined>(
+      (store) => store.turns.cut(thread, session, undefined, note),
+      undefined,
+    );
+
+    if (made === undefined) {
+      owe({ kind: "cut", thread, ...(present(session) && { session }), at, note });
+    } else {
+      await wasCut(thread, made);
+    }
+  }
+
+  async function wasCut(thread: string, { given, waited }: Cut) {
     if (waited) {
-      await agentsEnded(thread);
+      process.stderr.write(
+        `hub: ${thread}'s session was cut short with background agents started, so the thread's next session is told\n`,
+      );
     }
 
     if (!given.length) {
@@ -115,23 +138,17 @@ export function messagesWaiting({
     }
   }
 
-  async function agentsEnded(thread: string) {
-    process.stderr.write(
-      `hub: ${thread}'s session was cut short with background agents started, so the thread's next session is told\n`,
-    );
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A cut the store took late: what a session gave back was passed on to it once, so it's passed on again, by the look at the store that follows (look), to whichever session the thread has by then or to one started for it.
+  async function cutLate(thread: string, made: Cut, look: () => void) {
+    await wasCut(thread, made);
+    const { handed } = waiting.of(thread);
 
-    await kept(
-      (store) =>
-        store.messages.deliver({
-          key: `hub:${thread}:agents-ended@${randomUUID()}`,
-          to: thread,
-          from: "hub",
-          author: "prompt",
-          body: "[hub] This thread's session was cut short after it started background agents, and any still working ended with it. Check what they finished, then carry on.",
-          meta: { user: "hub" },
-        }),
-      false,
-    );
+    for (const key of made.given) {
+      handed.delete(key);
+    }
+
+    look();
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -264,6 +281,7 @@ export function messagesWaiting({
     mark,
     markAll,
     cut,
+    cutLate,
     forNext,
     pass,
     passed,

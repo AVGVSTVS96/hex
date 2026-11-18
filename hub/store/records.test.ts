@@ -1037,6 +1037,74 @@ inEachHome(
   },
 );
 
+const at = (time: string) => `2026-10-21T${time}:00.000Z`;
+
+inEachHome(
+  "a cut made late, as of when its session died, gives back only what that session had taken by then: what it took once resumed and what the thread's next session took stay taken, and their turns go on ($home)",
+  ({ open }) => {
+    const store = open(dir);
+
+    const take = (key: string, session: string, began: string, taken: string) => {
+      store.messages.deliver({
+        key: `telegram:${key}`,
+        to: "7",
+        from: "telegram",
+        author: "owner",
+        body: key,
+        meta: {},
+      });
+      store.turns.turned(session, true, at(began));
+      store.messages.take(`telegram:${key}`, session, at(taken));
+    };
+
+    take("held by the one that died", "s-1", "10:00", "10:01");
+    take("taken once it was resumed", "s-1", "10:06", "10:06");
+    take("with the thread's next session", "s-2", "10:07", "10:07");
+
+    expect(store.turns.cut("7", "s-1", at("10:03"))).toEqual({
+      given: ["telegram:held by the one that died"],
+      waited: false,
+    });
+    expect(store.messages.untaken("7").map((row) => row.key)).toEqual([
+      "telegram:held by the one that died",
+    ]);
+    expect(store.turns.get("s-1").ended).toBeUndefined();
+    expect(store.turns.get("s-2").ended).toBeUndefined();
+    expect(store.turns.cut("7", "s-1", at("10:03"))).toEqual({ given: [], waited: false });
+  },
+);
+
+inEachHome(
+  "a cut tells its thread, in the same write and once, of agents that ended with a session: those it had started by then, not ones started since ($home)",
+  ({ open }) => {
+    const store = open(dir);
+
+    const note = {
+      key: "hub:7:agents-ended",
+      to: "7",
+      from: "hub",
+      author: "prompt" as const,
+      body: "agents ended",
+      meta: {},
+    };
+
+    store.turns.turned("s-1", true, at("10:00"));
+    store.turns.turned("s-1", false, at("10:01"));
+    store.turns.waitsOnAgents("s-1", at("10:05"));
+    expect(store.turns.cut("7", "s-1", at("10:03"), note)).toEqual({ given: [], waited: false });
+    expect(store.messages.untaken("7")).toEqual([]);
+    expect(store.turns.atWork("s-1")).toBe(true);
+
+    expect(store.turns.cut("7", "s-1", at("10:08"), note)).toEqual({ given: [], waited: true });
+    expect(store.messages.untaken("7").map((row) => row.key)).toEqual(["hub:7:agents-ended"]);
+    expect(store.turns.cut("7", "s-1", at("10:09"), { ...note, key: "hub:7:again" })).toEqual({
+      given: [],
+      waited: false,
+    });
+    expect(store.messages.untaken("7").map((row) => row.key)).toEqual(["hub:7:agents-ended"]);
+  },
+);
+
 inEachHome(
   "a session cut short after turns that ended with its background agents working gives back only what it took since the last of them, however often it is cut: nothing while it waits or in a turn an agent's report began, and a turn's own messages ($home)",
   async ({ open }) => {
