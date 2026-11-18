@@ -17,8 +17,8 @@ type Store = ReturnType<typeof cloudflare>;
 const HANGS = 600_000;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What one wait gets beyond the machine's own slowness: hex's longest waits of its own, a store it asks again within half a minute (hub/store/remote.ts) and a turn it takes as over after a minute without a report (hub/turns.ts), twice over.
-const HEX_WAITS = 120_000;
+// What one wait gets beyond the machine's own slowness: hex's longest wait of its own on the way to an answer, a store it asks again within half a minute (hub/store/remote.ts), twice over. The longest wait of a healthy run on a server at load 60 was 33 seconds, with 16 to start.
+const HEX_WAITS = 60_000;
 
 const answer = (words: string) => `answer to: ${words}`;
 
@@ -280,11 +280,25 @@ scenario(
 );
 
 scenario(
-  "the store stops answering mid-conversation, then comes back: nothing is lost or doubled",
+  "the store stops answering as a message's session starts, then comes back: the session is given the message all the same, and nothing is lost or doubled",
   async ({ running, soon, answered, talk }) => {
     const { chat, store, hex } = await running();
-    await talk(chat, store, "before the outage");
+    hex.hold(true, "channel");
+    const first = chat.say("as the outage begins");
+    await soon('the store keeping "as the outage begins"', () => kept(store, first) > 0);
+
+    const { sessionId } = await soon("a session starting for it, its channel held", () =>
+      hex.sessions().find(({ channel }) => channel === ""),
+    );
+
     await store.down();
+    hex.hold(false, "channel");
+
+    await soon("that session connecting while the store doesn't answer", () =>
+      hex.sessions().some((each) => each.sessionId === sessionId && each.channel !== ""),
+    );
+
+    await answered(chat, "as the outage begins");
     const key = chat.say("during the outage");
     await answered(chat, "during the outage");
     insist(
@@ -293,41 +307,16 @@ scenario(
     );
     store.up();
     await soon(
-      'the store keeping "during the outage" and its answer, once it\'s back',
-      () => kept(store, key) > 0 && sent(store, "during the outage") > 0,
+      'the store keeping both answers and "during the outage", and the session that took the first, once it\'s back',
+      () =>
+        kept(store, key) > 0 &&
+        sent(store, "as the outage begins") > 0 &&
+        sent(store, "during the outage") > 0 &&
+        takerOf(store, first),
     );
     await talk(chat, store, "after the outage");
+    once(chat, store, first, "as the outage begins");
     once(chat, store, key, "during the outage");
-  },
-);
-
-scenario(
-  "the store goes silent as a message's session starts: the session is given the message all the same, and answers it once",
-  async ({ running, soon, answered, talk }) => {
-    const { chat, store, hex } = await running();
-    hex.hold(true, "channel");
-    const key = chat.say("as the store goes silent");
-    await soon('the store keeping "as the store goes silent"', () => kept(store, key) > 0);
-
-    const { sessionId } = await soon("a session starting for it, its channel held", () =>
-      hex.sessions().find(({ channel }) => channel === ""),
-    );
-
-    store.silent();
-    hex.hold(false, "channel");
-
-    await soon("that session connecting while the store is silent", () =>
-      hex.sessions().some((each) => each.sessionId === sessionId && each.channel !== ""),
-    );
-
-    await answered(chat, "as the store goes silent");
-    store.up();
-    await soon(
-      'the store keeping the answer to "as the store goes silent", and the session that took it, once it\'s back',
-      () => sent(store, "as the store goes silent") > 0 && takerOf(store, key),
-    );
-    await talk(chat, store, "after the silence");
-    once(chat, store, key, "as the store goes silent");
   },
 );
 
