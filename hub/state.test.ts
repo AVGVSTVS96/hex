@@ -30,8 +30,6 @@ const Owed = z.object({
   said: z.array(z.object({ row: z.looseObject({ key: z.string() }), by: z.string() })),
 });
 
-const Blocked = z.object({ decision: z.literal("block"), reason: z.string() });
-
 async function hook(step: "busy" | "idle", input: Input, env: Record<string, string> = {}) {
   const run = Bun.spawn([process.execPath, join(import.meta.dir, "state.ts"), step], {
     stdin: new Blob([JSON.stringify({ session_id: "s", ...input })]),
@@ -68,49 +66,13 @@ function replied(key: string) {
 const stop = (input: Input = {}) =>
   hook("idle", { hook_event_name: "Stop", last_assistant_message: "Done.", ...input });
 
-test("a turn that took a second message mid-turn and replied once doesn't end until it answers", async () => {
+test("a turn ends when its session stops, whatever came in mid-turn", async () => {
   await said("telegram:dm:980", "fix the wrong line in the design spec");
   await said("telegram:app-1", "what's the server's uptime?");
   replied("telegram:dm:981");
 
-  const blocked = Blocked.parse(JSON.parse(await stop()));
-  expect(blocked.reason).toContain("telegram:app-1: what's the server's uptime?");
-  expect(blocked.reason).toContain("telegram:dm:980");
-  expect(file(dir).turns.atWork("s")).toBe(true);
-
-  replied("telegram:dm:982");
-  expect(await stop({ stop_hook_active: true })).toBe("");
+  expect(await stop()).toBe("");
   expect(file(dir).turns.atWork("s")).toBe(false);
-});
-
-test("a turn ends as it is once each message has a reply, and the next turn counts from there", async () => {
-  await said("telegram:dm:1", "how's the build?");
-  replied("telegram:dm:2");
-  expect(await stop()).toBe("");
-
-  await said("telegram:dm:3", "and the install?");
-  await said("telegram:dm:4", "and the iPad?");
-  replied("telegram:dm:5");
-  replied("telegram:dm:6");
-  expect(await stop()).toBe("");
-});
-
-test("a reaction mid-turn asks for no reply", async () => {
-  await said("telegram:dm:1", "how's the build?");
-  file(dir).messages.deliver({
-    key: "telegram:dm:2",
-    to: "dm",
-    from: "telegram",
-    author: "owner",
-    body: "(reaction: 👍)",
-    meta: { reaction: "👍" },
-  });
-  await hook("busy", {
-    hook_event_name: "UserPromptSubmit",
-    prompt: tag("telegram:dm:2", "(reaction: 👍)"),
-  });
-  replied("telegram:dm:3");
-  expect(await stop()).toBe("");
 });
 
 test("what a session's hooks can't keep while hex's store is unreachable goes to its hub, which keeps it once the store answers", async () => {
