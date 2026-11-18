@@ -256,7 +256,12 @@ export async function unlease(dir: string) {
 // shared: whether this client tells the folder's other processes when the object stops answering, and hears them; a backup's slow page or a lost hub paying what it owed keeps that to itself.
 const alone = { say: (_why: string) => null, heard: (): string | null => null, clear: () => null };
 
-export function remote(dir: string, times = TIMES, shared = true): (Client & Home) | undefined {
+export function remote(
+  dir: string,
+  times = TIMES,
+  shared = true,
+  inOrder = true,
+): (Client & Home) | undefined {
   const named = awayFile(dir);
 
   if (!existsSync(named)) {
@@ -387,10 +392,27 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
     }
   };
 
+  let checking: Promise<boolean> | undefined;
+
+  const answersForAll = async () => {
+    checking ??= answers();
+
+    try {
+      return await checking;
+    } finally {
+      checking = undefined;
+    }
+  };
+
   const fell = async (error: Error) => {
     if (error instanceof LostError) {
       lost ??= error;
-    } else if (error instanceof UnreachedError && down === undefined && !(await answers())) {
+    } else if (
+      error instanceof UnreachedError &&
+      down === undefined &&
+      !(await answersForAll()) &&
+      down === undefined
+    ) {
       down = error;
       elsewhere.say(error.message);
       probeLater();
@@ -429,6 +451,10 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
   let last: Promise<unknown> = Promise.resolve();
 
   const inTurn = <T>(call: () => Promise<T>) => {
+    if (!inOrder) {
+      return call();
+    }
+
     const answered = last.then(call);
     last = answered.catch(() => null);
 
