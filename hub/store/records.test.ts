@@ -1576,20 +1576,26 @@ inEachHome(
   },
 );
 
-const to = (by: string, tail: string, of: number) => ({ tail, of, last: "l", by });
+const to = (by: string, tail: string, of: number) => ({
+  tail,
+  digest: tail && `d${tail}`,
+  of,
+  last: "l",
+  by,
+});
 
 inEachHome(
-  "a transcript's copy grows only from where its sender read it to stand, is another machine's once that takes it, and only an open thread's stays, with what is beside it ($home)",
+  "a transcript's copy grows only from where its sender read it to stand, starts over from the piece a changed file kept, and only an open thread's stays, with what is beside it ($home)",
   ({ open }) => {
     const store = open(dir);
-    const first = [{ upto: 6, text: '{"a"}\n' }];
+    const first = [{ upto: 6, text: '{"a"}\n', digest: "dt1" }];
     const nothing = store.transcripts.end("s-1");
-    expect(nothing).toEqual({ size: 0, tail: "", of: 0, last: "", by: "" });
+    expect(nothing).toEqual({ size: 0, tail: "", digest: "", of: 0, last: "", by: "" });
 
     const said = store.transcripts.append("s-1", nothing, [], to("server", "", 6));
-    expect(said).toEqual({ size: 0, tail: "", of: 6, last: "l", by: "server" });
+    expect(said).toEqual({ size: 0, tail: "", digest: "", of: 6, last: "l", by: "server" });
     const sent = store.transcripts.append("s-1", said, first, to("server", "t1", 6));
-    expect(sent).toEqual({ size: 6, tail: "t1", of: 6, last: "l", by: "server" });
+    expect(sent).toEqual({ size: 6, tail: "t1", digest: "dt1", of: 6, last: "l", by: "server" });
     expect(store.transcripts.append("s-1", said, first, to("server", "t1", 6))).toEqual(sent);
 
     const taken = store.transcripts.append("s-1", sent, [], to("twin", "t1", 6));
@@ -1597,9 +1603,18 @@ inEachHome(
     expect(
       store.transcripts.append("s-1", sent, [{ upto: 9, text: "{}\n" }], to("server", "t2", 9)),
     ).toEqual(taken);
+    expect(
+      store.transcripts.append("s-1", { ...taken, digest: "another" }, [], to("server", "t1", 6)),
+    ).toEqual(taken);
 
     const long = "x".repeat(1024 * 1024);
-    const more = [1, 2, 3].map((nth) => ({ upto: 6 + nth * long.length, text: long }));
+
+    const more = [1, 2, 3].map((nth) => ({
+      upto: 6 + nth * long.length,
+      text: long,
+      digest: `d${nth}`,
+    }));
+
     const grown = to("twin", "t3", 6 + 3 * long.length);
     expect(store.transcripts.append("s-1", taken, more, grown)).toMatchObject(grown);
     expect(store.transcripts.since("s-1", 0).map(({ upto }) => upto)).toEqual([6, 6 + long.length]);
@@ -1607,6 +1622,30 @@ inEachHome(
       long,
       long,
     ]);
+    expect(store.transcripts.marks("s-1", 6)).toEqual(
+      more.map(({ upto, digest }) => ({ upto, digest })),
+    );
+
+    const stands = store.transcripts.end("s-1");
+    const changed = [{ upto: 6 + long.length + 3, text: "{}\n", digest: "d5" }];
+    const kept = to("twin", "t5", changed[0]?.upto ?? 0);
+    expect(store.transcripts.append("s-1", stands, changed, kept, 7)).toEqual(stands);
+    expect(store.transcripts.append("s-1", stands, changed, kept, 6 + long.length)).toMatchObject(
+      kept,
+    );
+    expect(store.transcripts.marks("s-1", 0)).toEqual([
+      { upto: 6, digest: "dt1" },
+      { upto: 6 + long.length, digest: "d1" },
+      { upto: 6 + long.length + 3, digest: "d5" },
+    ]);
+
+    const plain = { tail: "t6", of: 6, last: "l", by: "twin" };
+    const mine = [{ upto: 6, text: '{"a"}\n' }];
+
+    expect(
+      store.transcripts.append("s-1", store.transcripts.end("s-1"), mine, plain, true),
+    ).toEqual({ size: 6, digest: "", ...plain });
+    expect(store.transcripts.marks("s-1", 0)).toEqual([{ upto: 6, digest: "" }]);
 
     const over = store.transcripts.append(
       "s-1",
@@ -1616,8 +1655,8 @@ inEachHome(
       true,
     );
 
-    expect(over).toEqual({ size: 6, tail: "t1", of: 6, last: "l", by: "twin" });
-    expect(store.transcripts.since("s-1", 0)).toEqual(first);
+    expect(over).toEqual({ size: 6, tail: "t1", digest: "dt1", of: 6, last: "l", by: "twin" });
+    expect(store.transcripts.since("s-1", 0)).toEqual([{ upto: 6, text: '{"a"}\n' }]);
 
     const [held, closed] = [
       "0b9a51a2-3c44-4f0e-9d3a-6f1f5f1f7a10",
@@ -1639,7 +1678,7 @@ inEachHome(
 
     expect(store.transcripts.besides(held)).toEqual([
       { file: "tool-results/a.txt", size: 6, ...whole },
-      { file: "tool-results/b.png", size: 0, ...whole, tail: "" },
+      { file: "tool-results/b.png", size: 0, ...whole, tail: "", digest: "" },
     ]);
     expect(store.transcripts.prune()).toBe(4);
     expect(store.transcripts.end("s-1")).toEqual(over);
