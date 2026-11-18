@@ -301,11 +301,15 @@ export async function folder(
           () => "0",
         ),
       ),
-    hold: (held: boolean) => {
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // What the sessions hold back while held: their answers, or a new session's channel, so the drill can do something first.
+    hold: (held: boolean, what: "answers" | "channel" = "answers") => {
+      const file = join(claude, what === "answers" ? "hold" : "hold.channel");
+
       if (held) {
-        writeFileSync(join(claude, "hold"), "");
+        writeFileSync(file, "");
       } else {
-        rmSync(join(claude, "hold"), { force: true });
+        rmSync(file, { force: true });
       }
     },
     sessions: () =>

@@ -14,6 +14,7 @@ export const KEY = "drill-store-key-long-enough-for-the-worker";
 export function cloudflare() {
   const storage = objectStorage();
   const sockets = new Set<Bun.ServerWebSocket>();
+  let silent = false;
 
   const env: Env = {
     KEY,
@@ -44,6 +45,14 @@ export function cloudflare() {
       port,
       idleTimeout: 0,
       fetch: async (request, server) => {
+        if (silent) {
+          await new Promise((resolve) => {
+            request.signal.addEventListener("abort", resolve);
+          });
+
+          return new Response(null, { status: 504 });
+        }
+
         if (
           new URL(request.url).pathname.endsWith("/watch") &&
           request.headers.get("authorization") === `Bearer ${KEY}`
@@ -58,7 +67,7 @@ export function cloudflare() {
           sockets.add(socket);
         },
         message: (socket, data) => {
-          if (String(data) === "ping") {
+          if (!silent && String(data) === "ping") {
             socket.send("pong");
           }
         },
@@ -79,7 +88,13 @@ export function cloudflare() {
       await server?.stop(true);
       server = undefined;
     },
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // The other outage: the address takes every request and answers none, a watching socket's ping included, so each caller waits out its own time.
+    silent: () => {
+      silent = true;
+    },
     up: () => {
+      silent = false;
       server ??= serve(port);
     },
     rows: (query: string, ...bound: unknown[]) => storage.sql.exec(query, ...bound).toArray(),

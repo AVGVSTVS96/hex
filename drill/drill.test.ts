@@ -99,7 +99,7 @@ function drillFor() {
   const outside: { stop: () => Promise<void> }[] = [];
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A hook that fails in a session doesn't stop the session, and a reply the tool refuses never reaches the owner, so hex can go on with either: the drill fails on the first, whatever it was waiting for.
+  // A hook that fails in a session doesn't stop the session, and a reply the tool calls failed may have reached the owner all the same, so hex can go on with either: the drill fails on the first, whatever it was waiting for.
   const sound = () => {
     for (const each of folders) {
       insist(
@@ -298,6 +298,61 @@ scenario(
     );
     await talk(chat, store, "after the outage");
     once(chat, store, key, "during the outage");
+  },
+);
+
+scenario(
+  "the store goes silent as a message's session starts: the session is given the message all the same, and answers it once",
+  async ({ running, soon, answered, talk }) => {
+    const { chat, store, hex } = await running();
+    hex.hold(true, "channel");
+    const key = chat.say("as the store goes silent");
+    await soon('the store keeping "as the store goes silent"', () => kept(store, key) > 0);
+
+    const { sessionId } = await soon("a session starting for it, its channel held", () =>
+      hex.sessions().find(({ channel }) => channel === ""),
+    );
+
+    store.silent();
+    hex.hold(false, "channel");
+
+    await soon("that session connecting while the store is silent", () =>
+      hex.sessions().some((each) => each.sessionId === sessionId && each.channel !== ""),
+    );
+
+    await answered(chat, "as the store goes silent");
+    store.up();
+    await soon(
+      'the store keeping the answer to "as the store goes silent", and the session that took it, once it\'s back',
+      () => sent(store, "as the store goes silent") > 0 && takerOf(store, key),
+    );
+    await talk(chat, store, "after the silence");
+    once(chat, store, key, "as the store goes silent");
+  },
+);
+
+scenario(
+  "a session killed while the store is silent: the thread's next session answers what comes meanwhile, and what the dead one held once the store is back",
+  async ({ running, soon, answered, talk }) => {
+    const { chat, store, hex } = await running();
+    hex.hold(true);
+    const held = chat.say("held as the store goes silent");
+
+    const taker = await soon('the session taking "held as the store goes silent"', () =>
+      takerOf(store, held),
+    );
+
+    const pid = hex.sessions().find(({ sessionId }) => sessionId === taker)?.pid ?? 0;
+    store.silent();
+    process.kill(pid, "SIGKILL");
+    hex.hold(false);
+    const meanwhile = chat.say("while the store is silent");
+    await answered(chat, "while the store is silent");
+    store.up();
+    await answered(chat, "held as the store goes silent");
+    await talk(chat, store, "after the store is back");
+    once(chat, store, held, "held as the store goes silent");
+    once(chat, store, meanwhile, "while the store is silent");
   },
 );
 

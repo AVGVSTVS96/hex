@@ -19,7 +19,7 @@ import { z } from "zod";
 // Claude Code as hex drives it, for the drill. `claude --bg` starts a background session as a job that `claude agents --json`, `stop`, `rm` and `respawn` take: https://code.claude.com/docs/en/agent-view#manage-sessions-from-the-shell
 // A session runs its plugin's hooks with the inputs Claude Code gives them (https://code.claude.com/docs/en/hooks), connects to its channel's MCP server, and takes each channel message as a turn: https://code.claude.com/docs/en/channels-reference
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Its model is the drill's: it answers each message with the reply tool, "answer to: <the message>", and holds its answer while the drill's hold file is there.
+// Its model is the drill's: it answers each message with the reply tool, "answer to: <the message>", and holds its answer while the drill's hold file is there, or its channel while hold.channel is.
 
 const VERSION = "2.1.327";
 const config = process.env.CLAUDE_CONFIG_DIR ?? "";
@@ -32,6 +32,7 @@ if (config === "" || !existsSync(config)) {
 
 const jobs = join(config, "jobs");
 const hold = join(config, "hold");
+const holdChannel = join(config, "hold.channel");
 const faults = join(config, "faults");
 
 const JobRecord = z.object({
@@ -439,6 +440,10 @@ async function session(id: string) {
 
   const inbox: z.infer<typeof Inbound>[] = [];
   let arrival = Promise.withResolvers<boolean>();
+
+  while (existsSync(holdChannel)) {
+    await Bun.sleep(50);
+  }
 
   const channel = channelOf(self, mcp?.url ?? "", mcp?.headers ?? {}, (message) => {
     inbox.push(message);
