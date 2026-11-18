@@ -685,8 +685,10 @@ export function transcript(cwd: string, session: string) {
   return join(home(), "projects", cwd.replaceAll(/[^a-zA-Z0-9]/gu, "-"), `${session}.jsonl`);
 }
 
+export const transcripts = () => join(home(), "projects");
+
 export function saved(session: string) {
-  const projects = join(home(), "projects");
+  const projects = transcripts();
 
   try {
     return readdirSync(projects).some((project) =>
