@@ -32,7 +32,7 @@ import type { Questions } from "./socket.ts";
 import { stalledTurns } from "./stalls.ts";
 import { sessionStarts } from "./start.ts";
 import { sessionStops } from "./stops.ts";
-import { asked, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
+import { asked, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
 import type { Store } from "./store.ts";
 import { openThreads } from "./threads.ts";
 import { wentThrough, whenThrough } from "./through.ts";
@@ -764,7 +764,7 @@ export async function startHub({
       open: (thread, line) => void welcome(thread, line),
       close: (thread, line) => void drop(thread, line),
     },
-    open(storeDir),
+    owing.operations,
     zone,
   );
 

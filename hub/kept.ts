@@ -119,12 +119,19 @@ export const OwedWrite = z.discriminatedUnion("kind", [
   }),
   z.object({ kind: z.literal("letHeldGo"), thread: z.string() }),
   z.object({ kind: z.literal("pass"), pass: PASS }),
+  z.object({
+    kind: z.literal("operation"),
+    scope: z.string(),
+    id: z.string(),
+    input: z.string(),
+    result: z.string().nullable(),
+  }),
 ]);
 
 export type Owed = z.infer<typeof OwedWrite>;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What stays true whoever holds hex: a message, a take, a turn's memory pass, a tap's answer, each landing once by its key. A whole snapshot of an app's threads and the release of what was held for a turn are this hub's own state, worth nothing once another hub held hex.
+// What stays true whoever holds hex: a message, a take, a turn's memory pass, a tap's answer, a tool call's record, each landing once by its key. A whole snapshot of an app's threads and the release of what was held for a turn are this hub's own state, worth nothing once another hub held hex.
 const isFact = (write: Owed) => write.kind !== "threads" && write.kind !== "letHeldGo";
 
 const SpoolLine = z.object({ write: z.unknown(), tenure: z.number().optional() });
@@ -153,6 +160,10 @@ function keyOf(owed: Owed) {
     case "pass": {
       return `pass:${owed.pass.session}:${owed.pass.by}`;
     }
+
+    case "operation": {
+      return `operation:${owed.scope}:${owed.id}`;
+    }
   }
 }
 
@@ -171,7 +182,8 @@ function asOf(owed: Owed, at: string): Owed {
 
     case "threads":
     case "letHeldGo":
-    case "pass": {
+    case "pass":
+    case "operation": {
       return owed;
     }
   }
@@ -513,6 +525,16 @@ async function madeOn(store: Store, write: Owed, { letGo, queue }: Doing): Promi
 
       return true;
     }
+
+    case "operation": {
+      await store.operations.begin(write.scope, write.id, write.input);
+
+      if (write.result !== null) {
+        await store.operations.finish(write.scope, write.id, write.result);
+      }
+
+      return true;
+    }
   }
 }
 
@@ -559,6 +581,48 @@ function owedAtStart(spool: string, others: string[]) {
   }
 
   return owed.values();
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A tool call's record, which keeps it to running once: the store's, or the hub's own while it's owed, so a repeat is answered from it until the store has it. A call the store can't be asked about runs, since a first call and a repeat of one from before the outage look the same from here.
+function operationsOwed({
+  owed,
+  current,
+  failed,
+  owe,
+  must,
+}: {
+  owed: Map<string, Owed>;
+  current: () => Store;
+  // oxlint-disable-next-line anti-slop/no-unknown-parameters -- whatever a store call threw
+  failed: (error: unknown) => "lost" | "unreached" | "refused";
+  owe: (write: Owed) => void;
+  must: (write: Owed, otherwise: boolean) => Promise<boolean>;
+}) {
+  return {
+    begin: async (scope: string, id: string, input: string) => {
+      const mine = owed.get(keyOf({ kind: "operation", scope, id, input, result: null }));
+
+      if (mine?.kind === "operation") {
+        return { fresh: false, input: mine.input, result: mine.result };
+      }
+
+      try {
+        return await tracked(current().operations.begin(scope, id, input));
+      } catch (error) {
+        if (failed(error) !== "unreached") {
+          throw error;
+        }
+
+        owe({ kind: "operation", scope, id, input, result: null });
+
+        return { fresh: true, input, result: null };
+      }
+    },
+    finish: async (scope: string, id: string, input: string, result: string) => {
+      await must({ kind: "operation", scope, id, input, result }, false);
+    },
+  };
 }
 
 export function keeping(
@@ -787,6 +851,7 @@ export function keeping(
   return {
     kept,
     must,
+    operations: operationsOwed({ owed, current, failed, owe, must }),
     owe: (write: Owed) => {
       owe(asOf(write, new Date().toISOString()));
       void pay();
@@ -810,6 +875,8 @@ export function keeping(
 }
 
 export type Owing = ReturnType<typeof keeping>;
+
+export type Operations = Owing["operations"];
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // What the hubs of a folder owed as fact, paid with no hub and no claim, through a client no tenure refuses, as a process that lost hex stops or never starts (bin/hex, hub/paid.ts), the way a hub pays it: a message the store refuses is set aside, and what the store didn't answer stays in its spool. The spools are the folder's, its refused files, and those a hex before this one kept in each app's own folder. Whether nothing is still owed.

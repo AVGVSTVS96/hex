@@ -3,9 +3,8 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 
 import { clock } from "./clock.ts";
-import { tracked } from "./kept.ts";
+import type { Operations } from "./kept.ts";
 import { ordered } from "./ordered.ts";
-import type { Store } from "./store.ts";
 
 export type ToolArguments = z.input<z.ZodObject>;
 
@@ -171,7 +170,7 @@ export function endpoint(
   token: string,
   server: ChannelServer,
   hooks: Hooks,
-  store: Store,
+  operations: Operations,
   zone = () => Temporal.Now.timeZoneId(),
 ) {
   const starting = new Map<string, Handshake>();
@@ -223,7 +222,7 @@ export function endpoint(
     const key = JSON.stringify([scope, id]);
     const value = [toolName, args];
     const input = JSON.stringify(value);
-    const kept = await beginning(key, () => tracked(store.operations.begin(scope, id, input)));
+    const kept = await beginning(key, () => operations.begin(scope, id, input));
 
     if (!isDeepStrictEqual(JSON.parse(kept.input), value)) {
       return failure(`${toolName} didn't run: identity ${id} already identifies a different call`);
@@ -242,7 +241,7 @@ export function endpoint(
 
     const answer = call(thread, toolName, args, beside)
       .then(async (answered) => {
-        await tracked(store.operations.finish(scope, id, JSON.stringify(answered)));
+        await operations.finish(scope, id, input, JSON.stringify(answered));
 
         return answered;
       })
