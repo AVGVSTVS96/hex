@@ -200,6 +200,8 @@ export async function folder(
     JSON.stringify({ allowFrom: [String(OWNER)] }),
   );
 
+  writeFileSync(join(claude, "runner"), String(process.pid));
+
   const login = await sh(["/bin/sh", "-ilc", "command -v claude"], { cwd: dir, env });
 
   if (login !== join(fakes, "claude")) {

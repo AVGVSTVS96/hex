@@ -109,6 +109,14 @@ function alive(pid: number | undefined) {
   }
 }
 
+function drillRuns() {
+  try {
+    return alive(Number(readFileSync(join(config, "runner"), "utf-8")));
+  } catch {
+    return false;
+  }
+}
+
 const ids = () =>
   existsSync(jobs) ? readdirSync(jobs).filter((id) => existsSync(jobFile(id))) : [];
 
@@ -478,6 +486,14 @@ async function session(id: string) {
   setInterval(() => {
     arrival.resolve(true);
   }, 60_000);
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A session outlives its hub, as Claude Code's does, and is no child of the drill, so what stops the drill and its leash by their process tree leaves it running: it ends itself once the drill that made its sandbox is gone.
+  setInterval(() => {
+    if (!drillRuns()) {
+      process.exit(0);
+    }
+  }, 5000);
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A session restarted in place mid-turn runs that turn again, as hex counts on it to (hub/sessions.ts, channelOrRestart).
