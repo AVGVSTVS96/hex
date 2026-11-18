@@ -47,7 +47,6 @@ const INBOX_DIR = join(STATE_DIR, "inbox");
 const SOCKET = join(STATE_DIR, "acp.sock");
 const PLACED_FILE = join(STATE_DIR, "placed.json");
 
-// The provider instance T3 Code runs hex as, a key of providerInstances in its settings: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/contracts/src/settings.ts#L1438
 const PROVIDER_INSTANCE = process.env.T3_INSTANCE ?? "hex";
 const HEX_DIR = process.env.HEX_DIR ?? process.cwd();
 const HOME = homedir();
@@ -70,11 +69,9 @@ type Turn = {
 
 const turns = new Map<string, Turn>();
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Whether each thread's turn is over, as its hooks last said since this hub started. A rejoined turn goes by it over Claude's listing, which lags the hooks, and a hook that came before the turn was tracked reaches no turn.
 const rested = new Map<string, boolean>();
 
-// T3's provider check opens a session it never prompts, so an unprompted thread lasts only as long as its connection: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/provider-acp-registry/src/server/probe.ts#L417-L438
+// WARNING: T3's provider check opens a session it never prompts, so an unprompted thread lasts only as long as its connection: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/provider-acp-registry/src/server/probe.ts#L417-L438
 type Unprompted = { cwd: string; settings: Settings; socket: Socket };
 
 const opened = new Map<string, Unprompted>();
@@ -122,8 +119,6 @@ function link(thread: string) {
   return record && !record.deleted ? linkTo(record.thread) : undefined;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The hub saves its threads, and so asks for their links, while it starts, before there's a hub to match T3's records to.
 const hubStarted = Promise.withResolvers();
 
 async function mirrorOrReport(records: typeof recordsThisSave) {
@@ -452,7 +447,7 @@ async function prompt(
   return await promise;
 }
 
-// T3 follows the user's text with its own context block, which a command doesn't take: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/provider-acp/src/server/adapter.ts#L723-L727
+// WARNING: T3 follows the user's text with its own context block, which a command doesn't take: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/provider-acp/src/server/adapter.ts#L723-L727
 function startsWithCompact(blocks: ContentBlock[]) {
   return blocks[0]?.type === "text" && blocks[0].text.trim() === "/compact";
 }
@@ -477,7 +472,7 @@ function track(
   };
 
   turns.set(thread, turn);
-  // T3 keeps each session's MCP token only in its running server, so a prompt T3 aborts leaves the session's T3 tools dead: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/apps/server/src/mcp/McpSessionRegistry.ts#L122-L135
+  // WARNING: T3 keeps each session's MCP token only in its running server, so a prompt T3 aborts leaves the session's T3 tools dead: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/apps/server/src/mcp/McpSessionRegistry.ts#L122-L135
   signal.addEventListener(
     "abort",
     () => {
@@ -668,7 +663,7 @@ function advertiseOnceAnswered(client: AgentContext, sessionId: string) {
   });
 }
 
-// ACP's session/cancel can't say whether T3 is steering or stopping (https://agentclientprotocol.com/protocol/v1/prompt-turn#cancellation), so T3's records of a steering_restart tell: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/apps/server/src/orchestration-v2/Orchestrator.ts#L5430-L5452
+// WARNING: ACP's session/cancel can't say whether T3 is steering or stopping (https://agentclientprotocol.com/protocol/v1/prompt-turn#cancellation), so T3's records of a steering_restart tell: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/apps/server/src/orchestration-v2/Orchestrator.ts#L5430-L5452
 function cancel(thread: string) {
   const turn = turns.get(thread);
 

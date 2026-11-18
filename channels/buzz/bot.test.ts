@@ -82,8 +82,6 @@ function fakeRelay() {
   const online = new Map<string, string>();
   const relayKey = generateSecretKey();
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Buzz files a reaction or deletion under the channel of the event it names, h tag or not.
   function channelOf(event: Event | undefined): string | undefined {
     const target =
       event !== undefined && [5, 7].includes(event.kind)
@@ -435,8 +433,6 @@ const running: {
   dir: string;
 }[] = [];
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A session's Stop hook, saying its turn is over: one line on a connection of its own to the hub.
 async function turnEnded(state: string, thread: string) {
   const ending = connect(join(state, "hub.sock"));
   await once(ending, "connect");
@@ -609,8 +605,6 @@ exit 0
     return {
       send: (message: HubMessage) => socket.write(`${JSON.stringify(message)}\n`),
       ended,
-      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-      // Waiting for more than came means the turns those started are over, as a session's Stop hook would say: the hub holds the owner's words for a turn until then.
       inbound: (count: number) =>
         until(() => {
           const lines = inbounds(line.received);

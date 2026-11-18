@@ -51,7 +51,6 @@ const server = Bun.serve({
 
     const body = McpRequest.parse(await request.json());
 
-    // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#session-management: a new session starts without the old one's id.
     if (body.method === "initialize" && request.headers.has("mcp-session-id")) {
       return new Response("already initialized", { status: 400 });
     }

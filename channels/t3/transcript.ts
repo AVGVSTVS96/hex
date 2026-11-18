@@ -63,8 +63,6 @@ const contentSchema = z.union([
   ),
 ]);
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A message that came mid-turn reaches the session through hub/held.ts, as a tool call's hook context.
 function heldForTheTurn(attachment: z.infer<typeof entrySchema>["attachment"]) {
   return (
     attachment?.type === "hook_additional_context" && attachment.content?.some(holdsTag) === true

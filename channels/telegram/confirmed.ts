@@ -6,7 +6,7 @@ const LOOK_AGAIN_MS = 1000;
 
 const Asked = z.looseObject({ offset: z.number().optional() });
 
-// Each getUpdates confirms to Telegram every update before its offset (https://core.telegram.org/bots/api#getupdates), so it asks with the offset hex's store has every update before: past those its hub has, once synced resolves, and from the first update it couldn't confirm while synced rejects, so Telegram keeps those for whichever hub asks next. Meanwhile the hub is given only the updates it hasn't had, and asks again after a pause when there are none, since Telegram answers at once while it holds any. A deaf hub is stopping, so its last getUpdates confirms only what synced already confirmed, at once, instead of waiting for the store, and the next hub gets the rest again.
+// WARNING: getUpdates confirms to Telegram every update before its offset, which Telegram then never sends again: https://core.telegram.org/bots/api#getupdates
 export function confirmingWhatsKept(
   synced: () => Promise<void>,
   { deaf = (): boolean => false, lookAgainMs = LOOK_AGAIN_MS } = {},

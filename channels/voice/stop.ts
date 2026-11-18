@@ -10,10 +10,6 @@ const SURE = 0.8;
 
 export type Stopping = ReturnType<typeof stopping>;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-/* Only words said while hex works on a handoff go to Jev, and a stop goes on the first sure answer,
-   even for half a sentence: hex rereads the words before it acts on them, so a wrong stop costs a
-   few seconds, and a late one lets the work happen. */
 export function stopping(
   judge: Judge,
   stop: (delegation: string) => void,

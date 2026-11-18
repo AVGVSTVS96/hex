@@ -1068,9 +1068,6 @@ test.concurrent("with no call live, hex failing to answer tells nobody", async (
   expect(engine.instructed).toEqual([]);
 });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// These run one at a time, since each holds the engine to a window of time, waits by sleeping, races the engine's own retries, or reads what the voice got as soon as a tool answers: twenty engines at once on four cores made one fail.
-
 test("a say the voice never confirms gives the voice session an answer instead of holding its turn", async () => {
   await using engine = await appCall();
   await started(engine);

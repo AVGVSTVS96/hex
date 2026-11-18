@@ -244,12 +244,6 @@ const TOLD = new Map<string, Agent["state"]>([
   ["failed", "failed"],
 ]);
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-/* Every hex thread as a run, from the records Claude Code already keeps (the same ones `claude
-   agents --json` prints). A session a thread's session started (a topic's `claude -p` build), a
-   job a thread owns (bin/job), or a T3 Code thread's session below one the thread handed off
-   counts toward it as one of its agents. A running session that works for no thread (hex's own
-   check, its memory agent, a terminal) isn't on the board. */
 export class Board extends Changes {
   runs: Run[] = [];
   finished: Finished[] = [];
@@ -385,9 +379,6 @@ export class Board extends Changes {
       ?.session;
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  /* A session whose process died (killed, crashed) leaves its record behind, so no file change
-     says it's gone. */
   async refresh() {
     clearTimeout(this.pending);
     this.stale = { threads: true, sessions: true };
@@ -464,8 +455,6 @@ export class Board extends Changes {
     }, 30);
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // What's stale is taken before the reads, so a change heard while they're under way marks it stale again for the next build.
   private readonly build = oneAtATime("the board", async () => {
     const stale = this.stale;
     this.stale = { threads: false, sessions: false };
@@ -662,8 +651,6 @@ export class Board extends Changes {
     }));
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session hex runs beside the thread does hex's own work there, not the owner's conversation, so it doesn't make the thread work.
   private started(thread: Thread) {
     const key = `${thread.app}:${thread.id}`;
 
@@ -876,9 +863,6 @@ export class Board extends Changes {
     };
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  /* A run of a project's own has no thread: it works while its agents do, and stays on the board
-     until hex restarts, at most a week. */
   private group(
     runs: Run[],
     agentTasks: Record<string, Pick<Task, "id" | "owner" | "project">>,
@@ -975,8 +959,6 @@ export class Board extends Changes {
     return (await this.finishing(since))(this.runs);
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Reads the tasks closed since then, and gives what places each on the runs it's handed.
   private async finishing(since: string): Promise<(runs: Run[]) => Finished[]> {
     const store = reading(this.state);
     const [all, closed] = await Promise.all([store.threads.list(), store.tasks.finished(since)]);
@@ -1502,9 +1484,6 @@ function currentStateBegan(timeline: Entry[], state?: string) {
   return since;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-/* A thread's last week for its lane, drawn on a log scale. Two working runs whose gap (only
-   finished or idle in it) is under a fiftieth of its age are one, since neither shows apart. */
 export function track(turns: Turn[], now: number): Turn[] {
   const from = now - TRACK;
 

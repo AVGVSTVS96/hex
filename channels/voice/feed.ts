@@ -65,9 +65,6 @@ export class Feed extends Changes {
     }
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  /* Mapping every closed task to its run takes a few hundred milliseconds, so the entries are made again
-     only when what they're made from changes, read cheaply here. */
   readonly check = oneAtATime("the feed", async () => {
     const now = JSON.stringify([
       await reading(this.state).tasks.finished(""),

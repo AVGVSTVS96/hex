@@ -117,7 +117,6 @@ const controlRequest = z.union([
   z.looseObject({ type: z.literal("log_follow"), tail: z.unknown().exactOptional() }),
 ]);
 
-// The activity panel is NIP-AO: https://github.com/block/buzz/blob/d839d3731a11ab363a69e7f5b851c3031b7680dd/docs/nips/NIP-AO.md
 export function startActivity({
   relay,
   secretKey,
@@ -559,7 +558,7 @@ export function startActivity({
     });
   }
 
-  // A batch never mixes channels, because Desktop files each frame by its channelId: https://github.com/block/buzz/blob/d839d3731a11ab363a69e7f5b851c3031b7680dd/desktop/src/features/agents/observerRelayStore.ts#L113
+  // WARNING: Buzz Desktop files each frame by its channelId, so a batch never mixes channels: https://github.com/block/buzz/blob/d839d3731a11ab363a69e7f5b851c3031b7680dd/desktop/src/features/agents/observerRelayStore.ts#L113
   function sameChannelBatchFrom(channel: string | null): Frame {
     const picked: Frame[] = [];
     let total = 0;

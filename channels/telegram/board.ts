@@ -8,7 +8,7 @@ import { z } from "zod";
 
 export const HTML = join(import.meta.dir, "board.html");
 
-// Each of a widget's two states holds at most 1024 bytes, and a widget is at most 600px tall, which six rows and a "more" line under the counts fill: https://core.telegram.org/bots/widgets#limits
+// WARNING: Telegram caps each of a widget's two states at 1024 bytes and a widget at 600px, which six rows and a "more" line fill: https://core.telegram.org/bots/widgets#limits
 const ROOM = 1024;
 const ROWS = 6;
 const WORDS = 50;
@@ -211,9 +211,6 @@ export async function lines(
   };
 }
 
-/* The widget's two states, each within its 1024 bytes: working and waiting in the chat state, done
-   in the shared one. `t` is when it was drawn, a row's time its minute after `b`, and its link the
-   path after https://t.me/c/, starting at "/" for the chat most rows share (`c`). */
 export function state(found: Lines, now = Date.now()): State {
   const chats = new Map<string, number>();
 
@@ -284,10 +281,7 @@ export type Paper = {
 const content = ({ chat_data, public_data }: State) =>
   `${chat_data.replace(/^\{"t":\d+,/u, "{")}${public_data.replace(/^\{"t":\d+,/u, "{")}`;
 
-/* The owner's board: one widget in their DM that the hub keeps current itself, on every change to
-   hex.db and to the session records Claude Code keeps, so no session spends a turn on it. An edit
-   counts against the bot's sending limit, so changes close together go out as one:
-   https://core.telegram.org/bots/widgets#changing-the-state */
+// WARNING: a widget's edit counts against the bot's sending limit, so changes close together go out as one: https://core.telegram.org/bots/widgets#changing-the-state
 export class Keeper {
   private readonly store: Store;
   private readonly file: string;

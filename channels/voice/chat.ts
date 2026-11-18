@@ -45,8 +45,6 @@ export class Chats {
     ];
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // One read of a chat at a time, so a slower read never records an older chat over a newer one.
   of(where: Where): Promise<Chat> {
     const id = `${where.app}:${where.thread}`;
     const earlier = this.reading.get(id);

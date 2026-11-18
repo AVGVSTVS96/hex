@@ -183,7 +183,7 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
     };
 
     current = { channel: channel.id, end };
-    // A disconnect that's a move or a region change reconnects on its own: https://discordjs.guide/voice/voice-connections#handling-disconnects
+    // WARNING: discord.js reports a move or a region change as a disconnect, and reconnects on its own: https://discordjs.guide/voice/voice-connections#handling-disconnects
     connection.on(VoiceConnectionStatus.Disconnected, () => {
       Promise.race([
         entersState(connection, VoiceConnectionStatus.Signalling, 5000),

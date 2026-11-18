@@ -68,7 +68,7 @@ async function revoke(session: string) {
   }
 }
 
-// hex calls T3 Code's server as T3's app does: a bearer token its CLI issues (https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/apps/server/src/cli/auth.ts#L169-L184), a websocket ticket for it (https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/contracts/src/environmentHttp.ts#L580), then Effect RPC over /ws (https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/contracts/src/rpc.ts#L525).
+// WARNING: T3 Code has no public client API, so hex calls its server as T3's app does and a T3 release can change any step: a bearer token its CLI issues (https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/apps/server/src/cli/auth.ts#L169-L184), a websocket ticket for it (https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/contracts/src/environmentHttp.ts#L580), then Effect RPC over /ws (https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/contracts/src/rpc.ts#L525).
 export async function withT3<T>(
   work: (call: (tag: string, payload: Json) => Promise<Answer>) => Promise<T>,
 ): Promise<T> {
@@ -206,7 +206,7 @@ export function projectAt(root: string): string | undefined {
   }
 }
 
-// Before T3 cancels a turn to steer it, it records the run as starting again on a steering_restart attempt: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/apps/server/src/orchestration-v2/Orchestrator.ts#L5430-L5452
+// WARNING: T3 tells a steer from a Stop only in its own database, where it records the run it cancels to steer as starting again on a steering_restart attempt: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/apps/server/src/orchestration-v2/Orchestrator.ts#L5430-L5452
 export function steering(session: string) {
   const file = join(USERDATA, "statev2.sqlite");
 
@@ -236,7 +236,6 @@ export function steering(session: string) {
   }
 }
 
-// T3's createdBy and creationSource for a message: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/contracts/src/orchestrationV2.ts#L89-L98
 const AUTHORS = new Map<string, Author>([
   ["user/web", "owner"],
   ["user/mobile", "owner"],
@@ -319,7 +318,6 @@ export function appThreads():
 export function linkTo(thread: string) {
   const environment = readFileSync(join(USERDATA, "environment-id"), "utf-8").trim();
 
-  // T3_APP_SCHEME is the T3 Code app's URL scheme: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/apps/mobile/app.config.ts#L83-L99
   const scheme = process.env.T3_APP_SCHEME ?? "";
 
   return `${scheme === "" ? "t3code" : scheme}://threads/${environment}/${encodeURIComponent(thread)}`;

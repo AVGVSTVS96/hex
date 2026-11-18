@@ -206,8 +206,6 @@ const NOT_NEEDED = "Not needed";
 const BACK = "Back to hex";
 const DECIDED_MS = 7 * 24 * 60 * 60_000;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A pass reads every record (~$1.60 at API prices) and pinned posts change most turns, so what changes while nobody looks waits until they open Tasks, or an hour.
 const UNSEEN_PASS_MS = 60 * 60_000;
 
 const PICK = /\s*[([]?\s*(?:←\s*)?(?:(?:my|hex[’']s) pick)\s*[)\]]?/iu;
@@ -999,8 +997,6 @@ export class Questions extends Changes {
     }, 30);
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The records are swapped in whole once read, so what reads them meanwhile sees the last build's, never a half-cleared one.
   private readonly build = oneAtATime("the owner's questions", async () => {
     const db = store(this.state);
 
@@ -1342,9 +1338,6 @@ export class Questions extends Changes {
     return { app, place: name, task: key, ...(filled(link) && { link }), at };
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  /* A call's record holds its whole transcript, megabytes for a long one, so its title and start
-     are read again only once the file changes. */
   private call(id: string): Place & { at?: string | undefined } {
     const file = join(this.calls, `${id}.json`);
     const stamp = stampOf(file);
@@ -1361,9 +1354,6 @@ export class Questions extends Changes {
     return { app: "voice", place: known.title ?? "a call", call: id, at: known.started };
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  /* Marks are kept 14 days, but a final answer for good: an ask a pinned post still mentions would
-     come back without one. */
   private saveMarks() {
     const since = new Date(Date.now() - KEEP_MARKS_MS).toISOString();
 

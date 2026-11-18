@@ -38,8 +38,6 @@ const [mode, ...rest] = process.argv.slice(2);
 const store = open(stateDir());
 const records = join(stateDir(), "jobs");
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Names the machine hex runs on while it runs on another one, for this machine's jobs to reach it: whatever moved hex there writes it once hex serves there, and removes it as it brings hex back.
 const whereHexRuns = join(
   process.env.XDG_STATE_HOME ?? join(homedir(), ".local/state"),
   "hex/elsewhere",
@@ -47,8 +45,6 @@ const whereHexRuns = join(
 
 const HOW_LONG_A_MOVE_IS_WAITED_FOR_MS = 60_000;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A machine that doesn't answer may only be cut off for a moment, with its jobs still running: only whatever moved hex away from it, which watched it go, names it here, one machine a line, for the next resume to carry its jobs on.
 const machinesGone = join(whereHexRuns, "../gone");
 const resuming = join(whereHexRuns, "../resuming");
 
@@ -107,8 +103,6 @@ async function onMachine(machine: string, command: string[], input = "") {
   }
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// How each job this machine ran last stopped, kept on this machine alone: hex.db hears it from here as the job ends, and asks here when it couldn't.
 const outcomes = join(whereHexRuns, "../jobs");
 
 const OutcomeJson = z.object({
@@ -201,8 +195,6 @@ async function stdinThatEnds(): Promise<string> {
   return Buffer.concat(chunks).toString();
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// While hex's store doesn't answer, a first word that isn't a program names the thread, as the store would have said: as a command it couldn't run anyway.
 async function openThreadIdByKeyOrId(word: string): Promise<string | undefined> {
   return await answered(
     async () => {
@@ -215,8 +207,6 @@ async function openThreadIdByKeyOrId(word: string): Promise<string | undefined> 
   );
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Where a job's news goes: the session beside a thread that started it, which resumes for it; for General's own work, a new session beside General, so its conversation stays the owner's; otherwise the thread that started it.
 function reportsTo(): string | undefined {
   const app = process.env.HEX_CHANNEL?.match(/^plugin:([^@]+)/u)?.[1];
   const { HEX_BESIDE, HEX_MAIN, HEX_THREAD } = process.env;
@@ -232,8 +222,6 @@ function reportsTo(): string | undefined {
   return served();
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A new session beside General learns from the job where its work came from. News of a job's end closes its run in hex.db wherever it lands.
 const News = z.object({
   unit: z.string(),
   owner: z.string(),
@@ -314,8 +302,6 @@ async function delivered({ unit, owner, said, at, from, ends }: z.infer<typeof N
   });
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a job command writes to hex's store while it doesn't answer is owed: a file a write in records, named in the order they were made, paid in that order before any later write, one process at a time, by the next job command that finds the store answering, so a job starts and ends as ever. Once a call finds the store not answering, this process asks it nothing more, so a command waits on it at most once.
 const OwedJson = z.discriminatedUnion("call", [
   z.object({
     call: z.literal("started"),
@@ -450,8 +436,6 @@ async function keep(write: Owed) {
   );
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A job that stopped without ending tells hex.db, wherever hex runs; one that can't reach it, or stops as hex moves, leaves the next resume to ask this machine, so a move never waits on its jobs.
 async function toldStopped(unit: string, run: string, why: StopReason, at: string) {
   const there = await whereHexIs(0);
 
@@ -896,8 +880,6 @@ if (mode === "--owner") {
   process.exit(started.exitCode ?? 1);
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// One process at a time holds a lock: a pid in a file, so one that was killed leaves a pid that no longer runs, and the next one takes over. A resume's is kept outside hex.db so it never travels with it.
 function alone(lock: string) {
   mkdirSync(join(lock, ".."), { recursive: true });
 
@@ -959,8 +941,6 @@ function startArgs({ command, session }: JobSpec) {
   return isSet(session) && !itsOwnConversationAlready ? ["--session-id", session, ...args] : args;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Nothing else carries a job's conversation between machines, so it is asked of the machine the job ran on before the job starts over without it.
 async function broughtFrom(machine: string, session: string) {
   const sent = await onMachine(machine, [
     "sh",
@@ -987,8 +967,6 @@ function valueAfter(args: string[], flag: RegExp) {
   return at === -1 ? undefined : args[at + 1];
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A job left running on the machine hex moved from carries on there, and one that ended there is done: its own machine says which, from its own record of the run, while it answers.
 async function stillOnTheirMachines(jobs: Pick<Job, "unit" | "machine" | "run">[]) {
   const said = new Map<string, Now>();
 

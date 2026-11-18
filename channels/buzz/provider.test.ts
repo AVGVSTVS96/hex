@@ -18,7 +18,6 @@ import { z } from "zod";
 
 import { respond } from "./provider.ts";
 
-// Recorded from Desktop's real deploy payload builder: https://github.com/block/buzz/blob/d839d3731a11ab363a69e7f5b851c3031b7680dd/crates/buzz-backend-kubernetes/tests/fixtures/provider-wire/deploy-full-launch.request.json
 const fixture = {
   op: "deploy",
   request_id: "req-6",

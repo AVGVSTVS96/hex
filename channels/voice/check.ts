@@ -87,8 +87,6 @@ const RECENT = 3 * 24 * 60 * 60_000;
 const LONG = 2400;
 const PICTURES_A_THREAD = 8;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// One pass runs at a time, in a process of its own so it outlives the voice session that started it, and a new one each pass so it runs the hex that's installed by then; events landing meanwhile leave one mark, so a burst costs one more pass at most.
 export class Check {
   private readonly dir: string;
   private readonly state: string;

@@ -35,8 +35,6 @@ function parseLines(chunk: string) {
     .map((line) => HubLineSchema.parse(JSON.parse(line)));
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Resolves once a build has read the records as they are now, since one asked for while another runs follows it.
 function built() {
   // oxlint-disable-next-line typescript/dot-notation -- build is private, and its end is the signal that the view is current
   return questions["build"]();

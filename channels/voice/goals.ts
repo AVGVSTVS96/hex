@@ -54,11 +54,6 @@ type Undo = { kind: "goal"; status: Task["status"]; proof?: string } | { kind: "
 
 const SCHEDULES = "schedules.json";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-/* What the owner asked hex for and how far each is, and what hex keeps watch on for them: the
-   open tasks and those reached this week, each placed in its project or topic with where it
-   stands, and the timed jobs schedules.json names a `watch` for. hex's own housekeeping has no
-   `watch`, and an idea's checks belong to the idea. */
 export class Goals extends Changes {
   view: View = { version: this.version, goals: [], watching: [] };
   private shown = "";
@@ -111,9 +106,6 @@ export class Goals extends Changes {
     }
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  /* "Not needed" drops a goal, "Not what I asked" opens a reached one again; either tells its
-     topic, and Undo puts back what was there. */
   drop(id: string): Promise<Changed> {
     return this.change(
       id,
@@ -233,9 +225,6 @@ export class Goals extends Changes {
       return runs.find((run) => run.id === id);
     };
 
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    /* A topic's question, and its work when no agent says which goal it's for, belong to its newest
-       open goal. General and a DM hold unrelated asks, so theirs go to no goal. */
     const newest = new Map<string, string>();
 
     for (const task of tasks) {
@@ -391,8 +380,6 @@ const WEEKDAYS = [
   "Sunday",
 ];
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// How often a job runs, as the owner would say it; a cron these words don't cover is "on a schedule".
 export function everyOf(job: Pick<Job, "cron" | "at">, zone?: string): string {
   if (job.cron === undefined) {
     const ats = [job.at ?? []].flat();

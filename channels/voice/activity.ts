@@ -64,8 +64,6 @@ export type Did = {
 
 export type Names = (id: string) => string | undefined;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// One of T3 Code's turn items: a provider's own record of one thing in its turn, as Codex keeps them.
 export type Item = { id: string; type: string; status: string; payload: unknown };
 
 const loose = <T extends z.ZodType>(schema: T) => schema.optional().catch(undefined);
@@ -313,8 +311,7 @@ export function past(text: string) {
   return done !== undefined && done !== "" && text.includes(" ") ? `${done}${rest}` : text;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Siri's Live Activity cut its one step line after 29 characters on the open Duo.
+// WARNING: Siri's Live Activity cut its one step line after 29 characters on the open Duo.
 const BRIEF = 28;
 
 const GENERAL: Record<Kind, [doing: string, did: string]> = {
@@ -1085,8 +1082,6 @@ export async function noThread(state: string, wanted: string) {
 
 const nothingToStop = (_last?: boolean) => Promise.resolve();
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Resolves once it follows the session the thread is on now, so words sent to the thread after it are read.
 export async function followThread(
   thread: Thread,
   hexDir: string,

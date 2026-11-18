@@ -9,8 +9,6 @@ const QUESTION = {
     'hex is muted. Is `said` a command to hex, the assistant on the call, to unmute or talk again now? "Unmute" and "you can talk again" are such commands. Talking about unmuting, asking how it works, or unmuting something else is not.',
 };
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-/* Only words that could be about muting go to Jev, so the rest of the call stays between the caller and OpenAI. */
 const COULD_BE_ABOUT_MUTING = /mute|quiet|shh|hush|shut|silen|talk|speak|back/iu;
 
 const SAME_BREATH = 2000;
@@ -18,10 +16,6 @@ const SURE = 0.7;
 
 export type Muting = ReturnType<typeof muting>;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-/* Speech recognition hands over a sentence a few words at a time, and "can we make it so you mute
-   yourself" reads as a command until the rest arrives, so each answer stands only until Jev has
-   read more of the same sentence; taking one back says so (`second`). */
 export function muting(
   judge: Judge,
   flip: (muted: boolean, second: boolean) => void,
