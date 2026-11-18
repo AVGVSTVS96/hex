@@ -2,6 +2,10 @@
 set -eu
 hex=$(cd "$(dirname "$0")/.." && pwd)
 cd "$hex"
+# A check runs where hex runs, often in one of its sessions or jobs, whose environment names its thread and owner.
+# tools/sandbox.ts takes those names from what a test reads; only a process started without them has none in
+# /proc/<pid>/environ, where the hub reads what a session works for, and a test's session is often the test itself.
+unset $(env | sed -nE 's/^(HEX_[A-Z0-9_]*|[A-Z0-9_]*_STATE_DIR|[A-Z0-9_]*_TOKEN|BUZZ_[A-Z0-9_]*|IIKB_[A-Z0-9_]*|VOICE_[A-Z0-9_]*|MEMORY_DIR|NOTIFY_SOCKET|INVOCATION_ID)=.*/\1/p')
 out=$(mktemp -d)
 export TMPDIR="$out"
 trap 'rm -rf "$out"' EXIT
