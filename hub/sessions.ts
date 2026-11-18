@@ -569,13 +569,13 @@ export function threadSessions({
     );
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // One that was mid-turn when the hub stopped, with no session running for it (a reboot, or hex moved to another machine), has nothing to reconnect: its next session gets what it left at once. The list is from a supervisor that answered, so a session missing from it isn't running.
+    // One that was mid-turn when the hub stopped, with no session running for it (a reboot, or hex moved to another machine), has nothing to reconnect: its next session gets what it left at once. The list is from a supervisor that answered, so a session missing from it isn't running. A store that didn't answer said nothing of the kind, so the thread counts as one, and its cut is owed.
     const midTurn = await Promise.all(
       threads
         .ids()
         .filter((thread) => !outlived.has(thread))
         .map(async (thread) =>
-          (await kept((store) => store.turns.midTurn(thread), false)) ? [thread] : [],
+          (await kept((store) => store.turns.midTurn(thread), true)) ? [thread] : [],
         ),
     );
 
