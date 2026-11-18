@@ -12,8 +12,9 @@ import {
   rmSync,
   statSync,
   watch,
+  writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import * as claude from "./claude.ts";
 import type { Keep } from "./kept.ts";
@@ -47,7 +48,7 @@ const besideOf = (path: string) => join(path.slice(0, -".jsonl".length), BESIDE)
 
 function named(folder: string) {
   try {
-    return readdirSync(folder).filter((name) => NAME.test(name) && !name.endsWith(ARRIVING));
+    return readdirSync(folder).filter((name) => NAME.test(name) && !name.includes(ARRIVING));
   } catch {
     return [];
   }
@@ -195,7 +196,7 @@ function cutShort(short: string, long: string) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Every hub in the process sends through the one client, whose calls reach the store one at a time, so their sends take turns here: the hub's other calls then wait behind one piece at most.
+// Every hub in the process sends through the one client, whose calls reach the store one at a time, so their sends take turns here: the hub's other calls then wait behind one piece of them at most, and behind one page for each session that is starting, which takes no turn here.
 let line: Promise<unknown> = Promise.resolve();
 
 function inLine<T>(call: () => Promise<T>): Promise<T> {
@@ -224,6 +225,25 @@ function holdsAll(path: string, end: End) {
   }
 }
 
+let fetches = 0;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Where a copy arrives before it takes its file's name: a file of this fetch's own, since a send and a session's start may each be bringing the same copy. What an earlier hub left of one, stopped midway, goes.
+function arrivingAt(to: string) {
+  const [folder, mine] = [dirname(to), `${basename(to)}${ARRIVING}-${process.pid}-`];
+  mkdirSync(folder, { recursive: true });
+
+  for (const left of readdirSync(folder)) {
+    if (left.startsWith(`${basename(to)}${ARRIVING}`) && !left.startsWith(mine)) {
+      rmSync(join(folder, left), { force: true });
+    }
+  }
+
+  fetches += 1;
+
+  return join(folder, `${mine}${fetches}`);
+}
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The copy the store holds under a key, whole, as a file beside where it goes; nothing when the store didn't give all of it. bytes: what a piece's text stands for, when it isn't the text itself.
 async function fetched(
@@ -232,29 +252,34 @@ async function fetched(
   to: string,
   bytes: (text: string) => string | Buffer = (text) => text,
 ) {
-  const part = `${to}${ARRIVING}`;
-  mkdirSync(dirname(to), { recursive: true });
-  rmSync(part, { force: true });
-  appendFileSync(part, "");
+  const part = arrivingAt(to);
 
-  for (let size = 0; size < end.size;) {
-    const from = size;
-    const page = (await twice(ask)((store) => store.transcripts.since(key, from))) ?? [];
-    const last = page.at(-1);
+  try {
+    writeFileSync(part, "");
 
-    if (last === undefined) {
-      break;
+    for (let size = 0; size < end.size;) {
+      const from = size;
+      const page = (await twice(ask)((store) => store.transcripts.since(key, from))) ?? [];
+      const last = page.at(-1);
+
+      if (last === undefined) {
+        break;
+      }
+
+      for (const { text } of page) {
+        appendFileSync(part, bytes(text));
+      }
+
+      size = last.upto;
     }
 
-    for (const { text } of page) {
-      appendFileSync(part, bytes(text));
+    if (holdsAll(part, end)) {
+      return part;
     }
+  } catch (error) {
+    rmSync(part, { force: true });
 
-    size = last.upto;
-  }
-
-  if (holdsAll(part, end)) {
-    return part;
+    throw error;
   }
 
   rmSync(part, { force: true });
@@ -262,7 +287,7 @@ async function fetched(
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A file that doesn't hold the end of its own machine's copy was changed in place there, like a secret taken out of it, so the copy starts over from it; unless it is the copy cut short, as a file put back from a backup is, which the copy completes at the session's next start. A copy still short of its file can't tell the two apart, and starts over.
+// A file that doesn't hold the end of its own machine's copy was changed in place there, like a secret taken out of it, so the copy starts over from it; unless it is the copy cut short, as a file put back from a backup is, which the copy completes at the session's next start, and may have by the time the copy is here to compare. A copy still short of its file can't tell the two apart, and starts over.
 async function changedInPlace(ask: Ask, session: string, path: string, end: End) {
   if (end.size < end.of) {
     return true;
@@ -275,7 +300,7 @@ async function changedInPlace(ask: Ask, session: string, path: string, end: End)
   }
 
   try {
-    return !cutShort(path, copy);
+    return !holdsIt(past(path, end, 0)) && !cutShort(path, copy);
   } finally {
     rmSync(copy, { force: true });
   }
@@ -359,29 +384,39 @@ async function besideSent(ask: Ask, key: string, path: string, by: string) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The files beside a transcript that the store holds whole and this machine doesn't, brought here. One that doesn't arrive leaves the session what its transcript's line shows of it.
-async function besidesBrought(ask: Ask, session: string, path: string) {
+// The files beside a transcript that the store holds whole, brought to a machine that lacks them. mine: the conversation's copy is this machine's, so what is here is what the store was or will be sent, and only a file this machine has none of comes; else one it has otherwise comes too, since its own is an older one. Whether the store said what it holds: a file that can't be written here is told and holds nothing up.
+async function besidesBrought(ask: Ask, mine: boolean, session: string, path: string) {
   const folder = besideOf(path);
+  const held = await ask((store) => store.transcripts.besides(session));
 
-  for (const { file, ...end } of (await ask((store) => store.transcripts.besides(session))) ?? []) {
-    const name = file.slice(BESIDE.length + 1);
-    const to = join(folder, name);
+  try {
+    for (const { file, ...end } of held ?? []) {
+      const name = file.slice(BESIDE.length + 1);
+      const to = join(folder, name);
+      const here = sizeOf(to);
 
-    if (
-      file === `${BESIDE}/${name}` &&
-      NAME.test(name) &&
-      end.size === end.of &&
-      sizeOf(to) !== end.of
-    ) {
-      const copy = await fetched(ask, [`${session}/${file}`, end], to, (text) =>
-        Buffer.from(text, "base64"),
-      );
+      if (
+        file === `${BESIDE}/${name}` &&
+        NAME.test(name) &&
+        end.size === end.of &&
+        (here === -1 || (!mine && here !== end.of))
+      ) {
+        const copy = await fetched(ask, [`${session}/${file}`, end], to, (text) =>
+          Buffer.from(text, "base64"),
+        );
 
-      if (copy !== undefined) {
-        renameSync(copy, to);
+        if (copy !== undefined) {
+          renameSync(copy, to);
+        }
       }
     }
+  } catch (error) {
+    process.stderr.write(
+      `hub: what is beside ${session}'s conversation couldn't be brought from hex's store: ${String(error)}\n`,
+    );
   }
+
+  return held !== undefined;
 }
 
 const underWay = new Set<Promise<void>>();
@@ -464,14 +499,16 @@ function following(changed: (session: string, path: string) => void) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a hub knows of the copies. ends: where each stands, while this hub's own sends are all that move it. heard: where the store last said each stands. beside: the files beside each transcript that the store holds whole, and how long. changed: the files found changed in place on this machine, whose copies start over.
+// What a hub knows of the copies, and how it asks the store: a send in turn with every other send in the process (ask), a session's start with no turn among them (first), since a thread waits on it and a hub's start has every channel's sends ahead of it: it asks where the copy stands and, on a machine that lacks the copy, for all of it, a page a call. ends: where each stands, while this hub's own sends are all that move it. heard: where the store last said each stands. beside: the files beside each transcript that the store holds whole, and how long. changed: the files found changed in place on this machine, whose copies start over. written: the sessions whose transcript changed on this machine under this hub, which holds hex, so no other machine has more of them.
 type Known = {
   ask: Ask;
+  first: Ask;
   machine: string;
   ends: Map<string, End>;
   heard: Map<string, End>;
   beside: Map<string, Map<string, number>>;
   changed: Set<string>;
+  written: Set<string>;
 };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -517,20 +554,24 @@ async function besidesSent({ ask, machine, beside }: Known, session: string, pat
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Whether this machine holds a session's whole conversation once the store's copy is here. The copy takes the place of a file that is it cut short, and of another machine's version of it, which is kept beside it for the lines the store never got, the only place they are; a file its own machine changed in place stays, and the copy starts over from it. A store that holds nothing of a session says nothing against the file here, and one that doesn't answer leaves only what it last said of the session to this hub: without that, the file here may be an older one, and isn't resumed.
-async function brought({ ask, machine, ends, heard, changed }: Known, session: string, to: string) {
-  const end = (await twice(ask)((store) => store.transcripts.end(session))) ?? heard.get(session);
+// Whether this machine holds a session's whole conversation once the store's copy is here. The copy takes the place of a file that is it cut short, and of another machine's version of it, which is kept beside it for the lines the store never got, the only place they are; a file its own machine changed in place stays, and the copy starts over from it. A store that holds nothing of a session says nothing against the file here. One that doesn't answer leaves what it last said of the session to this hub, or that the session wrote here under this hub: without either, the file here may be an older one, and isn't resumed.
+async function brought(
+  { first, machine, ends, heard, changed, written }: Known,
+  session: string,
+  to: string,
+) {
+  const end = (await twice(first)((store) => store.transcripts.end(session))) ?? heard.get(session);
+  const path = existsSync(to) ? to : (claude.transcriptOf(session) ?? to);
 
   if (end === undefined) {
     process.stderr.write(
-      `hub: hex's store didn't say where ${session}'s conversation stands, so it isn't resumed from this machine's file\n`,
+      `hub: hex's store didn't say where ${session}'s conversation stands, so it ${written.has(session) ? "goes on from this machine's file, which it wrote under this hub" : "isn't resumed from this machine's file"}\n`,
     );
 
-    return false;
+    return written.has(session) && existsSync(path);
   }
 
   heard.set(session, end);
-  const path = existsSync(to) ? to : (claude.transcriptOf(session) ?? to);
   const mine = past(path, end, 0);
 
   if (end.of === 0) {
@@ -547,10 +588,29 @@ async function brought({ ask, machine, ends, heard, changed }: Known, session: s
     return true;
   }
 
-  const copy = end.size < end.of ? undefined : await fetched(ask, [session, end], path);
+  const copy = end.size < end.of ? undefined : await fetched(first, [session, end], path);
 
   if (copy === undefined) {
     return false;
+  }
+
+  return placed({ machine, ends, changed }, [session, end], copy, path);
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A copy that arrived takes its place, by what the machine's file is now: another start, or a send, may have been at the same session while it came.
+function placed(
+  { machine, ends, changed }: Pick<Known, "machine" | "ends" | "changed">,
+  [session, end]: [string, End],
+  copy: string,
+  path: string,
+) {
+  const mine = past(path, end, 0);
+
+  if (holdsIt(mine)) {
+    rmSync(copy, { force: true });
+
+    return end.by === machine || isItsFile(path, end);
   }
 
   if (mine === "off" && !cutShort(path, copy)) {
@@ -574,7 +634,7 @@ async function brought({ ask, machine, ends, heard, changed }: Known, session: s
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A session's conversation and the files beside it, here as the store holds them. A landing that fails, as on a disk with no room, leaves no whole conversation here that anything shows; files beside it that don't arrive take nothing from it.
+// A session's conversation, here as the store holds it. A landing that fails, as on a disk with no room, leaves no whole conversation here that anything shows.
 async function landing(known: Known, session: string, path: string) {
   try {
     if (!(await brought(known, session, path))) {
@@ -586,16 +646,6 @@ async function landing(known: Known, session: string, path: string) {
     );
 
     return false;
-  }
-
-  try {
-    if (known.heard.get(session)?.by !== known.machine) {
-      await besidesBrought(known.ask, session, path);
-    }
-  } catch (error) {
-    process.stderr.write(
-      `hub: what is beside ${session}'s conversation couldn't be brought from hex's store: ${String(error)}\n`,
-    );
   }
 
   return true;
@@ -622,11 +672,13 @@ export function sessionTranscripts({
 
   const known: Known = {
     ask: (use) => inLine(() => kept(use, undefined)),
+    first: (use) => kept(use, undefined),
     machine,
     ends: new Map(),
     heard: new Map(),
     beside: new Map(),
     changed: new Set(),
+    written: new Set(),
   };
 
   const { ask, ends, heard, changed } = known;
@@ -688,7 +740,13 @@ export function sessionTranscripts({
         return;
       }
 
-      const besides = declares || full ? true : await besidesSent(known, session, path);
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      // Another machine's copy that this machine's file is: the copy becomes this machine's, so a change in place here is known for one from then on. The files beside it come here first as the store holds them, since this machine's own may be older, and the copy is taken alone, before any line: what is beside a transcript here is the store's to be sent only once the copy is this machine's.
+      const taking = end.by !== machine && end.by !== NOTHING.by;
+
+      const besides = taking
+        ? (await besidesBrought(ask, false, session, path)) || undefined
+        : declares || full || (await besidesSent(known, session, path));
 
       if (
         besides === true &&
@@ -703,8 +761,10 @@ export function sessionTranscripts({
         return;
       }
 
+      const taken = taking ? { ...more, pieces: [], tail: end.tail } : more;
+
       const now =
-        besides === true ? await appended(ask, session, end, more, machine, over) : besides;
+        besides === true ? await appended(ask, session, end, taken, machine, over) : besides;
 
       if (now === undefined) {
         ends.delete(session);
@@ -728,6 +788,7 @@ export function sessionTranscripts({
 
   const follow = following((session, path) => {
     if (files().has(session)) {
+      known.written.add(session);
       void ship(session, path);
     }
   });
@@ -742,23 +803,31 @@ export function sessionTranscripts({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Before a thread's session starts: the conversations it resumes or forks from are on this machine as the store holds them, and its folder is watched from here on. Whether the thread's own session can be resumed here, which one this machine holds only part of can't.
+  // Before a thread's session starts: the conversations it resumes or forks from are on this machine as the store holds them, and its folder is watched from here on. Whether the one this start goes on from, the thread's own or the one it forks, is whole here: one this machine holds only part of can't be resumed or forked.
   async function land(thread: string, fork?: string) {
     if (!(await elsewhere)) {
       return true;
     }
 
     const session = fresh(thread) ? undefined : threads.get(thread);
+    const goesOnFrom = fork ?? session?.session ?? session?.fork;
     const folder = claude.transcriptsIn(threads.cwd(thread));
     let whole = true;
 
     for (const each of new Set([session?.session, session?.fork, fork].filter(present))) {
       const path = join(folder, `${each}.jsonl`);
       const isHere = await landing(known, each, path);
-      whole &&= isHere || each !== session?.session;
+      const [sends, mine] = [files().has(each), heard.get(each)?.by === machine];
+      whole &&= isHere || each !== goesOnFrom;
 
-      if (isHere && files().has(each)) {
+      if (isHere && sends) {
         void ship(each, path);
+      }
+
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      // What is beside the conversation follows it, behind the start: a send that takes the copy over brings it, so here it comes for a copy that is this machine's already, or one this hub sends nothing of.
+      if (isHere && (mine || !sends)) {
+        void besidesBrought(ask, mine, each, path);
       }
     }
 

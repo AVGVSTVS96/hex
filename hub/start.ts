@@ -129,18 +129,19 @@ export function sessionStarts({
     }
 
     const known = threads.of(thread);
-
-    const takesOverFrom = present(prompt) || present(fork) ? undefined : expired(thread, whole);
+    const source = fork ?? (present(known.session) ? undefined : known.fork);
+    const takesOverFrom = expired(thread, { whole, source, prompted: present(prompt) });
     files.write(thread, {}, takesOverFrom);
     const launching = launchArgs(thread);
     threads.update(thread, { launched: stamp(launching, server, startup) });
-    const source = fork ?? (present(known.session) ? undefined : known.fork);
 
-    const resumeArgs = present(source)
-      ? ["--resume", source, "--fork-session"]
-      : present(known.session) && !fresh(thread) && !present(takesOverFrom)
-        ? ["--resume", known.session]
-        : [];
+    const resumeArgs = present(takesOverFrom)
+      ? []
+      : present(source)
+        ? ["--resume", source, "--fork-session"]
+        : present(known.session) && !fresh(thread)
+          ? ["--resume", known.session]
+          : [];
 
     return await claude.start(
       launcher,
@@ -188,17 +189,28 @@ export function sessionStarts({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The transcript of a thread's saved session that a new session takes over from instead of resuming: one this machine holds none or only part of and hex's store can't complete, like after a restore from hex.db, or one whose prompt cache has expired when it holds more than a new session costs to start and catch up. A start with a prompt, like /compact, needs the old conversation itself, so it resumes.
-  function expired(thread: string, whole: boolean) {
-    const session = threads.of(thread).session;
+  // The transcript a new session takes over from instead of resuming the thread's saved session, or forking another (source): one this machine holds none or only part of and hex's store can't complete, like after a restore from hex.db, or one whose prompt cache has expired when it holds more than a new session costs to start and catch up. A fork, and a start with a prompt, like /compact, need the old conversation itself, so they go on from it wherever it is whole.
+  function expired(
+    thread: string,
+    { whole, source, prompted }: { whole: boolean; source: string | undefined; prompted: boolean },
+  ) {
+    const session = source ?? threads.of(thread).session;
 
-    if (!present(session) || fresh(thread)) {
+    if (!present(session) || (fresh(thread) && !present(source))) {
       return;
     }
 
     const file = claude.transcript(threads.cwd(thread), session);
 
-    if (!whole || !claude.saved(session)) {
+    if (!whole) {
+      return file;
+    }
+
+    if (present(source) || prompted) {
+      return;
+    }
+
+    if (!claude.saved(session)) {
       return file;
     }
 
