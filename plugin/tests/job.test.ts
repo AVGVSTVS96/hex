@@ -1197,3 +1197,51 @@ test("only one resume carries jobs on at a time, and one that was killed holds u
   expect(resume(join(home, "claude")).has("waiting")).toBe(true);
   expect(existsSync(join(home, "xdg/hex/resuming"))).toBe(false);
 });
+
+const endedAsLaunched = (args: string[]) => {
+  const [, unit = "", owner = "", startedAt = ""] =
+    /--ended (\S+) (\S+) (\S+)/u.exec(value(args, "ExecStopPost") ?? "") ?? [];
+
+  return Bun.spawnSync(["bun", job, "--ended", unit, owner, startedAt], {
+    env: { ...fakes(), ...finishedByItself },
+  }).exitCode;
+};
+
+test("a job starts and ends while hex's store doesn't answer, and owes its record and its news, which the next job command that finds the store answering pays in order", () => {
+  noJobs();
+  const away = join(home, "state/store.json");
+  const owed = () => readdirSync(join(home, "state/jobs")).filter((name) => name.endsWith(".owed"));
+
+  writeFileSync(
+    away,
+    JSON.stringify({ url: "http://127.0.0.1:1", name: "gone", key: "k".repeat(32) }),
+  );
+
+  let second: string[];
+
+  try {
+    const first = run(["offline1", "-100123:101", "make", "all"], session);
+    second = run(["offline2", "make", "all"], session).args;
+
+    expect(value(first.args, "HEX_OWNER")).toBe("-100123:101");
+    expect(second).not.toEqual([]);
+    expect(endedAsLaunched(first.args)).toBe(0);
+    expect(owed()).toHaveLength(3);
+  } finally {
+    rmSync(away);
+    rmSync(join(home, "state/store.down"), { force: true });
+  }
+
+  expect(endedAsLaunched(second)).toBe(0);
+  expect(owed()).toEqual([]);
+  expect([jobsOn().get("offline1"), jobsOn().get("offline2")]).toEqual([undefined, undefined]);
+  expect(toldOn("state", "[job] offline_ ended%")).toHaveLength(2);
+});
+
+test("a job whose record names another machine that doesn't answer starts here", () => {
+  noJobs();
+  jobsOn().started("unanswered", "gone-x", "2026-11-15T10:00:00.000Z", spec(["make"]));
+
+  expect(run(["unanswered", "make", "all"], session).code).toBe(0);
+  expect(jobsOn().get("unanswered")?.machine).toBe(here);
+});

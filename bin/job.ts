@@ -22,8 +22,16 @@ import { besideOf, besideWhat } from "../hub/beside.ts";
 import { saved, transcripts } from "../hub/claude.ts";
 import { origin } from "../hub/origin.ts";
 import { served } from "../hub/running.ts";
-import { hexDir, open, signalTo, stateDir, StopReasonColumn } from "../hub/store.ts";
+import {
+  hexDir,
+  open,
+  signalTo,
+  stateDir,
+  StopReasonColumn,
+  UnreachedError,
+} from "../hub/store.ts";
 import type { Job, JobSpec, StopReason } from "../hub/store.ts";
+import { JobSpecJson } from "../hub/store/jobs.ts";
 import { zoneOf } from "../hub/zone.ts";
 
 const [mode, ...rest] = process.argv.slice(2);
@@ -193,11 +201,18 @@ async function stdinThatEnds(): Promise<string> {
   return Buffer.concat(chunks).toString();
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// While hex's store doesn't answer, a first word that isn't a program names the thread, as the store would have said: as a command it couldn't run anyway.
 async function openThreadIdByKeyOrId(word: string): Promise<string | undefined> {
-  const key = await store.threads.key(word);
-  const found = (await store.threads.list({ open: true })).find(({ thread }) => thread === key);
+  return await answered(
+    async () => {
+      const key = await store.threads.key(word);
+      const found = (await store.threads.list({ open: true })).find(({ thread }) => thread === key);
 
-  return found && `${found.app}:${key}`;
+      return found && `${found.app}:${key}`;
+    },
+    Bun.which(word) === null && !word.includes("/") ? word : undefined,
+  );
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -270,25 +285,169 @@ async function tell(unit: string, owner: string, said: string, at: string, ends?
     return;
   }
 
+  await keep({ call: "news", unit, owner, said, at, from: startedBy(), ends });
+}
+
+async function delivered({ unit, owner, said, at, from, ends }: z.infer<typeof News>) {
   if (ends !== undefined) {
     await store.jobs.ended(unit, ends.machine, ends.run);
   }
 
   const to = await store.threads.key(owner);
 
-  const from =
+  const by = new Map(
+    from.map((pair) => [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)]),
+  );
+
+  const came =
     besideWhat(to) === undefined
       ? undefined
-      : await origin(store, process.env.HEX_FROM, process.env.HEX_FROM_AT);
+      : await origin(store, by.get("HEX_FROM"), by.get("HEX_FROM_AT"));
 
   await store.messages.deliver({
     key: `job:${unit}@${at}`,
     to,
     from: "job",
     author: "prompt",
-    body: [`[job] ${unit} ${said}`, from].filter(isSet).join("\n"),
+    body: [`[job] ${unit} ${said}`, came].filter(isSet).join("\n"),
     meta: { user: "job", job: unit },
   });
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What a job command writes to hex's store while it doesn't answer is owed: a file a write in records, named in the order they were made, paid in that order before any later write, one process at a time, by the next job command that finds the store answering, so a job starts and ends as ever. Once a call finds the store not answering, this process asks it nothing more, so a command waits on it at most once.
+const OwedJson = z.discriminatedUnion("call", [
+  z.object({
+    call: z.literal("started"),
+    unit: z.string(),
+    machine: z.string(),
+    run: z.string(),
+    spec: JobSpecJson,
+  }),
+  z.object({ call: z.literal("ended"), unit: z.string(), machine: z.string(), run: z.string() }),
+  z.object({ call: z.literal("agents"), task: z.string(), sessions: z.array(z.string()) }),
+  News.extend({ call: z.literal("news") }),
+]);
+
+type Owed = z.infer<typeof OwedJson>;
+
+let storeDown = false;
+let owedHere = 0;
+const paying = join(records, "paying");
+
+async function made(write: Owed) {
+  switch (write.call) {
+    case "started": {
+      await store.jobs.started(write.unit, write.machine, write.run, write.spec);
+      break;
+    }
+
+    case "ended": {
+      await store.jobs.ended(write.unit, write.machine, write.run);
+      break;
+    }
+
+    case "agents": {
+      await store.tasks.addAgents(write.task, write.sessions);
+      break;
+    }
+
+    case "news": {
+      await delivered(write);
+      break;
+    }
+  }
+}
+
+const owedNow = () =>
+  existsSync(records)
+    ? readdirSync(records)
+        .filter((name) => name.endsWith(".owed"))
+        .toSorted()
+    : [];
+
+async function answered<T>(ask: () => Promise<T>, otherwise: T): Promise<T> {
+  if (storeDown) {
+    return otherwise;
+  }
+
+  try {
+    return await ask();
+  } catch (error) {
+    if (!(error instanceof UnreachedError)) {
+      throw error;
+    }
+
+    storeDown = true;
+    console.error(`job: hex's store isn't answering, so this goes on without it: ${error.message}`);
+
+    return otherwise;
+  }
+}
+
+function readOwed(path: string) {
+  try {
+    return OwedJson.safeParse(JSON.parse(readFileSync(path, "utf-8"))).data ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function payOwed() {
+  if (storeDown || owedNow().length === 0 || !alone(paying)) {
+    return;
+  }
+
+  try {
+    for (let names = owedNow(); names.length > 0; names = owedNow()) {
+      for (const name of names) {
+        const path = join(records, name);
+        const write = readOwed(path);
+
+        if (write === null) {
+          console.error(`job: dropped a write owed to hex's store it can't read: ${path}`);
+        } else if (!(await paid(write))) {
+          return;
+        }
+
+        rmSync(path, { force: true });
+      }
+    }
+  } finally {
+    rmSync(paying, { force: true });
+  }
+}
+
+async function paid(write: Owed) {
+  try {
+    return await answered(async () => await made(write).then(() => true), false);
+  } catch (error) {
+    console.error(
+      `job: hex's store refused a write owed to it, so it's dropped: ${JSON.stringify(write)}: ${String(error)}`,
+    );
+
+    return true;
+  }
+}
+
+async function keep(write: Owed) {
+  await payOwed();
+
+  if (
+    owedNow().length === 0 &&
+    (await answered(async () => await made(write).then(() => true), false))
+  ) {
+    return;
+  }
+
+  mkdirSync(records, { recursive: true });
+  writeFileSync(
+    join(records, `${Date.now()}-${process.pid}-${String(owedHere++).padStart(4, "0")}.owed`),
+    JSON.stringify(write),
+  );
+  console.error(
+    `job: hex's store didn't take the job's ${write.call === "news" ? "news" : `${write.call} record`}, so it waits in ${records} for the next job command that finds the store answering`,
+  );
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -297,7 +456,11 @@ async function toldStopped(unit: string, run: string, why: StopReason, at: strin
   const there = await whereHexIs(0);
 
   if (there === "here") {
-    await store.jobs.stopped(unit, hostname(), run, why, at);
+    await answered(async () => {
+      await store.jobs.stopped(unit, hostname(), run, why, at);
+
+      return true;
+    }, false);
   } else if (there !== "moving") {
     await onMachine(there, [
       join(import.meta.dir, "job"),
@@ -312,12 +475,14 @@ async function toldStopped(unit: string, run: string, why: StopReason, at: strin
 }
 
 async function nameOf(owner: string) {
-  const key = await store.threads.key(owner);
+  return await answered(async () => {
+    const key = await store.threads.key(owner);
 
-  const ran = await store.messages.ranFor(key);
-  const thread = besideWhat(key) ?? (ran === null ? undefined : besideWhat(ran.to)) ?? key;
+    const ran = await store.messages.ranFor(key);
+    const thread = besideWhat(key) ?? (ran === null ? undefined : besideWhat(ran.to)) ?? key;
 
-  return (await store.threads.names())[thread] ?? thread;
+    return (await store.threads.names())[thread] ?? thread;
+  }, owner);
 }
 
 if (mode === "--owner") {
@@ -350,13 +515,17 @@ if (mode === "--owner") {
   }
 
   const output = lastOutput(unit);
-  const key = await store.threads.key(owner);
+  const key = await answered(async () => await store.threads.key(owner), owner);
   const thread = besideWhat(key) ?? key;
 
-  if (
-    !(await store.messages.took(key)) &&
-    !(await store.threads.list()).some((each) => each.thread === thread)
-  ) {
+  const nowhere = await answered(
+    async () =>
+      !(await store.messages.took(key)) &&
+      !(await store.threads.list()).some((each) => each.thread === thread),
+    false,
+  );
+
+  if (nowhere) {
     console.error(
       `job: ${unit} ended, but no app has the thread ${owner} yet; its end waits there`,
     );
@@ -440,7 +609,7 @@ if (mode === "--owner") {
     process.exit(0);
   }
 
-  if (!resumesAlone()) {
+  if (!alone(resuming)) {
     console.error("job: another resume is carrying jobs on already");
     process.exit(0);
   }
@@ -483,29 +652,11 @@ if (mode === "--owner") {
     rmSync(join(records, file));
 
     if (news !== undefined) {
-      const { unit, owner, said, at: sentAt, from, ends } = news;
-
-      const before = { HEX_FROM: process.env.HEX_FROM, HEX_FROM_AT: process.env.HEX_FROM_AT };
-      delete process.env.HEX_FROM;
-      delete process.env.HEX_FROM_AT;
-
-      for (const pair of from) {
-        const [name = "", ...value] = pair.split("=");
-        process.env[name] = value.join("=");
-      }
-
-      await tell(unit, owner, said, sentAt, ends);
-
-      for (const [name, value] of Object.entries(before)) {
-        if (value === undefined) {
-          Reflect.deleteProperty(process.env, name);
-        } else {
-          process.env[name] = value;
-        }
-      }
+      await keep({ call: "news", ...news });
     }
   }
 
+  await payOwed();
   const jobs = await store.jobs.list();
   const elsewhereNow = await stillOnTheirMachines(jobs.filter(({ machine }) => machine !== here));
 
@@ -666,7 +817,7 @@ if (mode === "--owner") {
   const session = agent ? conversationToResumeBy(command) : undefined;
 
   if (isSet(session) && task !== undefined) {
-    await store.tasks.addAgents(task, [session]);
+    await keep({ call: "agents", task, sessions: [session] });
   } else if (task !== undefined) {
     console.error(`job: only a claude job's session can be linked to ${task}`);
   }
@@ -746,23 +897,23 @@ if (mode === "--owner") {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// One resume at a time on this machine, kept outside hex.db so it never travels with it: a resume that was killed leaves its pid, which no longer runs, and the next one takes over.
-function resumesAlone() {
-  mkdirSync(join(resuming, ".."), { recursive: true });
+// One process at a time holds a lock: a pid in a file, so one that was killed leaves a pid that no longer runs, and the next one takes over. A resume's is kept outside hex.db so it never travels with it.
+function alone(lock: string) {
+  mkdirSync(join(lock, ".."), { recursive: true });
 
   for (let tries = 0; tries < 2; tries++) {
     try {
-      writeFileSync(resuming, String(process.pid), { flag: "wx" });
+      writeFileSync(lock, String(process.pid), { flag: "wx" });
 
       return true;
     } catch {
-      const pid = Number(readFileSync(resuming, "utf-8"));
+      const pid = Number(readFileSync(lock, "utf-8"));
 
       if (Number.isInteger(pid) && pid > 0 && stillRuns(pid)) {
         return false;
       }
 
-      rmSync(resuming, { force: true });
+      rmSync(lock, { force: true });
     }
   }
 
@@ -936,7 +1087,12 @@ function endOf(path: string) {
 async function pruneOldLogs() {
   for (const file of readdirSync(records).filter((each) => each.endsWith(".log"))) {
     const log = join(records, file);
-    const running = (await store.jobs.get(file.replace(/\.log$/u, ""))) !== undefined;
+
+    const running = await answered(
+      async () => (await store.jobs.get(file.replace(/\.log$/u, ""))) !== undefined,
+      true,
+    );
+
     const written = statSync(log, { throwIfNoEntry: false })?.mtimeMs ?? Date.now();
 
     if (!running && Date.now() - written > LOGS_KEPT_FOR_THEIR_THREADS_MS) {
@@ -992,7 +1148,7 @@ async function launch(
     return 1;
   }
 
-  const before = await store.jobs.get(unit);
+  const before = await answered(async () => await store.jobs.get(unit), undefined);
 
   if (
     fresh &&
@@ -1010,7 +1166,7 @@ async function launch(
   const agent = basename(kept.command[0] ?? "") === "claude";
   const name = `${await nameOf(kept.owner)}/${unit}`;
   const startedAt = new Date().toISOString();
-  await store.jobs.started(unit, hostname(), startedAt, kept);
+  await keep({ call: "started", unit, machine: hostname(), run: startedAt, spec: kept });
 
   const log = join(records, `${unit}.log`);
 
@@ -1029,7 +1185,7 @@ async function launch(
       .nothrow();
 
   if (started.exitCode !== 0) {
-    await store.jobs.ended(unit, hostname(), startedAt);
+    await keep({ call: "ended", unit, machine: hostname(), run: startedAt });
   }
 
   return started.exitCode;
