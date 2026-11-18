@@ -3,13 +3,16 @@ import { createHash } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -130,11 +133,12 @@ function storeElsewhere() {
   };
 }
 
-type Known = { session?: string; fork?: string; fresh?: boolean };
+type Known = { session?: string; fork?: string; fresh?: boolean; app?: string };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A machine is its own Claude Code folder, and the hub on it knows the thread's session from the store. Claude Code's folder is the process's, so a test is on one machine at a time: whatever a hub does there is awaited before the next machine's. hub: a hub starts there and a session of the thread starts under it, which answers whether the session can be resumed there.
 function machine(name: string, store: Store, known: Known = {}) {
+  const id = known.app === undefined ? THREAD : `${known.app}:1`;
   const config = join(dir, name);
   process.env.CLAUDE_CONFIG_DIR = config;
   const transcripts = claude.transcriptsIn(folder);
@@ -162,11 +166,11 @@ function machine(name: string, store: Store, known: Known = {}) {
   async function hubNow() {
     process.env.CLAUDE_CONFIG_DIR = config;
     reaches = true;
-    await store.threads.keep("telegram", { [THREAD]: thread() });
+    await store.threads.keep(known.app ?? "telegram", { [id]: thread() });
 
     return sessionTranscripts({
       threads: {
-        ids: () => [THREAD],
+        ids: () => [id],
         current: () => known.session ?? SESSION,
         get: thread,
         cwd: () => folder,
@@ -188,7 +192,7 @@ function machine(name: string, store: Store, known: Known = {}) {
     },
     hub: async (fork?: string) => {
       const hub = await hubNow();
-      const whole = await hub.land(THREAD, fork);
+      const whole = await hub.land(id, fork);
       await sent();
 
       return whole;
@@ -197,10 +201,13 @@ function machine(name: string, store: Store, known: Known = {}) {
       const hub = await hubNow();
       await sent();
 
-      return async () => {
+      return async (waits = true) => {
         process.env.CLAUDE_CONFIG_DIR = config;
-        const whole = await hub.land(THREAD);
-        await sent();
+        const whole = await hub.land(id);
+
+        if (waits) {
+          await sent();
+        }
 
         return whole;
       };
@@ -420,63 +427,165 @@ test("what a machine keeps of where a file and its copy agreed goes once no open
   await until(() => !existsSync(kept));
 });
 
-async function sentBeforeDigests(store: Store, said: string, by: string) {
-  await store.transcripts.append(
-    SESSION,
-    await store.transcripts.end(SESSION),
-    [{ upto: Buffer.byteLength(said), text: said }],
-    { tail: endOf(said), of: Buffer.byteLength(said), last: endOf(said), by },
-  );
-}
-
-test("a copy sent before copies had digests reaches a machine that lacks it, and starts over from the file that holds its end", async () => {
+test("a copy whose sender named no digests is no file's: no other machine takes it, and its sender's file starts it over, the tool results too", async () => {
   const { store } = storeElsewhere();
   const server = machine("server", store);
   const twin = machine("twin", store);
-  await sentBeforeDigests(store, SECRET, "server");
+  const result = `${SESSION}/tool-results/${RESULT}`;
+  const to = (said: string) => ({ tail: endOf(said), of: Buffer.byteLength(said), last: "" });
 
-  expect(await twin.hub()).toBe(true);
-  expect(twin.written()).toBe(SECRET);
-  expect(await copyIn(store)).toBe(SECRET);
-  expect(await store.transcripts.end(SESSION)).toMatchObject({ by: "twin" });
+  await store.transcripts.append(
+    SESSION,
+    await store.transcripts.end(SESSION),
+    [{ upto: Buffer.byteLength(SECRET), text: SECRET }],
+    { ...to(SECRET), last: endOf(SECRET), by: "server" },
+  );
+  await store.transcripts.append(
+    result,
+    await store.transcripts.end(result),
+    [{ upto: Buffer.byteLength(OLD), text: Buffer.from(OLD).toString("base64") }],
+    { ...to(OLD), by: "server" },
+  );
+
+  expect(await twin.hub()).toBe(false);
+  expect(existsSync(twin.path())).toBe(false);
+
+  mkdirSync(dirname(server.beside(RESULT)), { recursive: true });
+  writeFileSync(server.beside(RESULT), OLD);
+  writeFileSync(server.path(), SECRET);
+  expect(await server.hub()).toBe(true);
 
   expect(
     (await store.transcripts.marks(SESSION, 0)).map(({ upto, digest }) => [upto, digest]),
   ).toEqual([[Buffer.byteLength(SECRET), createHash("sha256").update(SECRET).digest("hex")]]);
+  expect((await store.transcripts.besides(SESSION)).map(({ digest }) => digest)).toEqual([
+    createHash("sha256").update(OLD).digest("hex"),
+  ]);
 
-  writeFileSync(server.path(), SECRET);
-  expect(await server.hub()).toBe(true);
-  expect(await store.transcripts.end(SESSION)).toMatchObject({ by: "twin" });
+  expect(await twin.hub()).toBe(true);
+  expect(twin.written()).toBe(SECRET);
+  expect(readFileSync(twin.beside(RESULT), "utf-8")).toBe(OLD);
 });
 
-test("a copy sent before copies had digests completes its own machine's file when that is the copy cut short, and starts over from it when it was changed in place", async () => {
+test("a machine whose file never agreed with a copy takes the copy with nothing kept beside it", async () => {
   const { store } = storeElsewhere();
   const server = machine("server", store);
-  await sentBeforeDigests(store, SECRET, "server");
+  const twin = machine("twin", store);
+  writeFileSync(server.path(), SECRET);
+  writeFileSync(twin.path(), SECRET);
+  await server.hub();
+  writeFileSync(server.path(), REDACTED + line("a turn after it"));
+  await until(async () => (await copyIn(store)) === server.written());
 
-  writeFileSync(server.path(), line("the sudo password is hunter2"));
-  expect(await server.hub()).toBe(true);
-  expect(server.written()).toBe(SECRET);
-  expect(await copyIn(store)).toBe(SECRET);
+  expect(await twin.hub()).toBe(true);
+  expect(twin.written()).toBe(server.written());
+  expect(twin.setAside()).toEqual([]);
+});
 
-  const { digest: _since, ...before } = await store.transcripts.end(SESSION);
-  const said = { tail: endOf(SECRET), of: Buffer.byteLength(SECRET), last: endOf(SECRET) };
+const OTHER = "7c1d2e3f-0a1b-4c2d-8e3f-9a0b1c2d3e4f";
 
-  await store.transcripts.append(
-    SESSION,
-    before,
-    [{ upto: Buffer.byteLength(SECRET), text: SECRET }],
-    { ...said, by: "server" },
-    true,
-  );
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Another channel's hub starts on a machine: its own app and session over the same store and folder, as one process runs a hub for each channel. It has compared its own conversation with the store by the time this answers, which comes after it cleared what the machine keeps of closed threads.
+async function otherChannel(name: string, store: Store) {
+  const other = machine(name, store, { session: OTHER, app: "discord" });
+  writeFileSync(other.path(OTHER), line("said in another channel"));
+  await other.started();
+  await until(async () => (await store.transcripts.end(OTHER)).size > 0);
+}
 
-  const other = machine("server", store);
-  writeFileSync(other.path(), REDACTED);
-  rmSync(join(dir, "state", "copies"), { recursive: true });
-  expect(await other.hub()).toBe(true);
-  expect(other.written()).toBe(REDACTED);
+test("a secret taken out on the machine that doesn't hold hex stays out, and the other machine's lines are kept, though another channel's hub starts there first", async () => {
+  const { store } = storeElsewhere();
+  const { server, twin } = await bothHold(store);
+  appendFileSync(server.path(), line("a turn on the server"));
+  await until(async () => (await copyIn(store)) === server.written());
+
+  writeFileSync(twin.path(), REDACTED);
+  await otherChannel("twin", store);
+  expect(await twin.hub()).toBe(true);
+  expect(twin.written()).toBe(REDACTED + line("a turn on the server"));
+  expect(await copyIn(store)).toBe(twin.written());
+  expect(twin.setAside()).toEqual([]);
+});
+
+test("a secret taken out of a thread a machine took over stays out under its watching hub, though another channel's hub started there since", async () => {
+  const { store } = storeElsewhere();
+  const { twin } = await bothHold(store);
+  const start = await twin.started();
+  expect(await start()).toBe(true);
+  await otherChannel("twin", store);
+
+  writeFileSync(twin.path(), REDACTED);
+  await until(async () => (await copyIn(store)) === REDACTED);
+  expect(await start()).toBe(true);
+  expect(twin.written()).toBe(REDACTED);
   expect(await copyIn(store)).toBe(REDACTED);
-  expect(other.setAside()).toEqual([]);
+});
+
+test("the other machine's lines go onto a changed file once, though the session writes before the send behind its start lands", async () => {
+  const { store, net, ring } = storeElsewhere();
+  const { server, twin } = await bothHold(store);
+  appendFileSync(server.path(), line("a turn on the server"));
+  await until(async () => (await copyIn(store)) === server.written());
+
+  writeFileSync(twin.path(), REDACTED);
+  net.drops = (call) => call === "transcripts.append";
+  expect(await twin.hub()).toBe(true);
+  expect(twin.written()).toBe(REDACTED + line("a turn on the server"));
+
+  appendFileSync(twin.path(), line("the session's first line on the twin"));
+  net.drops = () => false;
+  ring();
+  await until(async () => (await copyIn(store)) === twin.written());
+
+  expect(twin.written()).toBe(
+    REDACTED + line("a turn on the server") + line("the session's first line on the twin"),
+  );
+});
+
+test("a secret taken out in place with its length kept, as the transcript grows, leaves the store at the session's next start and before the hub stops", async () => {
+  const { store } = storeElsewhere();
+  const server = machine("server", store);
+  const rest = line("x".repeat(3000)) + line("y".repeat(3000));
+  writeFileSync(server.path(), line("the sudo password is hunter2456 and hunter7890") + rest);
+  const start = await server.started();
+  await until(async () => (await copyIn(store)) === server.written());
+
+  function struck(secret: string, grown: string) {
+    const transcript = openSync(server.path(), "r+");
+    writeSync(transcript, "[redacted]", server.written().indexOf(secret));
+    closeSync(transcript);
+    appendFileSync(server.path(), line(grown));
+  }
+
+  struck("hunter2456", "the tool's result line");
+  await until(async () => (await copyIn(store)).includes("the tool's result line"));
+  expect(await copyIn(store)).toContain("hunter2456");
+  expect(await start(false)).toBe(true);
+  await until(async () => (await copyIn(store)) === server.written());
+
+  struck("hunter7890", "and another");
+  await until(async () => (await copyIn(store)).includes("and another"));
+  expect(await copyIn(store)).toContain("hunter7890");
+  await sent();
+  expect(await copyIn(store)).toBe(server.written());
+  expect(server.written()).not.toContain("hunter");
+});
+
+test("a folder among a session's tool results, as Claude Code keeps a PDF's pages, is none of them, and the session's lines go", async () => {
+  const { store } = storeElsewhere();
+  const server = machine("server", store);
+  const pages = join(dirname(server.beside(RESULT)), "pdf-2e973a8f-b8f4-40be-ae26-c3fde8a83a75");
+  mkdirSync(pages, { recursive: true });
+  writeFileSync(join(pages, "page-1.jpg"), "a page");
+  writeFileSync(server.beside(RESULT), OLD);
+  writeFileSync(server.path(), line("the plants are in the hall"));
+  await server.hub();
+  appendFileSync(server.path(), line("water them on Friday"));
+  await until(async () => (await copyIn(store)) === server.written());
+
+  expect((await store.transcripts.besides(SESSION)).map((held) => held.file)).toEqual([
+    `tool-results/${RESULT}`,
+  ]);
 });
 
 async function besideIn(store: Store, name = RESULT) {
@@ -820,7 +929,11 @@ test("a tool result comes at a later start when the first didn't bring it, thoug
 
 test("a machine behind on a conversation asks the store once where its copy stands as it takes hex over, and takes what it lacks as the session starts", async () => {
   const { store, net } = storeElsewhere();
-  const { server, twin } = await bothHold(store, line("x".repeat(300_000)));
+  const server = machine("server", store);
+  const twin = machine("twin", store);
+  writeFileSync(server.path(), line("x".repeat(300_000)));
+  writeFileSync(twin.path(), server.written());
+  await server.hub();
   appendFileSync(server.path(), line("y".repeat(300_000)) + line("water them on Friday"));
   await until(async () => (await copyIn(store)) === server.written());
 
@@ -833,7 +946,8 @@ test("a machine behind on a conversation asks the store once where its copy stan
   net.asked.length = 0;
   expect(await start()).toBe(true);
   expect(twin.written()).toBe(server.written());
-  expect(net.asked).toEqual(["end", "since", "besides"]);
+  expect(twin.setAside()).toEqual([]);
+  expect(net.asked).toEqual(["end", "marks", "since", "besides"]);
 });
 
 test("a tool result this machine wrote and then changed stays as it is here while the store can't be sent it", async () => {
@@ -869,18 +983,16 @@ test("a thread goes on only from a conversation that is whole here: the one it f
   expect(await twin.hub()).toBe(true);
 });
 
-test("two starts that bring one copy at once beside an older file set that file aside once, as it was", async () => {
+test("two starts that bring one copy at once beside a file with lines of its own set that file aside once, as it was", async () => {
   const { store, net } = storeElsewhere();
-  const server = machine("server", store);
-  const twin = machine("twin", store);
-  writeFileSync(server.path(), line("the plants are in the hall") + line("water them on Friday"));
-  await server.hub();
+  const { server, twin } = await bothHold(store, line("the plants are in the hall"));
+  appendFileSync(server.path(), line("water them on Friday"));
   await until(async () => (await copyIn(store)) === server.written());
 
-  const older = line("the plants are in the hall") + line("said to the twin, long ago, at length");
   net.drops = (call) => call.startsWith("transcripts.");
   const start = await twin.started();
-  writeFileSync(twin.path(), older);
+  appendFileSync(twin.path(), line("said to the twin, long ago, at length"));
+  const older = twin.written();
   net.drops = () => false;
   net.takes = 5;
   expect(await Promise.all([start(), start()])).toEqual([true, true]);

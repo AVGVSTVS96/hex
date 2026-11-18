@@ -58,8 +58,17 @@ function entries(folder: string) {
   }
 }
 
-const named = (folder: string) =>
-  entries(folder).filter((name) => NAME.test(name) && !name.includes(ARRIVING));
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The files in a folder that are tool results. Claude Code keeps a PDF's pages in a folder of their own there, which is none.
+function named(folder: string) {
+  try {
+    return readdirSync(folder, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && NAME.test(entry.name) && !entry.name.includes(ARRIVING))
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
 
 function tailBefore(file: number, size: number) {
   if (size === 0) {
@@ -276,15 +285,15 @@ function agree(root: string, key: string, { size, digest }: End) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// How a file stands to the store's copy of it. same, ahead: the file holds the copy, and more when ahead; with no hash, a copy nobody vouches for, which starts over from the file that holds its end. newer: the file wins from `from` on, where the two first differ and the copy's digest is `starts`, once it has what the copy gained since `gain`. older: the copy wins from `from` on; own: the file may hold something the copy doesn't, so it is kept aside unless it turns out to be the copy's start. saw: the file as it was looked at, none when there is none.
+// How a file stands to the store's copy of it. same, ahead: the file holds the copy, and more when ahead. newer: the file wins from `from` on, where the two first differ and the copy's digest is `starts`, once it has, onto its whole lines, what the copy gained from `gain.from` on. older: the copy wins from `from` on; own: the file changed or grew since it last agreed with the copy, so it may hold what the copy doesn't, and is kept aside unless it turns out to be the copy's start. saw: the file as it was looked at, none when there is none.
 type View =
-  | { is: "same" | "ahead"; hash: Hash | undefined; ino: number }
-  | { is: "newer"; from: number; starts: string; gain?: number; saw: Saw }
+  | { is: "same" | "ahead"; hash: Hash; ino: number }
+  | { is: "newer"; from: number; starts: string; gain?: { from: number; onto: number }; saw: Saw }
   | { is: "older"; from: number; own: boolean; saw: Saw | undefined };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a look is for. brings: the copy comes where it is the newer, so where the two first differ is asked for even when which is newer is plain without it. sure: a copy that looked to have only grown didn't arrive as that, so its marks are asked for.
-type Looking = { brings?: boolean; sure?: boolean };
+// What a look is for. brings: the copy comes where it is the newer, so where the two first differ is asked for even when which is newer is plain without it. whole: the file is read whole though it looks to have only grown since it was last read.
+type Looking = { brings?: boolean; whole?: boolean };
 
 async function marked(ask: Ask, key: string) {
   const marks: Mark[] = [];
@@ -377,26 +386,20 @@ async function apart(ask: Ask, key: string, file: number, whole: number) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Which of a file and its copy is the newer, where the file doesn't hold the copy: the one that changed since they last agreed. Changed both, or never known to agree, the machine that last sent the copy has the newer. A transcript that is the copy's start is completed by it, whoever changed: so a file put back from a backup is, and a copy with no digests is compared as it is, to its end.
+// Which of a file and its copy is the newer, where the file doesn't hold the copy: the one that changed since they last agreed. Changed both, or never known to agree, the machine that last sent the copy has the newer. A transcript that is the copy's start is completed by it, whoever changed, as a file put back from a backup is.
 async function differing(
   ask: Ask,
   { machine, root }: Known,
   [key, kind]: [string, Kind],
   [file, saw]: [number, Saw],
-  [end, { brings = false, sure = false }]: [End, Looking],
+  [end, brings]: [End, boolean],
 ): Promise<View | undefined> {
   const whole = kind.whole(file, saw.size);
   const agreed = agreedOn(root, key);
   const [base] = hashed(file, agreed !== undefined && agreed.size <= whole ? [agreed.size] : []);
   const mine = agreed !== undefined && base !== undefined && digestOf(base) === agreed.digest;
-  const own = !(mine && agreed.size === whole);
+  const own = agreed !== undefined && !(mine && agreed.size === whole);
   const wins = end.by !== machine && (agreed === undefined || mine);
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A transcript that is still what the copy was, under a copy that is longer: the copy grew, which its digest proves once the rest is here, so no mark is asked for.
-  if (kind.grows && !own && end.size > whole && !sure) {
-    return { is: "older", from: whole, own, saw };
-  }
 
   if (wins && !(brings && kind.grows)) {
     return { is: "older", from: 0, own, saw };
@@ -409,13 +412,12 @@ async function differing(
   }
 
   const { upto: from, digest: starts, next, marks } = at;
-  const reach = next?.digest === "" ? end.size : (next?.upto ?? 0);
 
   if (wins) {
     return { is: "older", from, own, saw };
   }
 
-  if (kind.grows && whole < reach) {
+  if (kind.grows && whole < (next?.upto ?? 0)) {
     const isItsStart = whole === from || (await startsCopy(ask, [key, kind], file, [from, whole]));
 
     if (isItsStart === undefined || isItsStart) {
@@ -432,7 +434,7 @@ async function differing(
       is: "newer",
       from,
       starts,
-      ...(end.size > agreed.size && { gain: agreed.size }),
+      ...(end.size > agreed.size && { gain: { from: agreed.size, onto: whole } }),
       saw,
     };
   }
@@ -449,7 +451,7 @@ async function look(
   known: Known,
   [key, path]: Copy,
   kind: Kind,
-  [end, looking = {}]: [End, Looking?],
+  [end, { brings = false, whole: rereads = false } = {}]: [End, Looking?],
 ): Promise<View | undefined> {
   let file: number;
 
@@ -467,6 +469,7 @@ async function look(
     const was = known.seen.get(key);
 
     if (
+      !rereads &&
       was?.ino === ino &&
       was.end.size === end.size &&
       was.end.digest === end.digest &&
@@ -480,13 +483,7 @@ async function look(
 
     known.seen.delete(key);
 
-    const unvouched = end.digest === NOTHING.digest && end.size > 0;
-
-    if (unvouched && whole >= end.size && tailBefore(file, end.size) === end.tail) {
-      return { is, hash: undefined, ino };
-    }
-
-    const [hash] = hashed(file, end.size <= whole && !unvouched ? [end.size] : []);
+    const [hash] = hashed(file, end.size <= whole ? [end.size] : []);
 
     if (hash !== undefined && (end.size === 0 || digestOf(hash) === end.digest)) {
       known.seen.set(key, { ...saw, end, hash });
@@ -495,7 +492,7 @@ async function look(
       return { is, hash, ino };
     }
 
-    return await differing(ask, known, [key, kind], [file, saw], [end, looking]);
+    return await differing(ask, known, [key, kind], [file, saw], [end, brings]);
   } finally {
     closeSync(file);
   }
@@ -561,16 +558,6 @@ function isAsSeen(path: string, saw: Saw | undefined) {
   }
 }
 
-function holdsEnd(path: string, end: End) {
-  const file = openSync(path, "r");
-
-  try {
-    return fstatSync(file).size === end.size && tailBefore(file, end.size) === end.tail;
-  } finally {
-    closeSync(file);
-  }
-}
-
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Whether every byte a file has is another's, from its first.
 function startsAs(short: string, long: string) {
@@ -598,7 +585,7 @@ function startsAs(short: string, long: string) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The store's copy takes a file's place from where the two first differ: what the file holds before that, then the copy's pieces, checked whole against the copy's digest before it takes the file's name, by which the copy's every byte is known to have come, and the file's start to be the copy's. A transcript that may hold something of its own, and isn't the start of what came, is kept beside it: the only place its lines are. moved: the file changed while the copy came, so it is looked at again. A copy with no digest is checked as far as it says: its length and its end.
+// The store's copy takes a file's place from where the two first differ: what the file holds before that, then the copy's pieces, checked whole against the copy's digest before it takes the file's name, by which the copy's every byte is known to have come, and the file's start to be the copy's. A transcript that changed or grew since it last agreed with the copy, and isn't the start of what came, is kept beside it: the only place its lines are. One that is what the two last agreed on, or never agreed with a copy, holds nothing known to be its own, and goes. moved: the file changed while the copy came, so it is looked at again.
 async function bring(
   ask: Ask,
   { root, seen }: Known,
@@ -616,8 +603,7 @@ async function bring(
       hash.update(bytes);
     });
 
-    const whole =
-      came && (end.digest === NOTHING.digest ? holdsEnd(part, end) : digestOf(hash) === end.digest);
+    const whole = came && (end.size === 0 || digestOf(hash) === end.digest);
 
     if (!whole) {
       process.stderr.write(`hub: ${key} didn't arrive whole from hex's store\n`);
@@ -634,12 +620,9 @@ async function bring(
     }
 
     renameSync(part, path);
-
-    if (end.digest !== NOTHING.digest) {
-      const { ino, size, mtimeMs } = statSync(path);
-      seen.set(key, { ino, size, mtimeMs, end, hash });
-      agree(root, key, end);
-    }
+    const { ino, size, mtimeMs } = statSync(path);
+    seen.set(key, { ino, size, mtimeMs, end, hash });
+    agree(root, key, end);
 
     process.stderr.write(
       `hub: ${key} came from hex's store, since ${view.saw === undefined ? "this machine had none of it" : "the store's is the newer"}\n`,
@@ -652,16 +635,16 @@ async function bring(
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A file changed in place on this machine, while another machine's lines went on reaching the copy, gets those lines on its end before it is sent: they are in no file here, and the send puts the file in the copy's place. Whether they are there, which a file that already ends with them shows.
+// A file changed in place on this machine, while another machine's lines went on reaching the copy, gets those lines on its end before it is sent: they are in no file here, and the send puts the file in the copy's place. From then the file is said to agree with the copy as it stands, which it holds all of but for its own change, so the lines come once.
 async function gained(
   ask: Ask,
+  { root }: Known,
   [key, path]: Copy,
-  kind: Kind,
-  [end, view]: [End, Extract<View, { is: "newer" }>],
+  [end, { gain, saw }]: [End, { gain: { from: number; onto: number }; saw: Saw }],
 ) {
   const more: Buffer[] = [];
 
-  const came = await pieces(ask, [key, kind], [view.gain ?? end.size, end.size], (bytes) => {
+  const came = await pieces(ask, [key, LINES], [gain.from, end.size], (bytes) => {
     more.push(bytes);
   });
 
@@ -669,33 +652,18 @@ async function gained(
     return false;
   }
 
-  const gain = Buffer.concat(more);
-  const file = openSync(path, "r");
-  let whole: number;
-
-  try {
-    whole = kind.whole(file, fstatSync(file).size);
-    const ends = Buffer.alloc(Math.min(gain.length, whole));
-    readSync(file, ends, 0, ends.length, whole - ends.length);
-
-    if (ends.equals(gain)) {
-      return true;
-    }
-  } finally {
-    closeSync(file);
-  }
-
   const part = arrivingAt(path);
 
   try {
-    startedAs(path, part, whole);
-    appendFileSync(part, gain);
+    startedAs(path, part, gain.onto);
+    appendFileSync(part, Buffer.concat(more));
 
-    if (!isAsSeen(path, view.saw)) {
+    if (!isAsSeen(path, saw)) {
       return "moved";
     }
 
     renameSync(part, path);
+    agree(root, key, end);
 
     return true;
   } finally {
@@ -709,7 +677,7 @@ type More = { pieces: Piece[]; over: number | false; upto: number; hash: Hash; s
 >;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a file sends its copy, as the pieces of one send, each with the digest of the file up to its end: from the copy's end, for a file that holds the copy; from where the two first differ, for a newer one, and from its start for a copy nobody vouches for, which then keeps only so many of its bytes (over). lines: none, to only say how long the file is. Nothing: the file isn't there, or no longer starts as the copy does up to there, having changed since it was looked at.
+// What a file sends its copy, as the pieces of one send, each with the digest of the file up to its end: from the copy's end, for a file that holds the copy, and from where the two first differ for a newer one, whose copy then keeps only so many of its bytes (over). lines: none, to only say how long the file is. Nothing: the file isn't there, or no longer starts as the copy does up to there, having changed since it was looked at.
 function past(
   path: string,
   kind: Kind,
@@ -727,14 +695,13 @@ function past(
   try {
     const { ino, size, mtimeMs } = fstatSync(file);
     const of = kind.whole(file, size);
-    const held = view.is === "newer" ? undefined : view.hash;
-    const from = held === undefined ? (view.is === "newer" ? view.from : 0) : end.size;
-    const hash = held?.copy() ?? hashed(file, [from])[0];
+    const from = view.is === "newer" ? view.from : end.size;
+    const hash = view.is === "newer" ? hashed(file, [from])[0] : view.hash.copy();
 
     const starts =
       view.is === "newer"
         ? from === 0 || (hash !== undefined && digestOf(hash) === view.starts)
-        : held === undefined || (ino === view.ino && tailBefore(file, from) === end.tail);
+        : ino === view.ino && tailBefore(file, from) === end.tail;
 
     if (of < from || hash === undefined || !starts) {
       return;
@@ -751,7 +718,7 @@ function past(
 
     const more: More = {
       pieces: cut,
-      over: held === undefined && from,
+      over: view.is === "newer" && from,
       upto,
       hash,
       saw: { ino, size, mtimeMs },
@@ -834,7 +801,7 @@ async function settled(known: Known, file: Copy, stands: End) {
       return view;
     }
 
-    if (view.is === "same" && view.hash !== undefined) {
+    if (view.is === "same") {
       return end;
     }
 
@@ -922,40 +889,50 @@ async function besidesSettled(known: Known, session: string, path: string) {
 
 const underWay = new Set<Promise<void>>();
 
+const rereading = new Set<() => void>();
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The sends under way are done. A hub that stops waits for them, since the sessions it leaves are frozen by then and the next hub may be on another machine, where a session resumes only from a whole copy; nothing else waits on a send, which is as long as what a session wrote.
+// What the files hold is in the store. A hub that stops waits for this, since the sessions it leaves are frozen by then and the next hub may be on another machine, where a session resumes only from a whole copy: every transcript a hub found to hold its copy is read whole once more, since one that only grew was known by its end, and the sends under way are done. Nothing else waits on a send, which is as long as what a session wrote.
 export async function sent() {
+  for (const reread of rereading) {
+    reread();
+  }
+
   await Promise.all(underWay);
 }
 
-type Send = (session: string, path: string, declares: boolean) => Promise<void>;
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// How a send goes, when not as any: it only says how long the file is (declares), or reads the file whole first though it looks to have only grown (rereads).
+type How = "declares" | "rereads" | undefined;
+
+type Send = (session: string, path: string, how: How) => Promise<void>;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// One send at a time for a transcript, and one more waiting however many changes come meanwhile, since a send takes all the file holds when it starts. declares: a send that only says how long the file is, which waits its turn like any.
+// One send at a time for a transcript, and one more waiting however many changes come meanwhile, since a send takes all the file holds when it starts. A send that declares or rereads waits its turn like any.
 function shipping(send: Send) {
   const sending = new Map<string, Promise<void>>();
   const queued = new Set<string>();
 
-  return function ship(session: string, path: string, declares = false): Promise<void> {
+  return function ship(session: string, path: string, how?: How): Promise<void> {
     const before = sending.get(session) ?? Promise.resolve();
 
-    if (!declares && queued.has(session)) {
+    if (how === undefined && queued.has(session)) {
       return before;
     }
 
-    if (!declares) {
+    if (how === undefined) {
       queued.add(session);
     }
 
     const shipped = (async () => {
       await before;
 
-      if (!declares) {
+      if (how === undefined) {
         queued.delete(session);
       }
 
       try {
-        await send(session, path, declares);
+        await send(session, path, how);
       } catch (error) {
         process.stderr.write(`hub: couldn't send ${path} to hex's store: ${String(error)}\n`);
       }
@@ -996,7 +973,7 @@ function watching() {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Whether this machine holds a session's whole conversation, as new as the store's. A file the copy is newer than, or longer than, gets what it lacks from the copy before the session starts; one that is the newer stays, and is sent behind the start. A store that holds nothing of a session says nothing against the file here. One that doesn't answer leaves what it last said of the session to this hub, or that the session wrote here under this hub: without either, the file here may be an older one, and isn't resumed. A copy still short of the file it is of completes nothing.
+// Whether this machine holds a session's whole conversation, as new as the store's, for which its file is read whole. A file the copy is newer than, or longer than, gets what it lacks from the copy before the session starts; one that is the newer stays, and is sent behind the start. A store that holds nothing of a session says nothing against the file here. One that doesn't answer leaves what it last said of the session to this hub, or that the session wrote here under this hub: without either, the file here may be an older one, and isn't resumed. A copy still short of the file it is of completes nothing.
 async function brought(known: Known, session: string, to: string) {
   const { machine, heard, written } = known;
   const ask = twice(known.first);
@@ -1018,7 +995,7 @@ async function brought(known: Known, session: string, to: string) {
   }
 
   for (let tries = 0; tries < TRIES; tries += 1) {
-    const view = await look(ask, known, file, LINES, [end, { brings: true, sure: tries > 0 }]);
+    const view = await look(ask, known, file, LINES, [end, { brings: true, whole: true }]);
 
     if (view === undefined) {
       return false;
@@ -1035,10 +1012,11 @@ async function brought(known: Known, session: string, to: string) {
     const came =
       view.is === "older"
         ? await bring(ask, known, file, LINES, [end, view])
-        : view.gain === undefined || (await gained(ask, file, LINES, [end, view]));
+        : view.gain === undefined ||
+          (await gained(ask, known, file, [end, { gain: view.gain, saw: view.saw }]));
 
-    if (came === true) {
-      return true;
+    if (came !== "moved") {
+      return came;
     }
   }
 
@@ -1075,7 +1053,7 @@ export function sessionTranscripts({
   machine: string;
 }) {
   const owed = new Map<string, string>();
-  const behind = new Set<string>();
+  const holds = new Map<string, string>();
   const follow = watching();
   let full = false;
 
@@ -1116,8 +1094,9 @@ export function sessionTranscripts({
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A transcript, and what is beside it, sent as far as this machine's are the newer; one the copy is newer than waits for its session's start, which brings it. declares: says whose file the copy is and how long it is, and sends none of it, so a copy is known to be short before the first of its bytes go; all a store with no room left is told. What was changed in place leaves the copy with that, before anything is sent. A line that names a file beside the transcript was written after that file, so the files beside it are settled before its lines go.
-  async function send(session: string, path: string, declares: boolean) {
+  async function send(session: string, path: string, how: How) {
     const file: Copy = [session, path];
+    const declares = how === "declares";
     let end = seen.get(session)?.end;
 
     for (let tries = 0; tries < TRIES;) {
@@ -1128,7 +1107,7 @@ export function sessionTranscripts({
       }
 
       heard.set(session, end);
-      const view = await look(ask, known, file, LINES, [end]);
+      const view = await look(ask, known, file, LINES, [end, { whole: how === "rereads" }]);
       const theirs = end.by !== machine && end.by !== NOTHING.by;
 
       if (view === undefined) {
@@ -1138,23 +1117,17 @@ export function sessionTranscripts({
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
       // Another machine's copy, short of a file that this one isn't: this file is an older state of that conversation, or another one from some line on, and adds nothing to the copy.
       if (view.is === "older" || (view.is !== "newer" && theirs && !isItsFile(path, end))) {
-        behind.add(session);
+        holds.delete(session);
 
         return;
       }
 
-      behind.delete(session);
-
-      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-      // A copy nobody vouches for stays whole, and another machine's to take, until its own turn to start over.
-      if (declares && view.is !== "newer" && view.hash === undefined) {
-        return;
-      }
+      holds.set(session, path);
 
       const has =
         view.is !== "newer" ||
         view.gain === undefined ||
-        (await gained(ask, file, LINES, [end, view]));
+        (await gained(ask, known, file, [end, { gain: view.gain, saw: view.saw }]));
 
       const besides =
         has === true && (declares || full || (await besidesSettled(known, session, path)));
@@ -1203,6 +1176,12 @@ export function sessionTranscripts({
   }
 
   const ship = shipping(send);
+
+  rereading.add(() => {
+    for (const [session, path] of holds) {
+      void ship(session, path, "rereads");
+    }
+  });
 
   function beside(session: string, path: string) {
     follow(besideOf(path), (name) => {
@@ -1268,7 +1247,7 @@ export function sessionTranscripts({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // As the hub starts: what the store holds of sessions no open thread is on goes, and what this machine keeps of them. Then every transcript is read whole against its copy, and the store told how long each is, before what the sessions wrote while no hub watched is sent, one transcript after another. One whose copy is the newer has nothing to send, and waits for its session's start.
+  // As the hub starts: what the store holds of sessions no open thread is on goes, and what this machine keeps of them, whichever of this machine's hubs the thread is on. Then every transcript is read whole against its copy, and the store told how long each is, before what the sessions wrote while no hub watched is sent, one transcript after another. One whose copy is the newer has nothing to send, and waits for its session's start.
   async function catchUp() {
     const root = await home;
 
@@ -1280,17 +1259,14 @@ export function sessionTranscripts({
     void kept((store) => store.watch(sendOwed), ignore);
     await ask((store) => store.transcripts.prune());
 
-    const held = new Set(
-      threads
-        .ids()
-        .flatMap((thread) => [
-          threads.current(thread),
-          threads.get(thread)?.session,
-          threads.get(thread)?.fork,
-        ]),
-    );
+    const open = await ask((store) => store.threads.list({ open: true }));
 
-    for (const name of entries(root)) {
+    const held = new Set([
+      ...threads.ids().map((thread) => threads.current(thread)),
+      ...(open ?? []).flatMap((thread) => [thread.session, thread.fork]),
+    ]);
+
+    for (const name of open === undefined ? [] : entries(root)) {
       if (!held.has(name.slice(0, SESSION))) {
         rmSync(join(root, name), { recursive: true, force: true });
       }
@@ -1302,11 +1278,15 @@ export function sessionTranscripts({
 
     for (const declares of [true, false]) {
       for (const [session, path] of files()) {
-        if (existsSync(path) && (declares || !behind.has(session))) {
-          await ship(session, path, declares);
+        if (existsSync(path) && (declares || holds.has(session))) {
+          await ship(session, path, declares ? "declares" : undefined);
         }
       }
     }
+
+    process.stderr.write(
+      `hub: ${files().size} conversations compared with hex's store: ${holds.size} are there as they are here, ${owed.size} are owed to it\n`,
+    );
   }
 
   void catchUp();

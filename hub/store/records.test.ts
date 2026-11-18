@@ -1639,11 +1639,11 @@ inEachHome(
       { upto: 6 + long.length + 3, digest: "d5" },
     ]);
 
-    const { digest: _none, ...older } = store.transcripts.end("s-1");
     const plain = { tail: "t6", of: 6, last: "l", by: "twin" };
+    const mine = [{ upto: 6, text: '{"a"}\n' }];
 
     expect(
-      store.transcripts.append("s-1", older, [{ upto: 6, text: '{"a"}\n' }], plain, true),
+      store.transcripts.append("s-1", store.transcripts.end("s-1"), mine, plain, true),
     ).toEqual({ size: 6, digest: "", ...plain });
     expect(store.transcripts.marks("s-1", 0)).toEqual([{ upto: 6, digest: "" }]);
 

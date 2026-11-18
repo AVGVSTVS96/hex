@@ -3,7 +3,7 @@ import { z } from "zod";
 import type { Core, Sql, Write } from "./db.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Where the store's copy of a file stands. size, digest: how many of the file's bytes it holds, and a digest of all of them, by which a machine tells whether its own file is the copy, or goes on from it. tail: a digest of the last of them, all that a hub before digests said, so a copy with no digest is one whose bytes nobody vouches for. by: the machine that last sent some of it. of, last: how long that machine's file was in whole lines when it last said, and a digest of the last of those, so a copy shorter than that is known to be short of its conversation, and another machine's file to be that conversation or not. A file the store holds nothing of stands at nothing.
+// Where the store's copy of a file stands. size, digest: how many of the file's bytes it holds, and a digest of all of them, by which a machine tells whether its own file is the copy, or goes on from it. A copy whose last sender named no digest has none, and is no file's: it starts over from that sender's file. tail: a digest of the last of them, by which a file that only grew is known to start as it did. by: the machine that last sent some of it. of, last: how long that machine's file was in whole lines when it last said, and a digest of the last of those, so a copy shorter than that is known to be short of its conversation, and another machine's file to be that conversation or not. A file the store holds nothing of stands at nothing.
 export type End = {
   size: number;
   tail: string;
@@ -50,12 +50,10 @@ const ROOM = 5 * 1024 * 1024 * 1024;
 // The marks one reply carries, so a copy of very many pieces is compared a page at a time.
 export const MARKS = 8192;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A hub from before digests names none, and reads the copy by the rest.
-const same = (one: End, other: Omit<End, "digest"> & { digest?: string }) =>
+const same = (one: End, other: End) =>
   one.size === other.size &&
   one.tail === other.tail &&
-  (other.digest === undefined || one.digest === other.digest) &&
+  one.digest === other.digest &&
   one.of === other.of &&
   one.last === other.last &&
   one.by === other.by;
@@ -122,7 +120,7 @@ export class Transcripts {
   // Lands only where the sender read the copy to stand, so one sent twice, or by a machine another has sent to the copy since, changes nothing. No pieces only says whose file the copy is and how long that file is. over: the copy keeps this many of its bytes, which end one of its pieces, and goes on from these pieces instead of what it held past them, for a file changed in place (true: none of them). Answers where the copy stands now.
   append(
     session: string,
-    after: Omit<End, "digest"> & { digest?: string },
+    after: End,
     pieces: Piece[],
     to: Pick<End, "tail" | "of" | "last" | "by"> & { digest?: string },
     over: boolean | number = false,
