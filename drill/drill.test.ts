@@ -13,8 +13,8 @@ type Chat = ReturnType<typeof telegram>;
 type Store = ReturnType<typeof cloudflare>;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The one time limit, for a drill that hangs: every wait is on something hex does, however long a loaded machine takes to do it.
-const HANGS = 240_000;
+// The one time limit, for a drill that hangs: every wait is on something hex does, however long a loaded machine takes to do it. A scenario that takes half a minute alone has taken three on a busy server.
+const HANGS = 600_000;
 
 const answer = (words: string) => `answer to: ${words}`;
 
