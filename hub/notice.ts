@@ -4,7 +4,6 @@ import { join } from "node:path";
 
 import { present } from "./present.ts";
 
-// A self-hosted Bot API server stands in for Telegram's at TELEGRAM_API_ROOT: https://core.telegram.org/bots/api#using-a-local-bot-api-server
 export const TELEGRAM_API = present(process.env.TELEGRAM_API_ROOT)
   ? process.env.TELEGRAM_API_ROOT
   : "https://api.telegram.org";

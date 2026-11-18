@@ -1,8 +1,5 @@
 import { z } from "zod";
 
-// Telegram's Bot API as hex's bot uses it, at TELEGRAM_API_ROOT: https://core.telegram.org/bots/api
-// getUpdates long-polls, an update stays until a later call asks from past it, and a second poller ends the first with 409: https://core.telegram.org/bots/api#getupdates
-
 export const OWNER = 777;
 export const GROUP = -1_009_000_000_001;
 export const GENERAL = String(GROUP);
@@ -144,8 +141,6 @@ export function telegram() {
     },
   });
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The owner writing in a topic of the group: from a drill, or from outside as `curl -d <words> <url>/owner`, with what hex sent at `<url>/sent`.
   function say(text: string, topic = 42) {
     const update = {
       update_id: ++lastUpdate,

@@ -2,8 +2,6 @@ import { rmSync } from "node:fs";
 
 import { until } from "../hub/until.ts";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The drill's sandbox ends with the drill, however the drill ends, a hard kill included. drill/hex.ts starts this with the sandbox's folder and writes it a line for each process group it starts (the group's number) and each it has stopped (the number, negative); that input ends when the drill's process does, and then this kills the groups still running and removes the folder.
 const [root = ""] = process.argv.slice(2);
 const running = new Set<number>();
 

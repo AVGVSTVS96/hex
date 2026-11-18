@@ -16,11 +16,6 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { z } from "zod";
 
-// Claude Code as hex drives it, for the drill. `claude --bg` starts a background session as a job that `claude agents --json`, `stop`, `rm` and `respawn` take: https://code.claude.com/docs/en/agent-view#manage-sessions-from-the-shell
-// A session runs its plugin's hooks with the inputs Claude Code gives them (https://code.claude.com/docs/en/hooks), connects to its channel's MCP server, and takes each channel message as a turn: https://code.claude.com/docs/en/channels-reference
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Its model is the drill's: it answers each message with the reply tool, "answer to: <the message>", and holds its answer while the drill's hold file is there, or its channel while hold.channel is.
-
 const VERSION = "2.1.327";
 const config = process.env.CLAUDE_CONFIG_DIR ?? "";
 
@@ -195,7 +190,6 @@ type Session = {
   transcript: string;
 };
 
-// Every hook an event's matchers select runs at once, with the event's input on stdin; exit 2 blocks a prompt, and any other exit but 0 is a hook that failed, which Claude Code shows its user and the drill is told of (faults), as it is of a reply the tool refused: https://code.claude.com/docs/en/hooks#hook-input-and-output
 async function hooks(
   { job, env, plugin, cwd, transcript }: Session,
   event: string,
@@ -265,7 +259,6 @@ async function hooks(
   return { blocked: ran.some(({ code }) => code === 2), added: added.join("\n") };
 }
 
-// Claude Code retries a remote server's first connection up to three times, and reconnects one that drops up to five times, a second apart and doubling: https://code.claude.com/docs/en/mcp#automatic-reconnection
 function channelOf(
   { id, env }: Session,
   url: string,
@@ -495,16 +488,12 @@ async function session(id: string) {
     arrival.resolve(true);
   }, 60_000);
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session outlives its hub, as Claude Code's does, and is no child of the drill, so what stops the drill and its leash by their process tree leaves it running: it ends itself once the drill that made its sandbox is gone.
   setInterval(() => {
     if (!drillRuns()) {
       process.exit(0);
     }
   }, 5000);
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session restarted in place mid-turn runs that turn again, as hex counts on it to (hub/sessions.ts, channelOrRestart).
   if (resumed && cut !== undefined) {
     await answer(contents(cut.message.content));
   }

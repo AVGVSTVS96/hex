@@ -29,16 +29,12 @@ const Job = z.object({
   respawnFlags: z.array(z.string()).default([]),
 });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The sandbox sits beside bun's own cache, on the same disk, so each copy of hex installs by linking from it and downloads nothing.
 const cache = process.env.BUN_INSTALL_CACHE_DIR ?? join(homedir(), ".bun", "install", "cache");
 
 const caches = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
 
 mkdirSync(caches, { recursive: true });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A drill stopped together with its leash, as by a kill of both, leaves its sandbox behind, and its hex running: each drill ends what still runs in the ones whose runner is gone, and removes them.
 for (const left of readdirSync(caches).filter((name) => name.startsWith("hex-drill-"))) {
   const runner = join(caches, left, "runner");
 
@@ -58,8 +54,6 @@ const root = mkdtempSync(join(caches, "hex-drill-"));
 
 writeFileSync(join(root, "runner"), String(process.pid));
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What ends the sandbox when this process does (drill/leash.ts), in a session of its own so that nothing that stops this process stops it.
 const leash = Bun.spawn([process.execPath, join(import.meta.dir, "leash.ts"), root], {
   stdio: ["pipe", "ignore", "ignore"],
   detached: true,
@@ -106,8 +100,6 @@ function alive(pid: number) {
   }
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Every process whose working folder is inside a folder, which a hex's run loop, hub, door and sessions all are of their sandbox's. Linux tells it in /proc; a machine without one finds none, and only the folder goes.
 function runningIn(sandbox: string) {
   const inside = (pid: string) => {
     try {
@@ -138,14 +130,10 @@ const kill = (group: number) => {
   }
 };
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// For a drill that ends in a process that goes on: bun test stops what a test file left running, the leash included, as the file ends. Every machine's folder goes here, once no drill is left to answer for: removing one takes this process seconds, which the stores and Telegrams it serves would spend not answering.
 export function removeSandbox() {
   rmSync(root, { recursive: true, force: true });
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// This checkout's files, committed or not. git lists a checkout nested in this one, like a worktree an agent made, as a folder, and it isn't hex's.
 const copyOfHex = async (to: string) => {
   const files = (
     await sh(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: repo })
@@ -158,8 +146,6 @@ const copyOfHex = async (to: string) => {
   }
 };
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A machine's hex folder, with a home, Claude Code and services of its own: this checkout's files as the one commit of its .hex, installed, and settings that keep its records in the store at storeUrl and reach Telegram at telegramUrl.
 export async function folder(
   name: string,
   { telegramUrl, storeUrl }: { telegramUrl: string; storeUrl: string },
@@ -259,8 +245,6 @@ export async function folder(
       await bin("threads");
       await bin("store", "move", storeUrl, "hex");
     },
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // `hex run`, as hex's service starts it, leading a process group that holds everything it starts: its hubs, and the sessions they start through the drill's claude.
     start: () => {
       const log = openSync(join(state, "hub.log"), "a");
       run = Bun.spawn([join(hex, "bin", "hex"), "run"], {
@@ -276,14 +260,10 @@ export async function folder(
       return run;
     },
     connected: () => existsSync(join(state, "good")),
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // Each hook of a session here that failed, and each reply its tool refused, as the drill's claude wrote them down.
     faults: () =>
       existsSync(join(claude, "faults"))
         ? readFileSync(join(claude, "faults"), "utf-8").trim()
         : "",
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // What each session here printed, its hooks' errors among it, under the name hex started it with.
     sessionLogs: () =>
       (existsSync(join(claude, "jobs")) ? readdirSync(join(claude, "jobs")) : []).map((id) => {
         const { respawnFlags } = Job.parse(
@@ -301,8 +281,6 @@ export async function folder(
           () => "0",
         ),
       ),
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // What the sessions hold back while held: their answers, or a new session's channel, so the drill can do something first.
     hold: (held: boolean, what: "answers" | "channel" = "answers") => {
       const file = join(claude, what === "answers" ? "hold" : "hold.channel");
 

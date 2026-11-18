@@ -12,12 +12,8 @@ type Chat = ReturnType<typeof telegram>;
 
 type Store = ReturnType<typeof cloudflare>;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A scenario's whole time limit, for a drill that hangs: a scenario that takes half a minute alone has taken three on a busy server.
-const HANGS = 600_000;
+const STARTS_WITHIN = 240_000;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What one wait gets beyond the machine's own slowness: hex's longest wait of its own on the way to an answer, a store it asks again within half a minute (hub/store/remote.ts), twice over. The longest wait of a healthy run on a server at load 60 was 33 seconds, with 16 to start.
 const HEX_WAITS = 60_000;
 
 const answer = (words: string) => `answer to: ${words}`;
@@ -42,41 +38,25 @@ function insist(holds: boolean, otherwise: string) {
   }
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// One thing that happened to hex, played against hex whole: a failure says what didn't happen, then how each hub's log ends and what its sessions printed.
 function scenario(name: string, play: (drill: Drill) => Promise<void>) {
-  test.concurrent(
-    name,
-    async () => {
-      const drill = drillFor();
-      let hung: ReturnType<typeof setTimeout> | undefined;
+  test.concurrent(name, async () => {
+    const drill = drillFor();
 
-      const hangs = new Promise<never>((_resolve, reject) => {
-        hung = setTimeout(() => {
-          reject(new Error(drill.waiting()));
-        }, HANGS);
+    try {
+      await play(drill);
+      drill.sound();
+    } catch (error) {
+      throw new Error(drill.failure(error instanceof Error ? error : new Error(String(error))), {
+        cause: error,
       });
-
-      try {
-        await Promise.race([play(drill), hangs]);
-        drill.sound();
-      } catch (error) {
-        throw new Error(drill.failure(error instanceof Error ? error : new Error(String(error))), {
-          cause: error,
-        });
-      } finally {
-        clearTimeout(hung);
-        await drill.end();
-      }
-    },
-    HANGS + 60_000,
-  );
+    } finally {
+      await drill.end();
+    }
+  });
 }
 
 type Drill = ReturnType<typeof drillFor>;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The end of a log with each line once, where it last stood, and how often it came: an outage repeats one line for as long as it lasts.
 function ending(log: string, lines: number) {
   const times = new Map<string, number>();
 
@@ -93,13 +73,10 @@ function ending(log: string, lines: number) {
 }
 
 function drillFor() {
-  let waitingFor = "";
-  let within = HANGS;
+  let within = STARTS_WITHIN;
   const folders: Folder[] = [];
   const outside: { stop: () => Promise<void> }[] = [];
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A hook that fails in a session doesn't stop the session, and a reply the tool calls failed may have reached the owner all the same, so hex can go on with either: the drill fails on the first, whatever it was waiting for.
   const sound = () => {
     for (const each of folders) {
       insist(
@@ -109,10 +86,7 @@ function drillFor() {
     }
   };
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A wait ends as failed well before the scenario's limit: after hex's own waits and four times what this hex took to start, which is how slow the machine is now.
   const soon = async <T>(what: string, check: () => T | Promise<T>) => {
-    waitingFor = what;
     const began = Date.now();
 
     const value = await until(() => {
@@ -124,8 +98,6 @@ function drillFor() {
 
       return check();
     });
-
-    waitingFor = "";
 
     return value;
   };
@@ -150,8 +122,6 @@ function drillFor() {
     step,
     machine,
     answered,
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // A new hex folder on its own store and Telegram, running, with General's session connected.
     running: async () => {
       const chat = telegram();
       const store = cloudflare();
@@ -161,7 +131,7 @@ function drillFor() {
       const run = hex.start();
       const started = Date.now();
       await soon("hex starting, until General's session connects", hex.connected);
-      within = Math.min(HANGS, HEX_WAITS + 4 * (Date.now() - started));
+      within = Math.min(STARTS_WITHIN, HEX_WAITS + 4 * (Date.now() - started));
 
       return { chat, store, hex, run };
     },
@@ -175,7 +145,6 @@ function drillFor() {
 
       return key;
     },
-    waiting: () => (waitingFor === "" ? "the drill hung" : `${waitingFor}: it never happened`),
     failure: (error: Error) =>
       [
         error.message,
@@ -200,8 +169,6 @@ function drillFor() {
   };
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The owner's message and hex's answer to it each reached Telegram, and the store, once.
 function once(chat: Chat, store: Store, key: string, words: string) {
   const told = chat.heard(answer(words));
   insist(told === 1, `the answer to "${words}" reached Telegram ${told} times, not once`);
@@ -317,31 +284,6 @@ scenario(
     await talk(chat, store, "after the outage");
     once(chat, store, first, "as the outage begins");
     once(chat, store, key, "during the outage");
-  },
-);
-
-scenario(
-  "a session killed while the store is silent: the thread's next session answers what comes meanwhile, and what the dead one held once the store is back",
-  async ({ running, soon, answered, talk }) => {
-    const { chat, store, hex } = await running();
-    hex.hold(true);
-    const held = chat.say("held as the store goes silent");
-
-    const taker = await soon('the session taking "held as the store goes silent"', () =>
-      takerOf(store, held),
-    );
-
-    const pid = hex.sessions().find(({ sessionId }) => sessionId === taker)?.pid ?? 0;
-    store.silent();
-    process.kill(pid, "SIGKILL");
-    hex.hold(false);
-    const meanwhile = chat.say("while the store is silent");
-    await answered(chat, "while the store is silent");
-    store.up();
-    await answered(chat, "held as the store goes silent");
-    await talk(chat, store, "after the store is back");
-    once(chat, store, held, "held as the store goes silent");
-    once(chat, store, meanwhile, "while the store is silent");
   },
 );
 

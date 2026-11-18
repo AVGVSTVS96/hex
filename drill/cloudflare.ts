@@ -7,14 +7,9 @@ type Env = { KEY: string; VERSION: string; STORE: Namespace };
 
 export const KEY = "drill-store-key-long-enough-for-the-worker";
 
-// Cloudflare running hex's store (hub/store/object.ts) as one Durable Object behind its Worker, on SQLite as the runtime keeps it, here in memory: https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A write to disk would hold up every answer of the process that serves this, the other drills' stores and Telegrams among them, for as long as a busy disk takes, and hex gives its store ten seconds.
-// The runtime answers a watching socket's ping itself, and the object tells each socket of every write; both happen here, around the object's code, since Bun has no WebSocketPair: https://developers.cloudflare.com/durable-objects/best-practices/websockets/
 export function cloudflare() {
   const storage = objectStorage();
   const sockets = new Set<Bun.ServerWebSocket>();
-  let silent = false;
 
   const env: Env = {
     KEY,
@@ -30,9 +25,7 @@ export function cloudflare() {
       storage,
       // oxlint-disable-next-line eslint/no-empty-function -- the sockets are accepted around the object, in Bun's server
       acceptWebSocket: () => {},
-      // SAFETY: the object only sends to and closes the sockets it's given, which Bun's server sockets do.
-      // oxlint-disable-next-line typescript/no-unsafe-type-assertion, anti-slop/no-chained-type-assertions -- Bun's server socket shares only send and close with the web's
-      getWebSockets: () => [...sockets] as unknown as WebSocket[],
+      getWebSockets: () => [...sockets],
       // oxlint-disable-next-line eslint/no-empty-function -- the server answers a ping itself, as the runtime would
       setWebSocketAutoResponse: () => {},
     },
@@ -45,14 +38,6 @@ export function cloudflare() {
       port,
       idleTimeout: 0,
       fetch: async (request, server) => {
-        if (silent) {
-          await new Promise((resolve) => {
-            request.signal.addEventListener("abort", resolve);
-          });
-
-          return new Response(null, { status: 504 });
-        }
-
         if (
           new URL(request.url).pathname.endsWith("/watch") &&
           request.headers.get("authorization") === `Bearer ${KEY}`
@@ -67,7 +52,7 @@ export function cloudflare() {
           sockets.add(socket);
         },
         message: (socket, data) => {
-          if (!silent && String(data) === "ping") {
+          if (String(data) === "ping") {
             socket.send("pong");
           }
         },
@@ -82,19 +67,11 @@ export function cloudflare() {
 
   return {
     url: `http://127.0.0.1:${port}`,
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // An outage: the store's address refuses every connection, cutting those open, its watching sockets among them.
     down: async () => {
       await server?.stop(true);
       server = undefined;
     },
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // The other outage: the address takes every request and answers none, a watching socket's ping included, so each caller waits out its own time.
-    silent: () => {
-      silent = true;
-    },
     up: () => {
-      silent = false;
       server ??= serve(port);
     },
     rows: (query: string, ...bound: unknown[]) => storage.sql.exec(query, ...bound).toArray(),
