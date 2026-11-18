@@ -525,7 +525,7 @@ test("status posts whose first read the store didn't answer are kept once it ans
 
   process.on("unhandledRejection", count);
 
-  const object = Bun.serve<undefined>({
+  const object = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
     fetch: async (request, server) => {

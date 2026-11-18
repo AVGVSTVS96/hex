@@ -1016,11 +1016,13 @@ test("a call answered with a page in the object's place, like the empty 500 of a
     port: 0,
     fetch: async (request) => {
       calls += 1;
+
       const answer = await fetch(new URL(new URL(request.url).pathname, object.url), {
         method: request.method,
         headers: request.headers,
         body: await request.text(),
       });
+
       const instead = page;
       page = undefined;
 
