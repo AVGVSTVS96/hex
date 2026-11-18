@@ -29,7 +29,6 @@ import {
   ready,
   EFFORTS,
   MODELS,
-  Ledger,
   reading,
   sinceToday,
   stateDir,
@@ -562,8 +561,6 @@ async function dmTopic(owner: string, thread: string): Promise<number | undefine
     makingDmTopics.delete(thread);
   }
 }
-
-const ledger = new Ledger(STATE_DIR, "telegram", (note) => hub.noted(note));
 
 const post: Post = {
   room: MAX_CHUNK_LIMIT,
@@ -2015,6 +2012,8 @@ const hub = await startHub({
     waiting(message, still);
   },
 });
+
+const { ledger } = hub;
 
 let attempt = 0;
 

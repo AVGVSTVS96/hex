@@ -2,9 +2,17 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 
 import type { Note, Owing } from "./kept.ts";
+import type { LedgerWrite } from "./noted.ts";
 import type { NewRow } from "./store.ts";
 import type { Threads } from "./threads.ts";
 import type { Message } from "./waiting.ts";
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What the questions ledger writes, owed like hex's words themselves, so a store that doesn't answer never fails a tool whose message the owner already has. Whether it changed anything, taken as so while it's owed.
+export const noting =
+  (must: Owing["must"]) =>
+  (note: Note | LedgerWrite): Promise<boolean> =>
+    must("kind" in note ? note : { kind: "ledger", id: randomUUID(), made: note }, true);
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // What hex said in the app's threads, each kept under the session that said it. callingAs runs a tool call as its session, so what the tool sends, into any thread, is kept as that session's words.
@@ -44,11 +52,6 @@ export function wordsSent({
 
   return {
     sent,
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // The questions ledger's note of what hex said, owed like the words themselves, so a store that doesn't answer never fails a reply the owner already has.
-    noted: async (note: Note) => {
-      await must(note, undefined);
-    },
     said: (key: string) => kept((store) => store.messages.latest(`${app}:${key}`), null),
     callingAs: <Result>(session: string | undefined, run: () => Result) => caller.run(session, run),
   };
