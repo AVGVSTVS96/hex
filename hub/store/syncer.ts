@@ -71,6 +71,7 @@ function checkpointed() {
   return busy === 0 && copied === log;
 }
 
+// WARNING: the first write after a whole checkpoint starts the WAL over and fsyncs its header (sqlite3WalFrames: https://sqlite.org/src/file?name=src/wal.c), so this thread makes that write, not the hub's.
 function restartWal() {
   db.transaction(() => {
     const { user_version: version } = UserVersion.parse(db.query("pragma user_version").get());
