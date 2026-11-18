@@ -251,6 +251,7 @@ export async function startHub({
     stopping: (thread) => {
       rests.cancel(thread);
     },
+    paused: (thread, running) => pauses.stopped(thread, running),
   });
 
   const failing = failedStarts({

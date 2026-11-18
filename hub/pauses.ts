@@ -86,7 +86,15 @@ export function sessionPauses({
       }
     }
 
-    if (!pause.paused || !present(session) || !(yield* Effect.promise(() => ended(session)))) {
+    if (pause.paused && present(session)) {
+      yield* Effect.promise(() => tell(thread, session, needs));
+    }
+  });
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // What a paused session's turn left unanswered is told to its chat, once: by the check that finds it paused, or by a stop that reaches it first (stopped), since a stop takes what the session took as handled.
+  async function tell(thread: string, session: string, needs: string | undefined) {
+    if (!(await ended(session))) {
       return;
     }
 
@@ -102,11 +110,17 @@ export function sessionPauses({
         : `its session stopped on a question only its terminal can answer ("${needs}"), so your message got no answer. Your next message starts it again.`,
       true,
     );
-  });
+  }
+
+  async function stopped(thread: string, running: claude.Agent) {
+    if (running.status === "waiting") {
+      await tell(thread, running.sessionId, claude.needs(running));
+    }
+  }
 
   function connected(thread: string) {
     pauses.of(thread).paused = undefined;
   }
 
-  return { of, check, connected };
+  return { of, check, stopped, connected };
 }

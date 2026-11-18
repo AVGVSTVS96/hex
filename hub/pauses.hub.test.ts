@@ -233,7 +233,7 @@ test("a session already paused on a refusal when the hub connects to it, its own
   });
   refused();
   const line = await session("chat:7");
-  await until(() => failures.length);
+  await until(() => calls().some((each) => each[0] === "stop"));
   expect(failures).toEqual([["chat:7", FLAGGED]]);
   expect(line.received).toEqual([]);
   expect(bgStarts()).toEqual([]);
