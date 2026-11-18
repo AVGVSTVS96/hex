@@ -1,29 +1,11 @@
-import { mock } from "bun:test";
 import { join } from "node:path";
 
-import type { DurableObject, Namespace } from "cloudflare:workers";
+import type { Namespace } from "cloudflare:workers";
 
 import { objectStorage } from "../hub/store/fake.ts";
-
-type State = ConstructorParameters<typeof DurableObject>[0];
+import { Records, worker } from "../hub/store/object.testing.ts";
 
 type Env = { KEY: string; VERSION: string; STORE: Namespace };
-
-void mock.module("cloudflare:workers", () => ({
-  DurableObject: class {
-    readonly ctx: State;
-    readonly env: Env;
-
-    constructor(ctx: State, env: Env) {
-      this.ctx = ctx;
-      this.env = env;
-    }
-  },
-}));
-
-Object.assign(globalThis, { WebSocketRequestResponsePair: Array });
-
-const { default: worker, Records } = await import("../hub/store/object.ts");
 
 export const KEY = "drill-store-key-long-enough-for-the-worker";
 

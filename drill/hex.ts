@@ -31,7 +31,19 @@ const caches = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
 
 mkdirSync(caches, { recursive: true });
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A drill stopped together with its leash, as when systemd stops the job an update runs in, leaves its sandbox behind: each drill removes the ones whose runner is gone.
+for (const left of readdirSync(caches).filter((name) => name.startsWith("hex-drill-"))) {
+  const runner = join(caches, left, "runner");
+
+  if (existsSync(runner) && !alive(Number(readFileSync(runner, "utf-8")))) {
+    rmSync(join(caches, left), { recursive: true, force: true });
+  }
+}
+
 const root = mkdtempSync(join(caches, "hex-drill-"));
+
+writeFileSync(join(root, "runner"), String(process.pid));
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // What ends the sandbox when this process does (drill/leash.ts), in a session of its own so that nothing that stops this process stops it.
@@ -73,6 +85,14 @@ function freePort() {
   return port;
 }
 
+function alive(pid: number) {
+  try {
+    return process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+}
+
 const gone = (group: number) => {
   try {
     return !process.kill(-group, 0);
@@ -100,12 +120,14 @@ export function removeSandbox() {
   rmSync(root, { recursive: true, force: true });
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// This checkout's files, committed or not. git lists a checkout nested in this one, like a worktree an agent made, as a folder, and it isn't hex's.
 const copyOfHex = async (to: string) => {
   const files = (
     await sh(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: repo })
   )
     .split("\0")
-    .filter((file) => file !== "" && existsSync(join(repo, file)));
+    .filter((file) => file !== "" && !file.endsWith("/") && existsSync(join(repo, file)));
 
   for (const file of files) {
     cpSync(join(repo, file), join(to, file), { verbatimSymlinks: true });

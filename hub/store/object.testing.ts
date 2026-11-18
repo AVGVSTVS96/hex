@@ -29,7 +29,9 @@ void mock.module("cloudflare:workers", () => ({
 // The runtime's own pair of a ping and its answer, which the object only hands to its context.
 Object.assign(globalThis, { WebSocketRequestResponsePair: Array });
 
-const { default: worker, Records } = await import("./object.ts");
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The store's Worker and its object, loaded outside Cloudflare's runtime: for a test's own stand-in of it (served, below, and the drill's).
+export const { default: worker, Records } = await import("./object.ts");
 
 type Between = (
   route: string,
