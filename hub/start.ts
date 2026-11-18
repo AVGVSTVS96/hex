@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 
 import * as claude from "./claude.ts";
@@ -10,6 +11,7 @@ import { toolList } from "./mcp.ts";
 import type { ChannelServer } from "./mcp.ts";
 import { present } from "./present.ts";
 import type { Threads } from "./threads.ts";
+import { sessionTranscripts } from "./transcripts.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // What a session reads only as it starts: its launch arguments, its channel's instructions and tools, and the files and folders its launcher loads that way. hex.db keeps a digest of what each thread's session started with.
@@ -70,6 +72,7 @@ export function sessionStarts({
   fresh: (thread: string) => boolean;
 }) {
   const inherited = claude.inherited();
+  const transcripts = sessionTranscripts({ threads, kept, fresh, machine: hostname() });
 
   function chosen(thread: string) {
     const { model, effort } = threads.of(thread);
@@ -99,6 +102,8 @@ export function sessionStarts({
     fork?: string,
     daemonChecked?: Promise<void>,
   ) {
+    const whole = await transcripts.land(thread, fork);
+
     if (!present(fork)) {
       await rewound(thread);
     }
@@ -125,7 +130,7 @@ export function sessionStarts({
 
     const known = threads.of(thread);
 
-    const takesOverFrom = present(prompt) || present(fork) ? undefined : expired(thread);
+    const takesOverFrom = present(prompt) || present(fork) ? undefined : expired(thread, whole);
     files.write(thread, {}, takesOverFrom);
     const launching = launchArgs(thread);
     threads.update(thread, { launched: stamp(launching, server, startup) });
@@ -183,8 +188,8 @@ export function sessionStarts({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The transcript of a thread's saved session that a new session takes over from instead of resuming: one this machine doesn't have, like after a restore from hex.db, or one whose prompt cache has expired when it holds more than a new session costs to start and catch up. A start with a prompt, like /compact, needs the old conversation itself, so it resumes.
-  function expired(thread: string) {
+  // The transcript of a thread's saved session that a new session takes over from instead of resuming: one this machine holds none or only part of and hex's store can't complete, like after a restore from hex.db, or one whose prompt cache has expired when it holds more than a new session costs to start and catch up. A start with a prompt, like /compact, needs the old conversation itself, so it resumes.
+  function expired(thread: string, whole: boolean) {
     const session = threads.of(thread).session;
 
     if (!present(session) || fresh(thread)) {
@@ -193,7 +198,7 @@ export function sessionStarts({
 
     const file = claude.transcript(threads.cwd(thread), session);
 
-    if (!claude.saved(session)) {
+    if (!whole || !claude.saved(session)) {
       return file;
     }
 

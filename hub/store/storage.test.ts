@@ -225,6 +225,17 @@ test("a hub that claims hex gets the next tenure, every hub that claimed before 
   expect(() => object.claim("{}")).toThrow();
 });
 
+test("the store says which commit of hex the hub that holds it runs, as that hub said when it claimed", () => {
+  const object = startedEmpty();
+  expect(object.hub()).toBe("");
+  object.claim(JSON.stringify({ claimant: "a", hub: "c0ffee" }));
+  expect(object.hub()).toBe("c0ffee");
+  object.claim(JSON.stringify({ claimant: "a", hub: "said again" }));
+  expect(object.hub()).toBe("c0ffee");
+  object.claim(by("b"));
+  expect(object.hub()).toBe("");
+});
+
 test("a claim that arrives again gets its tenure while it holds hex, and one the network held back past a later claim takes nothing from it", () => {
   const object = startedEmpty();
   expect(object.claim(by("a"))).toEqual({ tenure: 1 });
@@ -590,7 +601,7 @@ test("the object answers only its owner's key, never without one, and refuses a 
           headers: { authorization: `Bearer ${KEY}` },
         })
       ).json(),
-    ).toEqual({ version: "v7", migrations: appendOnlyMigrations.length, offers: OFFERS });
+    ).toEqual({ version: "v7", migrations: appendOnlyMigrations.length, offers: OFFERS, hub: "" });
     expect(await (await post("/hex/claim", by("a"))).json()).toEqual({ value: 1 });
     expect(await (await post("/hex/claim", by("b"))).json()).toEqual({ value: 2 });
     expect((await post("/hex/call", "{}", { "hex-tenure": "2" })).status).toBe(200);

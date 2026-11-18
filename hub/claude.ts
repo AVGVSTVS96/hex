@@ -681,11 +681,24 @@ export function settingsOf(session: Agent): z.infer<typeof Launch> | undefined {
   }
 }
 
+export const transcripts = () => join(home(), "projects");
+
+export const transcriptsIn = (cwd: string) =>
+  join(transcripts(), cwd.replaceAll(/[^a-zA-Z0-9]/gu, "-"));
+
 export function transcript(cwd: string, session: string) {
-  return join(home(), "projects", cwd.replaceAll(/[^a-zA-Z0-9]/gu, "-"), `${session}.jsonl`);
+  return join(transcriptsIn(cwd), `${session}.jsonl`);
 }
 
-export const transcripts = () => join(home(), "projects");
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Claude Code resumes a session from whichever folder's transcript has its id, so one that moved with its session to another folder is still the session's.
+export function transcriptOf(session: string) {
+  const projects = transcripts();
+
+  return (existsSync(projects) ? readdirSync(projects) : [])
+    .map((project) => join(projects, project, `${session}.jsonl`))
+    .find((file) => existsSync(file));
+}
 
 export function saved(session: string) {
   const projects = transcripts();
