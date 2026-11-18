@@ -1,5 +1,6 @@
 import {
   closeSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -32,7 +33,20 @@ mkdirSync(caches, { recursive: true });
 
 const root = mkdtempSync(join(caches, "hex-drill-"));
 
-const groups = new Set<number>();
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What ends the sandbox when this process does (drill/leash.ts), in a session of its own so that nothing that stops this process stops it.
+const leash = Bun.spawn([process.execPath, join(import.meta.dir, "leash.ts"), root], {
+  stdio: ["pipe", "ignore", "ignore"],
+  detached: true,
+});
+
+leash.unref();
+
+function tell(line: string) {
+  void leash.stdin.write(`${line}\n`);
+  void leash.stdin.flush();
+}
+
 let made = 0;
 
 async function sh(command: string[], options: { cwd: string; env?: Record<string, string> }) {
@@ -68,30 +82,16 @@ const gone = (group: number) => {
 };
 
 const kill = (group: number) => {
-  try {
+  if (!gone(group)) {
     process.kill(-group, "SIGKILL");
-  } catch {
-    groups.delete(group);
   }
 };
-
-for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-  process.once(signal, () => {
-    groups.forEach(kill);
-    rmSync(root, { recursive: true, force: true });
-    process.exit(1);
-  });
-}
 
 export function place(name: string) {
   const dir = join(root, `${++made}-${name}`);
   mkdirSync(dir, { recursive: true });
 
   return dir;
-}
-
-export function removeSandbox() {
-  rmSync(root, { recursive: true, force: true });
 }
 
 const copyOfHex = async (to: string) => {
@@ -101,8 +101,8 @@ const copyOfHex = async (to: string) => {
     .split("\0")
     .filter((file) => file !== "" && existsSync(join(repo, file)));
 
-  for (let at = 0; at < files.length; at += 200) {
-    await sh(["cp", "--parents", "-t", to, ...files.slice(at, at + 200)], { cwd: repo });
+  for (const file of files) {
+    cpSync(join(repo, file), join(to, file), { verbatimSymlinks: true });
   }
 };
 
@@ -216,12 +216,18 @@ export async function folder(
         detached: true,
       });
       closeSync(log);
-      groups.add(run.pid);
+      tell(String(run.pid));
       mine.add(run.pid);
 
       return run;
     },
     connected: () => existsSync(join(state, "good")),
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // Each hook of a session here that failed, as the drill's claude wrote it down.
+    hooksFailed: () =>
+      existsSync(join(claude, "hooks.failed"))
+        ? readFileSync(join(claude, "hooks.failed"), "utf-8").trim()
+        : "",
     hub: async () =>
       Number(
         await sh(["pgrep", "-P", String(run?.pid), "-f", "hub/serve.ts"], { cwd: dir }).catch(
@@ -247,7 +253,7 @@ export async function folder(
       await until(() => [...mine].every(gone));
 
       for (const group of mine) {
-        groups.delete(group);
+        tell(String(-group));
       }
 
       rmSync(dir, { recursive: true, force: true });

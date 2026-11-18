@@ -1,10 +1,10 @@
-import { afterAll, test } from "bun:test";
+import { test } from "bun:test";
 import { appendFileSync, copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { until } from "../hub/until.ts";
 import { cloudflare } from "./cloudflare.ts";
-import { folder, place, removeSandbox } from "./hex.ts";
+import { folder, place } from "./hex.ts";
 import type { Folder } from "./hex.ts";
 import { telegram } from "./telegram.ts";
 
@@ -49,12 +49,13 @@ function scenario(name: string, play: (drill: Drill) => Promise<void>) {
 
       const hangs = new Promise<never>((_resolve, reject) => {
         hung = setTimeout(() => {
-          reject(new Error("the drill hung"));
+          reject(new Error(drill.waiting()));
         }, HANGS);
       });
 
       try {
         await Promise.race([play(drill), hangs]);
+        drill.sound();
       } catch (error) {
         throw new Error(drill.failure(error instanceof Error ? error : new Error(String(error))), {
           cause: error,
@@ -75,9 +76,26 @@ function drillFor() {
   const folders: Folder[] = [];
   const outside: { stop: () => Promise<void> }[] = [];
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A hook that fails in a session doesn't stop the session, so hex can go on answering with one broken: the drill fails on the first, whatever it was waiting for.
+  const sound = () => {
+    for (const each of folders) {
+      insist(
+        each.hooksFailed() === "",
+        `a session's hook failed on machine ${basename(each.dir)}:\n${each.hooksFailed()}`,
+      );
+    }
+  };
+
   const soon = async <T>(what: string, check: () => T | Promise<T>) => {
     waitingFor = what;
-    const value = await until(check);
+
+    const value = await until(() => {
+      sound();
+
+      return check();
+    });
+
     waitingFor = "";
 
     return value;
@@ -98,6 +116,7 @@ function drillFor() {
   };
 
   return {
+    sound,
     soon,
     step,
     machine,
@@ -125,9 +144,10 @@ function drillFor() {
 
       return key;
     },
+    waiting: () => (waitingFor === "" ? "the drill hung" : `${waitingFor}: it never happened`),
     failure: (error: Error) =>
       [
-        waitingFor === "" ? error.message : `${waitingFor}: it never happened`,
+        error.message,
         ...folders.map(
           (each) =>
             `machine ${basename(each.dir)}'s hub log ends:\n${each.log().split("\n").slice(-40).join("\n")}`,
@@ -157,8 +177,6 @@ function once(chat: Chat, store: Store, key: string, words: string) {
     `the store holds the answer to "${words}" ${sent(store, words)} times, not once`,
   );
 }
-
-afterAll(removeSandbox);
 
 scenario(
   "the owner's message starts a session, whose answer reaches Telegram, and the store holds both",

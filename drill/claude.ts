@@ -32,6 +32,7 @@ if (config === "" || !existsSync(config)) {
 
 const jobs = join(config, "jobs");
 const hold = join(config, "hold");
+const failed = join(config, "hooks.failed");
 
 const JobRecord = z.object({
   sessionId: z.string(),
@@ -185,7 +186,7 @@ type Session = {
   transcript: string;
 };
 
-// Every hook an event's matchers select runs at once, with the event's input on stdin; exit 2 blocks a prompt: https://code.claude.com/docs/en/hooks#hook-input-and-output
+// Every hook an event's matchers select runs at once, with the event's input on stdin; exit 2 blocks a prompt, and any other exit but 0 is a hook that failed, which Claude Code shows its user and the drill is told of: https://code.claude.com/docs/en/hooks#hook-input-and-output
 async function hooks(
   { job, env, plugin, cwd, transcript }: Session,
   event: string,
@@ -219,13 +220,28 @@ async function hooks(
         env: { ...env, CLAUDE_PLUGIN_ROOT: plugin, CLAUDE_PROJECT_DIR: cwd },
         stdin: new Blob([input]),
         stdout: "pipe",
-        stderr: "inherit",
+        stderr: "pipe",
         timeout: (hook.timeout ?? 600) * 1000,
       });
 
-      return hook.async === true
-        ? { code: 0, out: "" }
-        : { code: await child.exited, out: await new Response(child.stdout).text() };
+      const ended = Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]).then(([code, out, err]) => {
+        process.stderr.write(err);
+
+        if (code !== 0 && code !== 2) {
+          appendFileSync(
+            failed,
+            `${event}: \`${hook.command}\` exited ${code}: ${err.trim().split("\n").at(-1) ?? ""}\n`,
+          );
+        }
+
+        return { code, out };
+      });
+
+      return hook.async === true ? { code: 0, out: "" } : await ended;
     }),
   );
 
