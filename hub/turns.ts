@@ -6,14 +6,8 @@ import type { Message } from "./waiting.ts";
 const TURN_REPORTS_WITHIN = 60_000;
 
 type Turn = {
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // From the session's hooks; background: its turn ended with agents still working.
   is: "busy" | "background" | "done";
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A message went to the running session after its last turn began: until a turn begins that takes it, a rest reported meanwhile is the turn before it ending.
   untaken?: boolean | undefined;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A message went to the session while it rested, so a turn is starting that its hook hasn't reported yet; under load that report can take seconds. Ends at the report, or at TURN_REPORTS_WITHIN for a message that ran no turn, like a copy the session already had.
   starting?: Timer | undefined;
 };
 

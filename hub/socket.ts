@@ -15,8 +15,6 @@ import type { Author, MessageId } from "./store.ts";
 import type { Threads } from "./threads.ts";
 import { wentThrough } from "./through.ts";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What another process (the voice app, hex's check) can do with a question the client asked with buttons: answer it for the owner, settle it as no longer asked, or take an answer back.
 export type Questions = {
   answer: (thread: string, message: MessageId, label: string, via: string) => void;
   settle: (thread: string, message: MessageId, note: string) => void;
@@ -88,8 +86,6 @@ export type HubLine = z.input<typeof HubRequestLine>;
 
 const ignore = (): void => undefined;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a session's hooks couldn't keep while hex's store didn't answer, which the hub keeps once it does.
 function owedByHooks(
   owing: Owing,
   { said = [], pass: turn }: Extract<HubRequest, { type: "owed" }>,
@@ -103,8 +99,6 @@ function owedByHooks(
   }
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Where a session's hooks and hex's own tools reach the hub, one JSON line each, and which owner hears each line. mirror: shows a thread in another app too, and resolves with where.
 export function hubSocket({
   socketPath,
   threads,
@@ -128,8 +122,6 @@ export function hubSocket({
   turnEnded: (thread: string, background?: boolean) => Promise<void>;
   mirror: (thread: string, to: string, where?: string) => Promise<string>;
 }) {
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A thread's lines are handled one at a time, in the order they came, each once the store has answered what the one before it asked.
   const handling = ordered();
 
   function inOrder(request: HubRequest) {

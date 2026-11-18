@@ -13,8 +13,6 @@ import { present } from "./present.ts";
 import type { Threads } from "./threads.ts";
 import { sessionTranscripts } from "./transcripts.ts";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a session reads only as it starts: its launch arguments, its channel's instructions and tools, and the files and folders its launcher loads that way. hex.db keeps a digest of what each thread's session started with.
 export function stamp(args: string[], server?: ChannelServer, startup: string[] = []) {
   return createHash("sha256")
     .update(
@@ -28,8 +26,6 @@ export function stamp(args: string[], server?: ChannelServer, startup: string[] 
     .slice(0, 16);
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// An update rewrites these while the hub runs, so a file gone midway reads as missing.
 type Read = string | [string, Read][] | null;
 
 function contentsOf(path: string): Read {
@@ -87,8 +83,6 @@ export function sessionStarts({
     return [...chosen(thread), ...args(thread)];
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session that started with other arguments or another channel starts over: with its next message for a changed model or effort, and at its next rest after an update, so a crash or a plain restart of the hub leaves every session running. A thread with no record started its session with none of its own arguments, before the hub kept one.
   function stale(thread: string) {
     return (
       (threads.get(thread)?.launched ?? stamp([], server)) !==
@@ -105,11 +99,9 @@ export function sessionStarts({
     const whole = await transcripts.land(thread, fork);
 
     if (!present(fork)) {
-      await rewound(thread);
+      await rewindPastRefusal(thread);
     }
 
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // The session's hooks keep what's typed in it as the owner's; this one is hex's.
     if (present(prompt)) {
       await kept(
         (store) =>
@@ -130,7 +122,13 @@ export function sessionStarts({
 
     const known = threads.of(thread);
     const source = fork ?? (present(known.session) ? undefined : known.fork);
-    const takesOverFrom = expired(thread, { whole, source, prompted: present(prompt) });
+
+    const takesOverFrom = takeOverFrom(thread, {
+      whole,
+      source,
+      prompted: present(prompt),
+    });
+
     files.write(thread, {}, takesOverFrom);
     const launching = launchArgs(thread);
     threads.update(thread, { launched: stamp(launching, server, startup) });
@@ -161,9 +159,8 @@ export function sessionStarts({
     );
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A saved session whose last reply the model's safeguards refused would be resumed into the same refusal, so the thread goes on, on its own model, from a copy of the conversation that ends before what that turn was given, or from a new session when nothing came before it or the copy fails.
-  async function rewound(thread: string) {
+  // WARNING: a session whose last reply the model's safeguards refused is resumed into the same refusal.
+  async function rewindPastRefusal(thread: string) {
     const session = threads.current(thread);
 
     if (!present(session) || fresh(thread)) {
@@ -188,9 +185,7 @@ export function sessionStarts({
     );
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The transcript a new session takes over from instead of resuming the thread's saved session, or forking another (source): one this machine holds none or only part of and hex's store can't complete, like after a restore from hex.db, or one whose prompt cache has expired when it holds more than a new session costs to start and catch up. A fork, and a start with a prompt, like /compact, need the old conversation itself, so they go on from it wherever it is whole.
-  function expired(
+  function takeOverFrom(
     thread: string,
     { whole, source, prompted }: { whole: boolean; source: string | undefined; prompted: boolean },
   ) {

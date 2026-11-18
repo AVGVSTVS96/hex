@@ -12,17 +12,11 @@ import type { SessionTurns } from "./turns.ts";
 import type { MessagesWaiting } from "./waiting.ts";
 
 type Renewal = {
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // asked: the session asked to start over (a call ended). stale: it started with what the hub no longer gives a session. underway: it's starting over, and its renewal waits for the new session.
   renew?: "asked" | "stale" | "underway" | undefined;
   held: (() => void)[];
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A call waited for the session now connected to start, so it is as new as the call.
   awaited?: boolean | undefined;
 };
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A thread's session starting over, for a call or for what the hub now gives a session, and those who wait for the new one.
 export function threadRenewals({
   runs,
   threads,
@@ -66,8 +60,7 @@ export function threadRenewals({
     }
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A thread renews at its next rest: the main thread and a fresh thread start over as soon as the process exits, any other when its next message resumes it. A keep (a call started) cancels it. When the session asked for it, a rest the Stop hook reported with no agents working is taken as it is: Claude's own status lags the hook and counts a running shell as busy, so checking it could put the renew off for good, and a session that asked is done with what its shells were for.
+  // WARNING: Claude's own status lags the Stop hook and counts a running shell as busy, so a rest the hook reported doesn't wait for it.
   async function renew(thread: string, rested = false) {
     const renewing = renewalOf(thread);
     const voice = calls.of(thread);
@@ -109,8 +102,6 @@ export function threadRenewals({
     }
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A renew is on its way while the thread's session winds down its turn or restarts, but not while it waits on background agents, which can take as long as they like.
   function pending(thread: string) {
     const renewing = renewalOf(thread);
 
@@ -119,8 +110,6 @@ export function threadRenewals({
     );
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Resolves once the thread's renew is through (its new session connected) or off, right away when none is on its way, so a voice call can wait for the new session.
   function renewal(thread: string): Promise<void> {
     const renewing = renewalOf(thread);
 
@@ -145,8 +134,6 @@ export function threadRenewals({
     }
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A thread is on a call from its keep until its renew, which starts the next call in a new session. That session starts when the last call ends and can wait hours for the next, so a call that finds it still waiting for its first message starts it over, reading memory as it is now, unless a call waited for it to start. The stop comes first, so a message meanwhile waits for the new session, and the call is on once that session connects, so a restart that never gets there doesn't hold up the hub's own. Resolves once the session the call runs in is connected.
   async function keep(thread: string) {
     const renewing = renewalOf(thread);
     const callOn = calls.joining(thread);
@@ -194,8 +181,6 @@ export function threadRenewals({
     calls.hangUp(thread);
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session connected, so a renew that waited for one is through. One that only reconnects still owes a renew it asked for.
   function connecting(thread: string) {
     const renewing = renewalOf(thread);
 

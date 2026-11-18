@@ -17,8 +17,6 @@ const each = (value?: string) => (value ?? "").split("; ");
 
 const imageType = (path: string) => (path.endsWith(".png") ? "image/png" : "image/jpeg");
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The files a Telegram message holds, in the order Telegram shows them: photos the owner sent, kept on disk, then what hex sent, kept by Telegram under a file id.
 export function held(row: Pick<Row, "meta">): Held[] {
   const meta = row.meta ?? {};
   const images = each(meta.image_path).filter(Boolean);
@@ -70,8 +68,6 @@ export function pictureOf(id: string): { key: string; at: number } | undefined {
   return key === "" ? undefined : { key: Buffer.from(key, "base64url").toString(), at: Number(at) };
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The pictures a chat app's message holds, named so an app can ask for each by id, each with its width over height so an app lays it out before it arrives.
 export const pictures = (row: Pick<Row, "key" | "meta">) =>
   held(row).flatMap(({ type, path, dimensions }, at) => {
     const [width = 0, height = 0] = (dimensions ?? "").split("x").map(Number);

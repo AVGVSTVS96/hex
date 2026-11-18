@@ -39,8 +39,6 @@ import type { Message } from "./waiting.ts";
 
 export const CHANNEL = "plugin:telegram@hex";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The store open() hands a hub, which a test can make answer as a home across the network does when it can't take anything (unreached), or once it refuses the hub's tenure (lost), or refuse a message over a size (refusing), or answer as a hex.db whose records moved to the folder movedTo (moved).
 type Fault = {
   outage?: "unreached" | "lost" | "moved" | undefined;
   refusingOver?: number | undefined;
@@ -86,8 +84,6 @@ function refusal(name: string | symbol, args: unknown[]) {
     : undefined;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Every call the store's client makes, on any domain, noted by name (storeCalls), held while a test has its name wait (storeWaits), and answered as the outage says: a test seam over a client whose methods are a table built from names (store/wire.ts), so it reads them by name too. A store moved from answers nothing as it did.
 function answering<Domain extends object>(
   domain: Domain,
   movedFrom = false,
@@ -131,8 +127,6 @@ function withOutages(dir: string): Store {
   return known;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A client that never claimed hex, which no tenure refuses.
 const unclaimedFirst = stores.unclaimed;
 const unclaimedWithOutages = (dir: string): Store => answering(unclaimedFirst(dir), false, false);
 
@@ -142,8 +136,6 @@ await mock.module("./store.ts", () => ({
   unclaimed: unclaimedWithOutages,
 }));
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a start hears of the conversation it would go on from: a test can have it not be whole on this machine (fault.notWhole), as after hex moved here from a machine that has more of it (transcripts.test.ts covers when that is).
 const transcriptsFirst = transcripts.sessionTranscripts;
 
 await mock.module("./transcripts.ts", () => ({
@@ -173,8 +165,6 @@ await mock.module("./notice.ts", () => ({
   },
 }));
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Once what the hub set going has ended: its commands to Claude, and its calls to the store, which a home across the network answers late (late.testing.ts).
 export async function settled() {
   do {
     await commandsSettled();
@@ -242,9 +232,8 @@ export const SERVER: ChannelServer = {
   permission: true,
 };
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Above Linux's highest pid, so a session's process is always already gone.
-export const EXITED = 4_194_305;
+const LINUX_PID_MAX_LIMIT = 4_194_304;
+export const EXITED = LINUX_PID_MAX_LIMIT + 1;
 
 export let dir: string;
 export let hub: Hub;
@@ -267,8 +256,6 @@ beforeEach(() => {
   mkdirSync(join(dir, "hex"), { recursive: true });
   mkdirSync(join(dir, "jobs", "job12345"), { recursive: true });
   const fake = join(dir, "claude");
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Each call is logged once it has done what it does.
   writeFileSync(
     fake,
     `#!/bin/sh
@@ -331,16 +318,12 @@ export function inbound(sent: Message) {
   };
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The session's hook taking each message it was given, as Claude Code adds it to the conversation.
 export function fold(received: unknown[]) {
   for (const payload of Keyed.array().parse(received)) {
     file(dir).messages.take(payload.meta.key, SESSION);
   }
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// stale: the registry's sessions started with what the hub no longer gives a session, as after an update.
 export async function start(
   options: {
     call?: Call;
@@ -492,8 +475,6 @@ export function calls(): string[][] {
     .map((each) => Args.parse(JSON.parse(each)));
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Once the hub knows the job its session runs as.
 export async function launched() {
   const started = await until(() => calls().find((each) => each[0] === "--bg"));
   await settled();
@@ -501,8 +482,6 @@ export async function launched() {
   return started;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A session connecting the way Claude Code does over HTTP: it initializes, opens the stream its messages arrive on, lists the tools, and lists them again when told they changed. Claude's job record has its id from the start.
 export async function session(thread: string, id = SESSION) {
   writeFileSync(
     join(dir, "jobs", "job12345", "state.json"),
@@ -525,8 +504,6 @@ export function http(thread?: string, extra: Record<string, string> = {}, deaf =
   };
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A line to hub.sock, the way a session's hooks and hex's own tools reach the hub. Resolves once the hub has read it and closed its end.
 export function sendToHub(payload: HubLine) {
   const socket = connect(join(dir, "hub.sock"));
   sockets.push(socket);
@@ -541,8 +518,6 @@ export function sendToHub(payload: HubLine) {
   });
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Claude's record of a background job, with the flags it restarts with: they read the thread's settings file, which binds the session to it. The job defaults to the session's short id, as Claude lists a job without one.
 export function bound(thread: string, id = SESSION, jobId = id.slice(0, 8), channel = CHANNEL) {
   mkdirSync(join(dir, "jobs", jobId), { recursive: true });
   mkdirSync(join(dir, "sessions"), { recursive: true });
@@ -561,8 +536,6 @@ export function bound(thread: string, id = SESSION, jobId = id.slice(0, 8), chan
   );
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Rewrites a job's record, resolving once a watch of the test's own has seen it, as the hub's watch would.
 export function job(id: string, record: JobRecord) {
   const folder = join(dir, "jobs", id);
 
@@ -584,8 +557,6 @@ export function saved(id = SESSION, folder = join(dir, "hex")) {
   writeFileSync(join(project, `${id}.jsonl`), "{}\n");
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A line of the session's transcript: a request that sent this much context, or a compaction down to it.
 export function said(tokens: number, compacted = false, id = SESSION, at = clock.now()) {
   const project = join(dir, "projects", join(dir, "hex").replaceAll(/[^a-zA-Z0-9]/gu, "-"));
   mkdirSync(project, { recursive: true });
@@ -619,8 +590,6 @@ export function settingsOf(args: string[]) {
   return SettingsFile.parse(JSON.parse(readFileSync(path, "utf-8")));
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Without the digest of what each session started with, which only the renew tests look at.
 export function registry(): Record<string, Registered> {
   return Object.fromEntries(
     file(dir)
@@ -632,8 +601,6 @@ export function registry(): Record<string, Registered> {
   );
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A launcher whose starts each wait for the test: the first is under way once start1 is there and returns once go1 is, and so on. One let go with words fails with them, as claude --bg does.
 export function slowLauncher() {
   const launcher = join(dir, "launch");
   writeFileSync(
@@ -653,8 +620,6 @@ exec claude "$@"
 
 export const NEXT = "0a1b2c3d-0000-4000-8000-000000000001";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The PostToolUse hook a session runs after each tool call, as its plugin registers it.
 export async function toolCall(thread: string, input: Record<string, string> = {}) {
   const run = Bun.spawn([process.execPath, join(import.meta.dir, "held.ts")], {
     stdin: new Blob([
@@ -670,8 +635,6 @@ export async function toolCall(thread: string, input: Record<string, string> = {
   return (await new Response(run.stdout).text()).trim();
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A launcher whose -p runs wait for a file named go, then print the file named said, if any, and exit with the code go holds, logging their arguments and HEX_BESIDE; anything else goes to the fake claude.
 export function besideLauncher() {
   const launcher = join(dir, "launch");
   writeFileSync(
@@ -700,8 +663,6 @@ export function runs() {
     : [];
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A thread's messages as hex.db keeps them, each taken by the session it reached or wrote it.
 export function stored(
   rows: { author: Author; body: string; from?: string; meta?: Record<string, string> }[],
   thread = "chat:7",

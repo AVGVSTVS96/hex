@@ -1,7 +1,5 @@
 export type Runs = ReturnType<typeof threadRuns>;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The threads the hub holds state for, in the order it first did, so a look across threads goes in that order whichever owner's part of their state it reads. Each owner keeps its own part, made as it first needs it, and forgetting a thread drops every part of it at once.
 export function threadRuns() {
   const held = new Set<string>();
   const forgets: ((thread: string) => void)[] = [];

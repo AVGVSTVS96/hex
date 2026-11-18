@@ -5,8 +5,6 @@ import { join } from "node:path";
 import type * as claude from "./claude.ts";
 import { present } from "./present.ts";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A hub's sessions show it this in a header, since any local user can reach its port.
 function tokenOf(stateDir: string) {
   const file = join(stateDir, "token");
 
@@ -19,8 +17,6 @@ function tokenOf(stateDir: string) {
 
 export type SessionFiles = ReturnType<typeof sessionFiles>;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Each thread's session reads its settings, binding and token from here, so none of it shows in a process's arguments, and a respawn reads the thread's current ones.
 export function sessionFiles({
   stateDir,
   channel,
@@ -69,8 +65,6 @@ export function sessionFiles({
     return join(dir, `beside-${session}.log`);
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A respawn reads the same file, so it gets the hub's current token too. It runs without the launcher, so the file keeps what the launcher added and renews only the hub's keys.
   function write(
     thread: string,
     launched: ReturnType<typeof claude.settingsOf> = {},

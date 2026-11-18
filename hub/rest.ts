@@ -12,16 +12,12 @@ import type { SessionTurns } from "./turns.ts";
 
 type Rest = {
   timer?: Timer | undefined;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // When the hub last had the session compact, until its context is back under compactAbove.
   compacting?: number | undefined;
   leaving?: ((session: string) => void) | undefined;
 };
 
 export type SessionRests = ReturnType<typeof sessionRests>;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a thread's session does once it isn't busy, and the timer that waits for it: stop, compact, hand over to a new session, or leave for good when its thread is retired. forget: the thread is gone, and its session with it.
 export function sessionRests({
   runs,
   threads,
@@ -62,8 +58,6 @@ export function sessionRests({
     return restOf(thread);
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A running session that isn't busy stops after a while; its next message resumes it. The main thread keeps running, and compacts before its cache goes cold.
   function rest(thread: string, rested = false) {
     const quiet = restOf(thread);
     const standing = sessions.of(thread);
@@ -91,7 +85,7 @@ export function sessionRests({
     }
   }
 
-  // A fresh thread keeps one session running, which takes its messages while its context has room and its cache is warm. Once either is spent, a new session built from the chat takes over at the old one's rest, so the next message finds it running: after the cache expires, the old session would send its whole context uncached, and a new one costs no more. warmFor is how long a session stays worth its messages, undefined before its first request: cacheWarm of an hour's cache, or as much of a shorter one (claude.cacheLife). https://docs.claude.com/en/docs/build-with-claude/prompt-caching
+  // WARNING: a session resumed after its prompt cache expires sends its whole context to the cache again. https://docs.claude.com/en/docs/build-with-claude/prompt-caching
   function warmFor(thread: string) {
     const session = threads.current(thread);
 
@@ -110,14 +104,11 @@ export function sessionRests({
     return context >= capacity ? 0 : Math.max(0, (at ?? clock.now()) + keepsWarm - clock.now());
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session on a call takes every message of the call, so a call never changes sessions midway.
   function spent(thread: string) {
     return fresh(thread) && !calls.of(thread).on && warmFor(thread) === 0;
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // At a rest the Stop hook reported with no agents working, Claude's own status still says busy for about a second, so a session that filled up on that turn hands over without asking it.
+  // WARNING: Claude's own status still says busy for about a second after the Stop hook reports a rest.
   async function handOff(thread: string, rested = false) {
     const quiet = restOf(thread);
     const turn = turns.of(thread);
@@ -129,8 +120,6 @@ export function sessionRests({
     }
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The Stop hook ends a turn, but background tasks keep a session busy past it, so Claude's own status decides; a busy session reports idle again when it's done. A big conversation compacts first, while its cache is warm: resumed after the cache expires, it would be written to the cache whole again.
   async function stopIfIdle(thread: string) {
     const quiet = restOf(thread);
     const voice = calls.of(thread);
@@ -215,8 +204,6 @@ export function sessionRests({
     quiet.timer = undefined;
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Resolves with the thread's session once it has stopped and the thread is forgotten, in hex.db too.
   function retire(thread: string): Promise<string> {
     if (thread === main) {
       throw new Error("the main thread stays open");
@@ -235,8 +222,6 @@ export function sessionRests({
     });
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Like retire, for a thread whose session another client resumes.
   function release(thread: string) {
     if (thread === main) {
       throw new Error("the main thread stays here");

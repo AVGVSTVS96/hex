@@ -43,8 +43,6 @@ test.skipIf(!scopes)(
   },
 );
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A transcript as Claude Code writes it: each entry points to the one before it, and the last one is the newest.
 function transcript(entries: object[]) {
   const folder = mkdtempSync(join(tmpdir(), "refused-"));
   const file = join(folder, "session.jsonl");

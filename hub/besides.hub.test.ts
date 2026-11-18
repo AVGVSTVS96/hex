@@ -95,8 +95,6 @@ test("a session beside a thread speaks in its chat as itself, and is neither its
 
 const aTurnGoesThrough = () => sendToHub({ type: "state", thread: "chat:7", busy: false });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a session's prompt hook does as it takes its row, and its Stop hook as its turn goes through.
 function takes(key: string, by: string) {
   const store = file(dir);
   store.turns.turned(by, true, new Date(Date.now() - 1000).toISOString());
