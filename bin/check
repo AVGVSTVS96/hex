@@ -29,7 +29,9 @@ fi
 # runs from it keeps its records, so a test that makes one there would write to a live hex's.
 beside=$(dirname "$hex")/state
 [ ! -e "$beside" ] || live=1
-bun test --parallel "$@"
+# Four files at a time, CI's four cores: more saves little, since one file takes most of the time, and the machine
+# a check runs on is often the one hex runs on.
+bun test --parallel=4 "$@"
 # The hub's tests again on a store that answers late, as a home across the network does: there a write lands after the call, not at it.
 [ $# -gt 0 ] || bun test --isolate --preload ./hub/late.ts hub/hub.test.ts
 [ -n "${live:-}" ] || [ ! -e "$beside" ] || { echo "a test wrote to $beside: give what it starts a hex folder of its own (HEX_DIR, or HEX_STORE)" >&2; exit 1; }
