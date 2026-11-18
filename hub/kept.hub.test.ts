@@ -14,6 +14,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import { clock } from "./clock.ts";
 import {
   fault,
   toldOwner,
@@ -31,6 +32,9 @@ import {
   storeWaits,
   session,
   registry,
+  launched,
+  time,
+  bgStarts,
 } from "./hub.testing.ts";
 import { claimedAs, takeOver, whenLost, whenMoved } from "./kept.ts";
 import * as stores from "./store.ts";
@@ -276,6 +280,32 @@ test("what the hub owes hex's store lands before what comes after it, and what a
   await hub.synced();
   expect(keysKept()).toEqual(["telegram:1:61", "telegram:reply", "telegram:1:62"]);
   expect(file(dir).messages.get("telegram:1:61")?.taken?.by).toBe(SESSION);
+});
+
+test("a message hex's store keeps, whose session connects while the store can't be reached, is given to that session, ahead of what comes after", async () => {
+  await start();
+  await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:63" });
+  await launched();
+  fault.outage = "unreached";
+  const { received } = await session("chat:7");
+  await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:64", content: "and then" });
+  await until(() => heard(received).some(({ content }) => content === "and then"));
+  expect(heard(received).map(({ content }) => content)).toEqual(["hi", "and then"]);
+});
+
+test("a message hex's store keeps, waiting on a running session with no channel that ends while the store can't be reached, starts the thread's next session", async () => {
+  await start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: 42, startedAt: clock.now() + 60_000 }],
+    reconnect: 50,
+  });
+  await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:65" });
+  await settled();
+  fault.outage = "unreached";
+  writeFileSync(join(dir, "agents"), "[]");
+  await time.lapse(50);
+  await settled();
+  expect(bgStarts()).toHaveLength(1);
 });
 
 test("what a session's hooks couldn't keep while hex's store was unreachable, the hub keeps once it answers", async () => {
