@@ -465,7 +465,10 @@ async function session(id: string) {
       const response = await channel.reply(said);
 
       if (response.isError === true) {
-        appendFileSync(faults, `the reply tool failed: ${JSON.stringify(response.content)}\n`);
+        appendFileSync(
+          faults,
+          `the reply tool failed: ${JSON.stringify(response.content).slice(0, 400)}\n`,
+        );
       }
 
       const event = response.isError === true ? "PostToolUseFailure" : "PostToolUse";
