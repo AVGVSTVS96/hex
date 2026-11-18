@@ -14,7 +14,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { backup, nightly } from "./backup.ts";
-import { file } from "./store.ts";
+import { file, unclaimed, UnreachedError } from "./store.ts";
+import { objectStorage } from "./store/fake.ts";
+import { pointedAt, served } from "./store/object.testing.ts";
+import { remote } from "./store/remote.ts";
+import { recordsIn } from "./store/storage.ts";
 import { until } from "./until.ts";
 
 let dir: string;
@@ -188,4 +192,68 @@ test("a store that can't be reached leaves no backup file, and its failure goes 
   }
 
   expect(readdirSync(join(away, "backups"))).toEqual([]);
+});
+
+const never = Promise.reject(new Error("no store.json"));
+
+void never.catch(() => null);
+
+async function thrown(pending: Promise<unknown>): Promise<Error | string> {
+  try {
+    await pending;
+  } catch (error) {
+    return error instanceof Error ? error : String(error);
+  }
+
+  return "it didn't throw";
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A client that hears the word, however long the machine takes to ask it, and probes too late to take the word back mid-test.
+const unprobed = {
+  answerWithin: 200,
+  firstRetry: 3_600_000,
+  longestRetry: 3_600_000,
+  heartbeat: 100,
+};
+
+const message = {
+  key: "telegram:-100:43",
+  to: "-100:7",
+  from: "telegram",
+  body: "and the docs",
+  author: "owner",
+};
+
+test("a backup reads through a client of its own: another process's word that the object is down doesn't stop it, and its own failure tells no one", async () => {
+  const at = join(dir, "object");
+  mkdirSync(at);
+  const storage = objectStorage();
+  recordsIn(storage);
+  storage.sql.exec("insert into _home (one, version) values (1, 0)");
+  recordsIn(storage, at).call(
+    JSON.stringify({ domain: "messages", method: "deliver", args: [message] }),
+  );
+
+  const object = served(storage);
+  pointedAt(at, object.url);
+  writeFileSync(join(at, "store.down"), "another process found it down\n");
+
+  try {
+    expect(await thrown(remote(at, unprobed)?.messages.untaken() ?? never)).toBeInstanceOf(
+      UnreachedError,
+    );
+    await backup(at, "2026-11-17");
+    const copy = new Database(join(at, "backups", "hex-2026-11-17.db"), { readonly: true });
+    expect(copy.query("select key from messages").all()).toEqual([{ key: message.key }]);
+    copy.close();
+  } finally {
+    await object.stop();
+  }
+
+  rmSync(join(at, "store.down"));
+  const gone = join(at, "gone");
+  pointedAt(gone, "http://127.0.0.1:9");
+  expect(await thrown(unclaimed(gone).messages.untaken())).toBeInstanceOf(UnreachedError);
+  expect(existsSync(join(gone, "store.down"))).toBe(false);
 });

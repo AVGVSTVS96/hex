@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   existsSync,
   mkdirSync,
@@ -13,9 +13,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { DurableObject, Namespace } from "cloudflare:workers";
-
-import { backup } from "../backup.ts";
 import { File, file as fileIn, messagesSince, open, unclaimed } from "../store.ts";
 import type { NewRow } from "../store.ts";
 import { until } from "../until.ts";
@@ -26,6 +23,7 @@ import { OFFERS } from "./domains.ts";
 import { objectStorage } from "./fake.ts";
 import { appendOnlyMigrations } from "./migrations.ts";
 import { move, MOVED } from "./move.ts";
+import { KEY, pointedAt, served } from "./object.testing.ts";
 import {
   LostError,
   MovedError,
@@ -41,30 +39,6 @@ import { recordsIn } from "./storage.ts";
 import type { Storage } from "./storage.ts";
 import { answering, client } from "./wire.ts";
 import type { Client } from "./wire.ts";
-
-type State = ConstructorParameters<typeof DurableObject>[0];
-
-type Env = { KEY?: string; VERSION?: string; STORE: Namespace };
-
-const KEY = "a key long enough that nobody guesses it";
-
-void mock.module("cloudflare:workers", () => ({
-  DurableObject: class {
-    readonly ctx: State;
-    readonly env: Env;
-
-    constructor(ctx: State, env: Env) {
-      this.ctx = ctx;
-      this.env = env;
-    }
-  },
-}));
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The runtime's own pair of a ping and its answer, which the object only hands to its context.
-Object.assign(globalThis, { WebSocketRequestResponsePair: Array });
-
-const { default: worker, Records } = await import("./object.ts");
 
 let dir: string;
 
@@ -308,59 +282,6 @@ test("a tenure the object gave out holds through its restarts", () => {
   object.claim(by("b"));
   expect(recordsIn(storage, dir).lostTo("1")).toBe("tenure 1 no longer holds hex: tenure 2 does");
 });
-
-type Between = (
-  route: string,
-  answer: () => Promise<Response>,
-  request: Request,
-) => Promise<Response>;
-
-function served(storage = objectStorage(), env?: Omit<Env, "STORE">, between?: Between) {
-  const objects = new Map<string, InstanceType<typeof Records>>();
-  const storages = new Map<string, Storage>([["hex", storage]]);
-
-  const named: Env = {
-    ...(env ?? { KEY }),
-    STORE: {
-      idFromName: (name) => ({ toString: () => name }),
-      get: (id) => ({
-        fetch: async (request) => {
-          const name = id.toString();
-
-          const records =
-            objects.get(name) ??
-            new Records(
-              {
-                storage:
-                  storages.get(name) ?? storages.set(name, objectStorage()).get(name) ?? storage,
-                acceptWebSocket: () => {},
-                getWebSockets: () => [],
-                setWebSocketAutoResponse: () => {},
-              },
-              named,
-            );
-
-          objects.set(name, records);
-          const route = new URL(request.url).pathname.split("/").slice(2).join("/");
-          const answer = async () => await records.fetch(request);
-
-          return between === undefined ? await answer() : await between(route, answer, request);
-        },
-      }),
-    },
-  };
-
-  const server = Bun.serve({ port: 0, fetch: (request) => worker.fetch(request, named) });
-
-  return {
-    storage,
-    storageOf: (name: string) => storages.get(name),
-    url: server.url.origin,
-    stop: async () => {
-      await server.stop(true);
-    },
-  };
-}
 
 const heard: string[] = [];
 
@@ -643,11 +564,6 @@ test("the object answers only its owner's key, never without one, and refuses a 
 });
 
 const quick = { answerWithin: 200, firstRetry: 100, longestRetry: 100, heartbeat: 100 };
-
-function pointedAt(at: string, url: string, name = "hex") {
-  mkdirSync(at, { recursive: true });
-  writeFileSync(join(at, "store.json"), JSON.stringify({ url, name, key: KEY }));
-}
 
 test("a store that can't reach the object fails fast until a probe gets an answer, and synced rejects meanwhile", async () => {
   const storage = objectStorage();
@@ -1756,34 +1672,4 @@ test("every message is read in pages of about 4 MB, so a log of large messages n
   const read = await Array.fromAsync(messagesSince(file.store));
   expect(read.map((page) => page.length)).toEqual([3, 3, 3, 1]);
   expect(read.flat().map((row) => row.key)).toEqual(file.messages.since().map((row) => row.key));
-});
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A client that hears the word, however long the machine takes to ask it, and probes too late to take the word back mid-test.
-const unprobed = { ...quick, firstRetry: 3_600_000, longestRetry: 3_600_000 };
-
-test("a backup reads through a client of its own: another process's word that the object is down doesn't stop it, and its own failure tells no one", async () => {
-  const storage = objectStorage();
-  startedEmpty(storage).call(raw("messages", "deliver", [message]));
-  const object = served(storage);
-  pointedAt(dir, object.url);
-  writeFileSync(join(dir, "store.down"), "another process found it down\n");
-
-  try {
-    expect(await thrown(remote(dir, unprobed)?.messages.untaken() ?? never)).toBeInstanceOf(
-      UnreachedError,
-    );
-    await backup(dir, "2026-11-17");
-    const copy = new Database(join(dir, "backups", "hex-2026-11-17.db"), { readonly: true });
-    expect(copy.query("select key from messages").all()).toEqual([{ key: message.key }]);
-    copy.close();
-  } finally {
-    await object.stop();
-  }
-
-  rmSync(join(dir, "store.down"));
-  const gone = join(dir, "gone");
-  pointedAt(gone, "http://127.0.0.1:9");
-  expect(await thrown(unclaimed(gone).messages.untaken())).toBeInstanceOf(UnreachedError);
-  expect(existsSync(join(gone, "store.down"))).toBe(false);
 });
