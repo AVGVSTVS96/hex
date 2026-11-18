@@ -392,30 +392,27 @@ export function remote(
     }
   };
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Calls sent at once fail at once, so they share one probe, and the first to hear it failed starts the one line of probes after it.
   let checking: Promise<boolean> | undefined;
+
+  const answersForAll = async () => {
+    checking ??= answers();
+
+    try {
+      return await checking;
+    } finally {
+      checking = undefined;
+    }
+  };
 
   const fell = async (error: Error) => {
     if (error instanceof LostError) {
       lost ??= error;
-
-      return;
-    }
-
-    if (!(error instanceof UnreachedError) || down !== undefined) {
-      return;
-    }
-
-    checking ??= (async () => {
-      try {
-        return await answers();
-      } finally {
-        checking = undefined;
-      }
-    })();
-
-    if (!(await checking) && down === undefined) {
+    } else if (
+      error instanceof UnreachedError &&
+      down === undefined &&
+      !(await answersForAll()) &&
+      down === undefined
+    ) {
       down = error;
       elsewhere.say(error.message);
       probeLater();
@@ -450,7 +447,7 @@ export function remote(
   };
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A process's calls reach the object one at a time, so they are answered in the order it made them, as a file answers them. A client that only reads sends each at once instead: a call costs a round trip to Cloudflare, so in a line, a status post's few reads wait out a board's hundred.
+  // A process's calls reach the object one at a time, so they are answered in the order it made them, as a file answers them.
   let last: Promise<unknown> = Promise.resolve();
 
   const inTurn = <T>(call: () => Promise<T>) => {

@@ -1,13 +1,10 @@
 import { GrammyError } from "grammy";
 
-// A backfill, or many questions redrawn at once, is more than Telegram lets a bot send in a minute, so each call waits out the limit Telegram names. https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Given `within`, a call that must answer in time gives up at once on a wait it can't fit, and its request is cut off when time runs out, so it never lands later than that.
 export async function paced<T>(
   send: (signal?: AbortSignal) => Promise<T>,
-  within?: number,
+  answerWithin?: number,
 ): Promise<T> {
-  const ends = within === undefined ? undefined : Date.now() + within;
+  const ends = answerWithin === undefined ? undefined : Date.now() + answerWithin;
 
   for (;;) {
     const signal =
@@ -17,7 +14,7 @@ export async function paced<T>(
       return await send(signal);
     } catch (error) {
       if (signal?.aborted === true) {
-        throw new Error(`Telegram didn't answer within ${String((within ?? 0) / 1000)}s`, {
+        throw new Error(`Telegram didn't answer within ${String((answerWithin ?? 0) / 1000)}s`, {
           cause: error,
         });
       }

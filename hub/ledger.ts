@@ -79,8 +79,6 @@ export class Ledger {
     });
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A rewrite asked for while another waits its turn joins it, with the newest note, so a thread's rewrites never pile up behind a slow one: whatever is asked waits for at most the one running and its own.
   rewrite(thread: string, post: Post, note?: string, message?: MessageId): Promise<void> {
     const waiting = this.waiting.get(thread);
 

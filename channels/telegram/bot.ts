@@ -564,9 +564,7 @@ async function dmTopic(owner: string, thread: string): Promise<number | undefine
   }
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A status post's edit answers its session in seconds: one Telegram holds back longer fails, and the post keeps its old text until its next change.
-const STATUS_EDIT_WITHIN = 15_000;
+const STATUS_EDIT_ANSWERS_WITHIN = 15_000;
 
 const ledger = new Ledger(STATE_DIR, "telegram", (note) => hub.noted(note));
 
@@ -606,7 +604,7 @@ const post: Post = {
             // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the two AbortSignal types share nothing to narrow through
             signal as Parameters<typeof bot.api.editMessageText>[4],
           ),
-        STATUS_EDIT_WITHIN,
+        STATUS_EDIT_ANSWERS_WITHIN,
       );
     } catch (error) {
       if (String(error).includes("message is not modified")) {
