@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { clients, mirror, reached } from "./apps.ts";
+import { clients, mirror } from "./apps.ts";
 import { sessionsBeside } from "./besides.ts";
 import { threadCalls } from "./calls.ts";
 import { history } from "./chat.ts";
@@ -63,6 +63,10 @@ export type Limits = {
 };
 
 let generalHub: Hub | undefined;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Resolves with the hub serving General once General's session first connects to it: from then on, hex works on the code this process runs.
+export const { promise: up, resolve: reached } = Promise.withResolvers<Hub>();
 
 // Claude Code keeps a conversation in the prompt cache for an hour after its last request, and compacts a background session only when told to. It retries a dropped HTTP server at about 0, 1, 3, 7 and 15 seconds, then gives up for good. https://docs.claude.com/en/docs/build-with-claude/prompt-caching
 const LIMITS: Limits = {

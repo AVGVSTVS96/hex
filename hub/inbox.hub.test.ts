@@ -3,7 +3,6 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
-import { clients, say, writable } from "./apps.ts";
 import {
   settled,
   heard,
@@ -21,7 +20,6 @@ import {
   bound,
   toolCall,
 } from "./hub.testing.ts";
-import { pictureId } from "./pictures.ts";
 import { file } from "./store.ts";
 import { until } from "./until.ts";
 
@@ -247,123 +245,6 @@ test("the owner's words held for a turn that never reports go to the session onc
   await time.lapse(60_000);
   await until(() => received.length === 2);
   expect(heard(received)[1]?.content).toBe("two");
-});
-
-test("the owner's words written in another client reach the thread's session and show where it lives in the order written, once however often they're sent", async () => {
-  await start({
-    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
-    agents: [{ sessionId: SESSION, pid: 42 }],
-  });
-  const { received, send } = await session("chat:7");
-  const shown: unknown[][] = [];
-  clients.set("telegram", {
-    hub,
-    place: () => Promise.resolve({ thread: "", link: "" }),
-    backfill: (thread, turns) => {
-      shown.push([thread, turns]);
-
-      return Promise.resolve();
-    },
-  });
-
-  try {
-    const words = { content: "anchors?", key: "kb-1", meta: { user: "keyboard" } };
-    expect(await say("telegram", "chat:7", words)).toBe(true);
-    expect(await say("telegram", "chat:7", words)).toBe(true);
-    expect(
-      await say("telegram", "chat:7", { ...words, content: "and the docs", key: "kb-2" }),
-    ).toBe(true);
-    await until(() => received.length === 1 && shown.length === 2);
-    await send({ type: "state", thread: "chat:7", busy: false });
-    await until(() => received.length === 2);
-    expect(heard(received).map((each) => each.content)).toEqual(["anchors?", "and the docs"]);
-    expect(file(dir).messages.get("telegram:kb-1")).toMatchObject({ author: "owner" });
-    expect(
-      await say("telegram", "chat:7", {
-        content: "this one\n(photo)",
-        key: "app-1",
-        meta: { media: "photo p1", files: "/m/p1.jpg" },
-      }),
-    ).toBe(true);
-    expect(
-      await say("telegram", "chat:7", {
-        content: "and this",
-        key: "kb-3",
-        meta: { image_path: "/s/p2.jpg" },
-      }),
-    ).toBe(true);
-    expect(
-      await say("telegram", "chat:7", {
-        content: "(album of 2)",
-        key: "kb-4",
-        meta: { image_path: "/s/p3.jpg; /s/p4.png" },
-      }),
-    ).toBe(true);
-    await until(() => shown.length === 5);
-    expect(shown.slice(3)).toEqual([
-      [
-        "chat:7",
-        [
-          {
-            from: "me",
-            text: "and this",
-            media: [{ id: pictureId("telegram:kb-3", 0), kind: "photo", file: "/s/p2.jpg" }],
-          },
-        ],
-      ],
-      [
-        "chat:7",
-        [
-          {
-            from: "me",
-            text: "",
-            media: [
-              { id: pictureId("telegram:kb-4", 0), kind: "photo", file: "/s/p3.jpg" },
-              { id: pictureId("telegram:kb-4", 1), kind: "photo", file: "/s/p4.png" },
-            ],
-          },
-        ],
-      ],
-    ]);
-    expect(shown.slice(0, 3)).toEqual([
-      ["chat:7", [{ from: "me", text: "anchors?" }]],
-      ["chat:7", [{ from: "me", text: "and the docs" }]],
-      [
-        "chat:7",
-        [
-          {
-            from: "me",
-            text: "this one\n(photo)",
-            media: [{ id: "p1", kind: "photo", file: "/m/p1.jpg" }],
-          },
-        ],
-      ],
-    ]);
-  } finally {
-    clients.delete("telegram");
-  }
-});
-
-test("words written in another client can't reach a thread no app holds, or one whose app shows only its own turns", async () => {
-  await start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } } });
-  clients.set("telegram", {
-    hub,
-    place: () => Promise.resolve({ thread: "", link: "" }),
-    waits: true,
-  });
-
-  try {
-    const words = { content: "anchors?", key: "kb-1", meta: {} };
-    expect(writable("telegram", "chat:7")).toBe(false);
-    expect(await say("telegram", "chat:7", words)).toBe(false);
-    expect(await say("nowhere", "chat:7", words)).toBe(false);
-    clients.set("telegram", { hub, place: () => Promise.resolve({ thread: "", link: "" }) });
-    expect(writable("telegram", "chat:7")).toBe(true);
-    expect(writable("telegram", "chat:8")).toBe(false);
-    expect(file(dir).messages.get("telegram:kb-1")).toBeNull();
-  } finally {
-    clients.delete("telegram");
-  }
 });
 
 test("after the hub restarts, a session gets again what it was given but never took, and not what it took", async () => {

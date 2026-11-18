@@ -75,10 +75,6 @@ class Clients extends Map<string, Client> {
 
 export const clients = new Clients();
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Resolves with the hub serving General once General's session first connects to it: from then on, hex works on the code this process runs.
-export const { promise: up, resolve: reached } = Promise.withResolvers<Hub>();
-
 function client(app: string) {
   const there = clients.get(app);
 

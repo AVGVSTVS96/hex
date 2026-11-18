@@ -31,7 +31,7 @@ import type { HubLine } from "./socket.ts";
 import { stamp } from "./start.ts";
 import * as stores from "./store.ts";
 import { file, LostError, MovedError, RefusedError, UnreachedError } from "./store.ts";
-import type { Store } from "./store.ts";
+import type { Author, Store } from "./store.ts";
 import { hangUpAll, http as channelLine, port } from "./testing.ts";
 import * as transcripts from "./transcripts.ts";
 import { until } from "./until.ts";
@@ -698,4 +698,18 @@ export function runs() {
         .slice(0, -1)
         .map((each) => Run.parse(JSON.parse(each)))
     : [];
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A thread's messages as hex.db keeps them, each taken by the session it reached or wrote it.
+export function stored(
+  rows: { author: Author; body: string; from?: string; meta?: Record<string, string> }[],
+  thread = "chat:7",
+  takenBy: string | undefined = SESSION,
+) {
+  const store = file(dir);
+
+  for (const [i, { from = "buzz", ...row }] of rows.entries()) {
+    store.messages.deliver({ key: `${from}:${thread}-${i}`, to: thread, from, ...row }, takenBy);
+  }
 }

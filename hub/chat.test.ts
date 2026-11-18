@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { history } from "./chat.ts";
+import { history, tappable, transcribe } from "./chat.ts";
 import { file, open } from "./store.ts";
 
 function imported(home: string) {
@@ -120,4 +120,27 @@ test("a session that took nothing hex.db kept comes in under its thread", async 
     { from: "hex", text: "On it." },
   ]);
   rmSync(home, { recursive: true, force: true });
+});
+
+test("without a transcriber set up, a recording is never fetched or sent anywhere", async () => {
+  delete process.env.TRANSCRIBE_URL;
+  delete process.env.TRANSCRIBE_MODEL;
+  let fetched = false;
+  expect(
+    await transcribe(() => {
+      fetched = true;
+
+      return Promise.resolve("voice.oga");
+    }),
+  ).toBeUndefined();
+  expect(fetched).toBe(false);
+});
+
+test("a buzz:// link becomes a web link that opens it, in plain text and in Markdown", () => {
+  const link = "buzz://message?channel=c-1&id=abc";
+  const web = `https://hex-sand.vercel.app/open.html#${encodeURIComponent(link)}`;
+  expect(tappable(`see ${link}.`)).toBe(`see ${web}.`);
+  expect(tappable(`open ${link}?`)).toBe(`open ${web}?`);
+  expect(tappable(`[the thread](${link})`)).toBe(`[the thread](${web})`);
+  expect(tappable("no links here")).toBe("no links here");
 });
