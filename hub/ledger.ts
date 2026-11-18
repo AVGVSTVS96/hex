@@ -139,12 +139,18 @@ export class Ledger {
     let seen = (await this.store.pins.changedSince(0)).last;
 
     const rewriteChanged = async () => {
-      const { threads, last } = await this.store.pins.changedSince(seen);
+      try {
+        const { threads, last } = await this.store.pins.changedSince(seen);
 
-      seen = Math.max(seen, last);
+        seen = Math.max(seen, last);
 
-      for (const thread of threads) {
-        void rewriteOrReport(thread);
+        for (const thread of threads) {
+          void rewriteOrReport(thread);
+        }
+      } catch (error) {
+        process.stderr.write(
+          `${this.app} hub: couldn't read which status posts changed, so they're read again at the store's next change: ${String(error)}\n`,
+        );
       }
     };
 

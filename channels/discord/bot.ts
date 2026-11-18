@@ -2142,9 +2142,11 @@ async function serve(token: string) {
 
     hub.save().catch(failure("saving the threads' links"));
     void c.application?.commands.set(COMMANDS).catch(failure("registering slash commands"));
-    void ledger.keep(post, (thread, error) => {
-      failed(`couldn't rewrite ${thread}'s status post`)(error);
-    });
+    ledger
+      .keep(post, (thread, error) => {
+        failed(`couldn't rewrite ${thread}'s status post`)(error);
+      })
+      .catch(failure("keeping the status posts current"));
   });
 
   async function login(attempt = 1): Promise<void> {
