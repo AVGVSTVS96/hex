@@ -373,8 +373,6 @@ export function recordsIn(storage: Storage, dir = "") {
     // The commit of hex's code that the hub holding hex said it runs as it claimed, which a machine about to take hex over brings its own code to: the store's own version names only the commit its code last changed in.
     hub: () => home()?.hub ?? "",
 
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // Every commit any hub's machine went back from, as each said when it claimed, so a machine that takes hex over won't take one again: bin/hex reads them from the store's version.
     refused: () => lines(home()?.refused ?? ""),
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
