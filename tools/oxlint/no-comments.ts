@@ -1,7 +1,7 @@
 import { definePlugin, defineRule } from "@oxlint/plugins";
 import { z } from "zod";
 
-const kept = /^\s*(?:SAFETY: \S|oxlint-(?:disable|enable)\S* .+ -- \S)|https:\/\//u;
+const kept = /^\s*(?:(?:SAFETY|WARNING): [^\n]+$|oxlint-(?:disable|enable)\S* .+ -- \S)|https:\/\//u;
 const directive = /^\s*oxlint-(?:disable|enable)/u;
 
 const Options = z
@@ -18,7 +18,7 @@ export default definePlugin({
             if (comment.type !== "Shebang" && !kept.test(comment.value)) {
               context.report({
                 message:
-                  "Comments are banned: say it in a name, a type, a test or the commit. Kept: a link to an outside fact (https://…), a one-line SAFETY: for a type assertion, a lint directive with its reason after --.",
+                  "Comments are banned: say it in a name, a type, a test or the commit. Kept: a link to an outside fact (https://…), a one-line SAFETY: for a type assertion, a one-line WARNING: for a footgun from outside hex, a lint directive with its reason after --.",
                 node: comment,
               });
             }
