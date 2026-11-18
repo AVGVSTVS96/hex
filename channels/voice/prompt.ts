@@ -1,3 +1,4 @@
+import type { About } from "./app.ts";
 import { opener } from "./board.ts";
 import type { Run } from "./board.ts";
 import type { Entry } from "./feed.ts";
@@ -76,11 +77,19 @@ export function voicePrompt(identity: string, style: VoiceStyle, started: string
 
 export type Topic = { id: string; claude: string; voice: string };
 
+export function topicOf(about: About): Topic {
+  if ("run" in about) {
+    return runTopic(about.run);
+  }
+
+  return "entry" in about ? feedTopic(about.entry) : walkTopic(about.asks);
+}
+
 function filled(value: string | undefined): value is string {
   return value !== undefined && value !== "";
 }
 
-export function runTopic(run: Run): Topic {
+function runTopic(run: Run): Topic {
   return {
     id: run.id,
     claude: `The caller started it with Talk it through on a task. ${opener(run)}`,
@@ -114,7 +123,7 @@ const FEED_KINDS = {
   decided: "a question hex decided itself",
 } satisfies Record<Entry["kind"], string>;
 
-export function feedTopic(entry: Entry): Topic {
+function feedTopic(entry: Entry): Topic {
   const said = [
     `It's ${FEED_KINDS[entry.kind]}, ${entry.opens} in ${entry.topic || "hex"}: ${entry.title}`,
     entry.body,
@@ -140,7 +149,7 @@ function halfDone({ partly, undoing }: Question) {
     : "";
 }
 
-export function walkTopic(questions: Question[]): Topic {
+function walkTopic(questions: Question[]): Topic {
   const list = questions.map(
     (question, i) =>
       `${i + 1}. ${question.id} · ${question.topic} · ${question.question}${filled(question.context) ? ` (${clip(question.context.replaceAll(/\s+/gu, " ").trim(), 280)})` : ""} Options: ${question.options.map((option) => `${option.label}${option.pick === true ? " (hex’s pick)" : ""}`).join(" / ")}${filled(question.tag) ? ` [${question.tag}]` : ""}${halfDone(question)}`,

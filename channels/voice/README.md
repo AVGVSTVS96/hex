@@ -35,7 +35,10 @@ other apps:
   feed, goals, ideas and photos. It reaches a call only where the caller asks:
   Talk it through, Discuss and Go through them start the live call on a
   thread, an entry or the questions, and a card the call put on screen hears
-  what the caller does with it in the app.
+  what the caller does with it in the app. It imports nothing from
+  `engine.ts` or `prompt.ts`: `serve.ts` hands it what calls offer, and it
+  names what to talk about as data, which `prompt.ts` turns into the call's
+  words.
 - `bot.ts` starts the hub for the `voice` thread and the engine, and hands the
   engine the hub's side: deliver, keep, renew.
 - `channel.ts` is the channel the hub serves the voice session over HTTP, with

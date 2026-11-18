@@ -5,17 +5,16 @@ import { z } from "zod";
 
 import { brief } from "./activity.ts";
 import type { Board, Page, Run } from "./board.ts";
+import type { Sent } from "./call.ts";
 import { Chats } from "./chat.ts";
 import type { Where } from "./chat.ts";
-import { card, talkAbout } from "./engine.ts";
 import { Feed } from "./feed.ts";
+import type { Entry } from "./feed.ts";
 import { Goals } from "./goals.ts";
 import { Ideas } from "./ideas.ts";
 import { Media } from "./media.ts";
 import type { Item } from "./media.ts";
-import { feedTopic, runTopic, walkTopic } from "./prompt.ts";
-import type { Topic } from "./prompt.ts";
-import type { Questions } from "./questions.ts";
+import type { Question, Questions } from "./questions.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* The API hex's apps read and act through, beside the calls on the same port: the board of threads
@@ -23,6 +22,19 @@ import type { Questions } from "./questions.ts";
    apps upload. A call comes into it only where the owner asks for one: Talk it through, Discuss and
    Go through them start the live call on a thread, an entry or the questions, and a card the call
    put on screen hears what the owner does with it here. */
+
+export type About = { run: Run } | { entry: Entry } | { asks: Question[] };
+
+export type Calls = {
+  talkAbout: (about: About) => Response;
+  card: (key: string) => {
+    tapped: (label: string, sent: Sent) => void;
+    noted: (text: string) => void;
+    dismissed: (sent: Sent) => void;
+    takenBack: () => void;
+    reopened: () => void;
+  };
+};
 
 let HEX_STATE: string;
 let board: Board;
@@ -32,6 +44,7 @@ let feed: Feed;
 let goals: Goals;
 let ideas: Ideas;
 let chats: Chats;
+let calls: Calls;
 
 const AnswerBody = z.object({
   label: z.string().default(""),
@@ -66,8 +79,10 @@ async function bodyOf<Schema extends z.ZodType>(request: Request, schema: Schema
 export function startApp(
   state: string,
   shared: { board: Board; questions: Questions; media: Media },
+  given: Calls,
 ) {
   HEX_STATE = state;
+  calls = given;
   ({ board, questions: yours, media } = shared);
   chats = new Chats(state);
   ideas = new Ideas(state);
@@ -121,20 +136,20 @@ export function routes(request: Request) {
   }
 }
 
-export function topicOf(about?: string): Topic | undefined {
-  if (about === "asks") {
-    return walkTopic(yours.view.asks);
+export function aboutOf(id?: string): About | undefined {
+  if (id === "asks") {
+    return { asks: yours.view.asks };
   }
 
-  const entry = about?.startsWith("feed:") === true ? feed.find(about.slice(5)) : undefined;
+  const entry = id?.startsWith("feed:") === true ? feed.find(id.slice(5)) : undefined;
 
   if (entry) {
-    return feedTopic(entry);
+    return { entry };
   }
 
-  const run = filled(about) ? board.get(about) : undefined;
+  const run = filled(id) ? board.get(id) : undefined;
 
-  return run && runTopic(run);
+  return run && { run };
 }
 
 async function upload(request: Request) {
@@ -226,7 +241,7 @@ function feedRoutes(request: Request, url: URL) {
   const entry = filled(id) ? feed.find(decodeURIComponent(id)) : undefined;
 
   if (entry && request.method === "POST") {
-    return talkAbout(feedTopic(entry));
+    return calls.talkAbout({ entry });
   }
 
   return new Response("404", { status: 404 });
@@ -280,7 +295,7 @@ async function questionRoutes(request: Request, url: URL) {
   }
 
   if (url.pathname === "/asks/talk" && request.method === "POST") {
-    return talkAbout(walkTopic(questions.view.asks));
+    return calls.talkAbout({ asks: questions.view.asks });
   }
 
   const [, kind, id, verb] =
@@ -293,7 +308,7 @@ async function questionRoutes(request: Request, url: URL) {
 
   try {
     const key = decodeURIComponent(id);
-    const onTheCall = card(key);
+    const onTheCall = calls.card(key);
 
     if (kind === "asks" && verb === "answer") {
       const body = await bodyOf(request, AnswerBody);
@@ -399,7 +414,7 @@ async function runRoutes(request: Request, url: URL) {
   }
 
   if (verb === "talk" && request.method === "POST") {
-    return talkAbout(runTopic(run));
+    return calls.talkAbout({ run });
   }
 
   if (verb === "stop" && request.method === "POST") {

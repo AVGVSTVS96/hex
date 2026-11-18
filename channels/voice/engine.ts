@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import { findThread, followAgent, followThread, noThread } from "./activity.ts";
 import type { Step, Thread } from "./activity.ts";
+import type { About } from "./app.ts";
 import type { Board, Run } from "./board.ts";
 import { Call, transcript } from "./call.ts";
 import type { Mark, Sent, Speaker, Task } from "./call.ts";
@@ -28,6 +29,7 @@ import {
   STOPPING,
   UNMUTED,
   noAnswer,
+  topicOf,
   unreachable,
   voicePrompt,
 } from "./prompt.ts";
@@ -75,7 +77,7 @@ const follows = new Map<string, () => void>();
 let board: Board;
 let yours: Questions;
 let media: Media;
-let topicOf: Hex["topic"];
+let aboutOf: Hex["about"];
 
 const IDENTITY = (() => {
   try {
@@ -1332,7 +1334,7 @@ function follow(
     heard,
     notes = [],
     hello,
-    about,
+    topic,
     reopen,
     end,
   }: {
@@ -1344,7 +1346,7 @@ function follow(
     heard?: Live["heard"];
     notes?: string[] | undefined;
     hello?: string;
-    about?: Topic | undefined;
+    topic?: Topic | undefined;
   } = {},
 ) {
   if (live) {
@@ -1419,11 +1421,11 @@ function follow(
     hello ??
       [
         `A call started.${filled(record.why) ? ` You placed it because: ${record.why}` : ""}`,
-        ...(about ? [about.claude] : []),
+        ...(topic ? [topic.claude] : []),
         ...lastCalls(record.id),
         talksLike(),
       ].join("\n"),
-    { call: record.id, started: "true", from: record.from, ...(about && { task: about.id }) },
+    { call: record.id, started: "true", from: record.from, ...(topic && { task: topic.id }) },
   );
 
   for (const text of notes.splice(0)) {
@@ -1463,10 +1465,12 @@ function lastCalls(now: string) {
   return held.length ? ["Your last calls with the caller, newest last:", ...held] : [];
 }
 
-export function talkAbout(topic: Topic) {
+export function talkAbout(about: About) {
   if (!live) {
     return new Response("No call is live", { status: 409 });
   }
+
+  const topic = topicOf(about);
 
   deliver(`The caller asked for this from the app during the call. ${topic.claude}`, {
     call: live.id,
@@ -2973,7 +2977,7 @@ async function start(request: Request) {
     sdp,
     voice = readStyle(STATE_DIR).voice ?? VOICE,
     from: origin,
-    about,
+    about: id,
     continues,
   } = body.success ? body.data : {};
 
@@ -2986,7 +2990,8 @@ async function start(request: Request) {
   }
 
   const from = origin === "app" ? "app" : "web";
-  const topic = topicOf(about);
+  const about = aboutOf(id);
+  const topic = about && topicOf(about);
   let response: Response;
 
   try {
@@ -3021,7 +3026,7 @@ async function start(request: Request) {
       ...(voice !== undefined && { voice }),
       ...(expires !== undefined && { expires }),
     }),
-    { about: topic },
+    { topic },
   );
 
   return Response.json(result, { status: 201 });
@@ -3392,13 +3397,13 @@ export type Hex = {
   board: Board;
   questions: Questions;
   media: Media;
-  topic: (about: string | undefined) => Topic | undefined;
+  about: (id: string | undefined) => About | undefined;
 };
 
 export function startCalls(voiceHub: Hub, state: string, hex: Hex) {
   hub = voiceHub;
   HEX_STATE = state;
-  ({ board, questions: yours, media, topic: topicOf } = hex);
+  ({ board, questions: yours, media, about: aboutOf } = hex);
   board.listen(() => {
     activity.changed();
   });

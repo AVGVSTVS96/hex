@@ -74,8 +74,8 @@ export function serve(hub: Hub, state: string) {
     media: new Media(join(state, "voice", "media")),
   };
 
-  app.startApp(state, shared);
-  engine.startCalls(hub, state, { ...shared, topic: app.topicOf });
+  app.startApp(state, shared, { talkAbout: engine.talkAbout, card: engine.card });
+  engine.startCalls(hub, state, { ...shared, about: app.aboutOf });
 
   return Bun.serve<engine.Phone>({
     port: PORT,
