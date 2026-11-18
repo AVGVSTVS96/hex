@@ -166,3 +166,10 @@ test("only a poll of that chat with the token the hub took gets its answer again
     false,
   ]);
 });
+
+test("the door imports only Node's own modules, since bin/hex replaces a running door only when its file changes", async () => {
+  const source = await Bun.file(join(import.meta.dir, "door.ts")).text();
+  const imported = new Bun.Transpiler({ loader: "ts" }).scanImports(source).map(({ path }) => path);
+
+  expect(imported.filter((path) => !path.startsWith("node:"))).toEqual([]);
+});
