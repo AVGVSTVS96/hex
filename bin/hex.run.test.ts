@@ -835,6 +835,32 @@ while (!existsSync(state + '/moved') && Date.now() < giveUp) await Bun.sleep(20)
 appendFileSync(state + '/hubs', 'moved\\n')
 `;
 
+async function says(spawned: { stderr: ReadableStream<Uint8Array> }, words: string) {
+  const reader = spawned.stderr.getReader();
+  const decoder = new TextDecoder();
+  let printed = "";
+
+  try {
+    while (!printed.includes(words)) {
+      const { done, value } = await reader.read();
+
+      if (done) {
+        throw new Error(`hex ended without saying "${words}", having said: ${printed}`);
+      }
+
+      printed += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+const waitsForTheMove = (spawned: { stderr: ReadableStream<Uint8Array> }) =>
+  Promise.race([
+    says(spawned, "hex waits for its records to finish moving before its hub starts"),
+    until(() => hubs().length > 1),
+  ]);
+
 test("no hub starts on records that are moving, however hex starts, and no move starts while hex runs here", async () => {
   commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
   mkdirSync(join(hex, "hub/store"));
@@ -847,13 +873,13 @@ test("no hub starts on records that are moving, however hex starts, and no move 
   await until(() => hubs().length === 1);
 
   const waiting = run();
+  await waitsForTheMove(waiting);
   await Bun.sleep(1500);
   expect(hubs()).toEqual(["moving"]);
   waiting.kill("SIGTERM");
   expect(await waiting.exited).toBe(0);
 
-  run();
-  await Bun.sleep(500);
+  await waitsForTheMove(run());
   writeFileSync(join(home, "state/moved"), "");
   expect(await move.exited).toBe(0);
   await until(() => hubs().length === 3);

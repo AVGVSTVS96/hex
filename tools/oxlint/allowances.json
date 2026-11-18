@@ -150,7 +150,7 @@
   },
   "sleeps": {
     "bin/away.test.ts": 5,
-    "bin/hex.run.test.ts": 8,
+    "bin/hex.run.test.ts": 7,
     "bin/hex.store.test.ts": 1,
     "bin/job.test.ts": 1,
     "bin/place.test.ts": 2,
