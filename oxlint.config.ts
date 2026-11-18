@@ -23,10 +23,22 @@ const longestFunctionIn = {
   "hub/sessions.ts": 375,
 };
 
+const bunMocksIn = {
+  "channels/discord/bot.test.ts": 1,
+  "channels/discord/voice.test.ts": 1,
+  "channels/telegram/bot.test.ts": 2,
+  "hub/hub.testing.ts": 3,
+  "hub/late.testing.ts": 1,
+  "hub/store/object.testing.ts": 1,
+};
+
 export default defineConfig({
   extends: [core, antiSlop],
   ignorePatterns: [...(core.ignorePatterns ?? []), "site/**", "media/**", "watch/**"],
-  jsPlugins: [{ name: "no-comments", specifier: "./tools/oxlint/no-comments.ts" }],
+  jsPlugins: [
+    { name: "no-comments", specifier: "./tools/oxlint/no-comments.ts" },
+    { name: "no-bun-mocks", specifier: "./tools/oxlint/no-bun-mocks.ts" },
+  ],
   overrides: Object.entries(longestFunctionIn).map(([file, lines]) => ({
     files: [file],
     rules: { "eslint/max-lines-per-function": functionLines(lines) },
@@ -54,6 +66,7 @@ export default defineConfig({
     "unicorn/no-array-for-each": "off",
     "unicorn/no-await-expression-member": "off",
     "import/no-cycle": "error",
+    "no-bun-mocks/no-bun-mocks": ["error", { allow: bunMocksIn }],
     "no-comments/no-comments": "error",
     "oxc/no-accumulating-spread": "error",
   },
