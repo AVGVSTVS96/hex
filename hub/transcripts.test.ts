@@ -63,7 +63,16 @@ function storeElsewhere() {
   writeFileSync(join(state, "store.json"), "{}");
   const object = objectIn(state);
   const watching = new Set<() => void>();
-  const net = { drops: (_call: string) => false, takes: 0, full: false, out: 0, mostOut: 0 };
+
+  const net = {
+    drops: (_call: string) => false,
+    dropped: 0,
+    listed: 0,
+    takes: 0,
+    full: false,
+    out: 0,
+    mostOut: 0,
+  };
 
   const store: Store = {
     ...client(async (text) => {
@@ -80,7 +89,11 @@ function storeElsewhere() {
         net.out -= 1;
       }
 
+      net.listed += Number(method === "besides");
+
       if (net.drops(`${domain}.${method}`)) {
+        net.dropped += 1;
+
         throw new UnreachedError("the store didn't answer");
       }
 
@@ -171,9 +184,9 @@ function machine(name: string, store: Store, known: Known = {}) {
     reaches: (now: boolean) => {
       reaches = now;
     },
-    hub: async () => {
+    hub: async (fork?: string) => {
       const hub = await hubNow();
-      const whole = await hub.land(THREAD);
+      const whole = await hub.land(THREAD, fork);
       await sent();
 
       return whole;
@@ -482,6 +495,9 @@ test("the tool results beside a transcript, text or not, come with it, and one t
   await until(async () => (await copyIn(store)) === server.written());
 
   expect(await twin.hub()).toBe(true);
+  await until(
+    () => existsSync(twin.beside("toolu_01.txt")) && existsSync(twin.beside("shot-1.png")),
+  );
   expect(readFileSync(twin.beside("toolu_01.txt"), "utf-8")).toBe(
     "what the tool said, in full\nand its last line\n",
   );
@@ -500,6 +516,7 @@ test("the tool results beside a transcript, text or not, come with it, and one t
   rmSync(twin.beside("shot-1.png"));
   await server.hub();
   expect(await twin.hub()).toBe(true);
+  await until(() => existsSync(twin.beside("shot-1.png")));
   expect(existsSync(join(twin.transcripts, "escaped"))).toBe(false);
 });
 
@@ -516,20 +533,72 @@ test("a tool result comes at a later start when the first didn't bring it, thoug
   net.drops = (call) => call === "transcripts.besides";
   const start = await twin.started();
   expect(await start()).toBe(true);
+  await until(() => net.dropped > 0);
   expect(existsSync(twin.beside("toolu_01.txt"))).toBe(false);
   appendFileSync(twin.path(), line("water them on Friday"));
   net.drops = () => false;
   await until(async () => (await store.transcripts.end(SESSION)).by === "twin");
 
   expect(await start()).toBe(true);
+  await until(() => existsSync(twin.beside("toolu_01.txt")));
   expect(readFileSync(twin.beside("toolu_01.txt"), "utf-8")).toBe("what the tool said, in full\n");
+});
 
-  writeFileSync(twin.beside("toolu_01.txt"), "what the twin's own tool said since\n");
-  rmSync(server.beside("toolu_01.txt"));
+test("a tool result this machine wrote and then changed stays as it is here, whatever the store still holds of it", async () => {
+  const { store, net } = storeElsewhere();
+  const server = machine("server", store);
+  mkdirSync(dirname(server.beside("toolu_01.txt")), { recursive: true });
+  writeFileSync(server.beside("toolu_01.txt"), "the sudo password is hunter2\n");
+  writeFileSync(server.path(), line("the plants are in the hall"));
+  await server.hub();
+  await until(async () => (await store.transcripts.besides(SESSION))[0]?.size === 29);
+
+  writeFileSync(server.beside("toolu_01.txt"), "the sudo password is [redacted]\n");
+  net.drops = (call) => call === "transcripts.append";
+  net.listed = 0;
   expect(await server.hub()).toBe(true);
+  await until(() => net.listed >= 2 && net.out === 0);
+  await Bun.sleep(30);
   expect(readFileSync(server.beside("toolu_01.txt"), "utf-8")).toBe(
-    "what the tool said, in full\n",
+    "the sudo password is [redacted]\n",
   );
+});
+
+test("a thread goes on only from a conversation that is whole here: the one it forks, when it forks one, and else its own", async () => {
+  const { store } = storeElsewhere();
+  const forkedFrom = "7c1d2e3f-0a1b-4c2d-8e3f-9a0b1c2d3e4f";
+  const twin = machine("twin", store, { fork: forkedFrom });
+
+  await store.transcripts.append(forkedFrom, await store.transcripts.end(forkedFrom), [], {
+    tail: "",
+    of: 4096,
+    last: "how the other machine's file ends",
+    by: "server",
+  });
+
+  expect(await twin.hub(forkedFrom)).toBe(false);
+  expect(await twin.hub()).toBe(true);
+});
+
+test("two starts that bring one copy at once beside an older file set that file aside once, as it was", async () => {
+  const { store, net } = storeElsewhere();
+  const server = machine("server", store);
+  const twin = machine("twin", store);
+  writeFileSync(server.path(), line("the plants are in the hall") + line("water them on Friday"));
+  await server.hub();
+  await until(async () => (await copyIn(store)) === server.written());
+
+  const older = line("the plants are in the hall") + line("said to the twin, long ago, at length");
+  net.drops = (call) => call.startsWith("transcripts.");
+  const start = await twin.started();
+  writeFileSync(twin.path(), older);
+  net.drops = () => false;
+  net.takes = 5;
+  expect(await Promise.all([start(), start()])).toEqual([true, true]);
+  expect(twin.written()).toBe(server.written());
+  expect(
+    twin.setAside().map((aside) => readFileSync(join(twin.transcripts, aside), "utf-8")),
+  ).toEqual([older]);
 });
 
 test("a session's start asks the store at once, while a send's call is still on its way", async () => {

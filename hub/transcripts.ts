@@ -12,6 +12,7 @@ import {
   rmSync,
   statSync,
   watch,
+  writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
@@ -254,7 +255,7 @@ async function fetched(
   const part = arrivingAt(to);
 
   try {
-    appendFileSync(part, "");
+    writeFileSync(part, "");
 
     for (let size = 0; size < end.size;) {
       const from = size;
@@ -383,36 +384,37 @@ async function besideSent(ask: Ask, key: string, path: string, by: string) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The files beside a transcript that the store holds whole and this machine doesn't, brought here: one this machine has none of, or another machine's that this one has otherwise. Whether all of them are here now: one that isn't leaves the session what its transcript's line shows of it, until a later start brings it.
+// The files beside a transcript that the store holds whole and this machine doesn't, brought here: one this machine has none of, or another machine's that this one has otherwise. A session's start doesn't wait for them: until one is here the session has what its transcript's line shows of it, and each start asks again for what is still missing.
 async function besidesBrought(ask: Ask, machine: string, session: string, path: string) {
   const folder = besideOf(path);
-  const held = await twice(ask)((store) => store.transcripts.besides(session));
-  let all = held !== undefined;
 
-  for (const { file, ...end } of held ?? []) {
-    const name = file.slice(BESIDE.length + 1);
-    const to = join(folder, name);
-    const here = sizeOf(to);
+  try {
+    for (const { file, ...end } of (await ask((store) => store.transcripts.besides(session))) ??
+      []) {
+      const name = file.slice(BESIDE.length + 1);
+      const to = join(folder, name);
+      const here = sizeOf(to);
 
-    if (
-      file === `${BESIDE}/${name}` &&
-      NAME.test(name) &&
-      end.size === end.of &&
-      (here === -1 || (end.by !== machine && here !== end.of))
-    ) {
-      const copy = await fetched(ask, [`${session}/${file}`, end], to, (text) =>
-        Buffer.from(text, "base64"),
-      );
+      if (
+        file === `${BESIDE}/${name}` &&
+        NAME.test(name) &&
+        end.size === end.of &&
+        (here === -1 || (end.by !== machine && here !== end.of))
+      ) {
+        const copy = await fetched(ask, [`${session}/${file}`, end], to, (text) =>
+          Buffer.from(text, "base64"),
+        );
 
-      if (copy === undefined) {
-        all = false;
-      } else {
-        renameSync(copy, to);
+        if (copy !== undefined) {
+          renameSync(copy, to);
+        }
       }
     }
+  } catch (error) {
+    process.stderr.write(
+      `hub: what is beside ${session}'s conversation couldn't be brought from hex's store: ${String(error)}\n`,
+    );
   }
-
-  return all;
 }
 
 const underWay = new Set<Promise<void>>();
@@ -495,7 +497,7 @@ function following(changed: (session: string, path: string) => void) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a hub knows of the copies, and how it asks the store: a send in turn with every other send in the process (ask), a session's start at once (first), since it is a few calls a thread waits on and a hub's start may have hundreds of sends ahead of it. ends: where each stands, while this hub's own sends are all that move it. heard: where the store last said each stands. beside: the files beside each transcript that the store holds whole, and how long. besideHere: the sessions whose files beside them are all on this machine. changed: the files found changed in place on this machine, whose copies start over. written: the sessions whose transcript changed on this machine under this hub, which holds hex, so no other machine has more of them.
+// What a hub knows of the copies, and how it asks the store: a send in turn with every other send in the process (ask), a session's start at once (first), since it is a few calls a thread waits on and a hub's start may have hundreds of sends ahead of it. ends: where each stands, while this hub's own sends are all that move it. heard: where the store last said each stands. beside: the files beside each transcript that the store holds whole, and how long. changed: the files found changed in place on this machine, whose copies start over. written: the sessions whose transcript changed on this machine under this hub, which holds hex, so no other machine has more of them.
 type Known = {
   ask: Ask;
   first: Ask;
@@ -503,7 +505,6 @@ type Known = {
   ends: Map<string, End>;
   heard: Map<string, End>;
   beside: Map<string, Map<string, number>>;
-  besideHere: Set<string>;
   changed: Set<string>;
   written: Set<string>;
 };
@@ -631,7 +632,7 @@ function placed(
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A session's conversation and the files beside it, here as the store holds them. A landing that fails, as on a disk with no room, leaves no whole conversation here that anything shows; files beside it that don't arrive take nothing from it, and are asked for again at the session's next start.
+// A session's conversation, here as the store holds it, with the files beside it on their way. A landing that fails, as on a disk with no room, leaves no whole conversation here that anything shows.
 async function landing(known: Known, session: string, path: string) {
   try {
     if (!(await brought(known, session, path))) {
@@ -645,18 +646,7 @@ async function landing(known: Known, session: string, path: string) {
     return false;
   }
 
-  try {
-    if (
-      !known.besideHere.has(session) &&
-      (await besidesBrought(known.first, known.machine, session, path))
-    ) {
-      known.besideHere.add(session);
-    }
-  } catch (error) {
-    process.stderr.write(
-      `hub: what is beside ${session}'s conversation couldn't be brought from hex's store: ${String(error)}\n`,
-    );
-  }
+  void besidesBrought(known.ask, known.machine, session, path);
 
   return true;
 }
@@ -687,7 +677,6 @@ export function sessionTranscripts({
     ends: new Map(),
     heard: new Map(),
     beside: new Map(),
-    besideHere: new Set(),
     changed: new Set(),
     written: new Set(),
   };
@@ -844,22 +833,16 @@ export function sessionTranscripts({
     void kept((store) => store.watch(sendOwed), ignore);
     await ask((store) => store.transcripts.prune());
 
-    try {
-      for (const thread of threads.ids()) {
-        follow(claude.transcriptsIn(threads.cwd(thread)));
-      }
+    for (const thread of threads.ids()) {
+      follow(claude.transcriptsIn(threads.cwd(thread)));
+    }
 
-      for (const declares of [true, false]) {
-        for (const [session, path] of files()) {
-          if (existsSync(path)) {
-            await ship(session, path, declares);
-          }
+    for (const declares of [true, false]) {
+      for (const [session, path] of files()) {
+        if (existsSync(path)) {
+          await ship(session, path, declares);
         }
       }
-    } catch (error) {
-      process.stderr.write(
-        `hub: stopped sending what the sessions wrote before this hub started: ${String(error)}\n`,
-      );
     }
   }
 
