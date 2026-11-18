@@ -454,6 +454,28 @@ export function unclaimed(dir: string): Store {
   return remote(dir, undefined, false) ?? file(dir).store;
 }
 
+const readers = new Map<string, Store>();
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A client of its own for what reads the store in bulk, like status posts and boards: the object answers a client's calls one at a time, so their reads never wait in line ahead of the hub's own calls, nor its synced. It claims nothing, and shares whether the object answers with the folder's other processes.
+export function reading(dir: string): Store {
+  const kept = readers.get(dir);
+
+  if (kept !== undefined) {
+    return kept;
+  }
+
+  const away = remote(dir);
+
+  if (away === undefined) {
+    return file(dir).store;
+  }
+
+  readers.set(dir, away);
+
+  return away;
+}
+
 export function open(dir: string): Store {
   const kept = remotes.get(dir);
 

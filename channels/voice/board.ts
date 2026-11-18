@@ -12,7 +12,7 @@ import {
 import type { FSWatcher } from "node:fs";
 import { join } from "node:path";
 
-import { busy, CLAUDE, running, ownership, open } from "@hex/hub";
+import { busy, CLAUDE, running, ownership, open, reading } from "@hex/hub";
 import type { Session, Task, Thread as Stored } from "@hex/hub";
 import { z } from "zod";
 
@@ -296,8 +296,8 @@ export class Board extends Changes {
     const recordsChanged = oneAtATime("hex.db for the board", async () => {
       const [stored, linked, closed] = await Promise.all([
         this.stored(),
-        open(state).tasks.agentTasks(),
-        open(state).tasks.finished(dayAgo()),
+        reading(state).tasks.agentTasks(),
+        reading(state).tasks.finished(dayAgo()),
       ]);
 
       if (JSON.stringify(stored) !== JSON.stringify(this.threads)) {
@@ -337,7 +337,7 @@ export class Board extends Changes {
       return kept;
     }
 
-    const all = await open(this.state).threads.list();
+    const all = await reading(this.state).threads.list();
     const row = all.find(({ app, thread }) => APPS.has(app) && `${app}:${thread}` === id);
 
     if (row === undefined || this.links.delegated(row.app, row.thread)) {
@@ -469,7 +469,7 @@ export class Board extends Changes {
   private readonly build = oneAtATime("the board", async () => {
     const stale = this.stale;
     this.stale = { threads: false, sessions: false };
-    const store = open(this.state);
+    const store = reading(this.state);
 
     const [stored, sessions, links, finishing] = await Promise.all([
       stale.threads ? this.stored() : undefined,
@@ -566,7 +566,7 @@ export class Board extends Changes {
   }
 
   private async stored(): Promise<Thread[]> {
-    const all = await open(this.state).threads.list();
+    const all = await reading(this.state).threads.list();
     const general = generalOf(all);
 
     return all.filter((row) => row.open && APPS.has(row.app)).map((row) => threadOf(row, general));
@@ -978,7 +978,7 @@ export class Board extends Changes {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Reads the tasks closed since then, and gives what places each on the runs it's handed.
   private async finishing(since: string): Promise<(runs: Run[]) => Finished[]> {
-    const store = open(this.state);
+    const store = reading(this.state);
     const [all, closed] = await Promise.all([store.threads.list(), store.tasks.finished(since)]);
     const general = generalOf(all);
 

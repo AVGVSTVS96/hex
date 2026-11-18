@@ -73,7 +73,7 @@ export type { Job } from "./schedule.ts";
 
 export { statusPost } from "./status.ts";
 
-export { asked, hexDir, open, shown, stateDir } from "./store.ts";
+export { asked, hexDir, open, reading, shown, stateDir } from "./store.ts";
 
 export type { Author, Kept, NewRow, Row, Store, Task, Thread } from "./store.ts";
 

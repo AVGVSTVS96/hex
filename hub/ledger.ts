@@ -1,7 +1,7 @@
 import { above, clip } from "./fit.ts";
 import { statusPost } from "./status.ts";
 import type { Link } from "./status.ts";
-import { open, stateDir } from "./store.ts";
+import { open, reading, stateDir } from "./store.ts";
 import type { MessageId, Pin, Question, Store } from "./store.ts";
 
 export type { Answer, MessageId, Pin, Question } from "./store.ts";
@@ -30,11 +30,13 @@ export type Post = {
 
 export class Ledger {
   private readonly store: Store;
+  private readonly reads: Store;
   private readonly app: string;
   private readonly turns = new Map<string, Promise<unknown>>();
 
   constructor(appStateDir: string, app: string) {
     this.store = open(stateDir(appStateDir));
+    this.reads = reading(stateDir(appStateDir));
     this.app = app;
   }
 
@@ -43,7 +45,7 @@ export class Ledger {
   }
 
   async pin(thread: string): Promise<Pin | undefined> {
-    return (await this.store.pins.get(this.app, thread)) ?? undefined;
+    return (await this.reads.pins.get(this.app, thread)) ?? undefined;
   }
 
   post(thread: string, note: string, post: Post): Promise<MessageId> {
@@ -118,7 +120,7 @@ export class Ledger {
   private async render(thread: string, note: string, post: Post) {
     await post.ready?.(thread);
 
-    return await statusPost(this.store, thread, note, post.room, post.link);
+    return await statusPost(this.reads, thread, note, post.room, post.link);
   }
 
   async keep(
@@ -151,7 +153,7 @@ export class Ledger {
     });
 
     try {
-      for (const { thread } of await this.store.pins.list({ app: this.app })) {
+      for (const { thread } of await this.reads.pins.list({ app: this.app })) {
         void rewriteOrReport(thread);
       }
     } catch (error) {

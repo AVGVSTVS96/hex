@@ -5,7 +5,8 @@ import { join } from "node:path";
 
 import { asking, Ledger } from "./ledger.ts";
 import type { Post } from "./ledger.ts";
-import { File, file } from "./store.ts";
+import { File, file, open, stateDir } from "./store.ts";
+import { answering } from "./store/wire.ts";
 import { until } from "./until.ts";
 
 let dir: string;
@@ -442,4 +443,65 @@ test("a status post is rebuilt when its own thread's questions change, not on ev
   await until(() => edited.includes("-100:9"));
   expect(rendered).toEqual(["-100:9"]);
   stop();
+});
+
+test("status posts read hex's store through a client of their own, so a message lands and the store syncs without waiting out their reads", async () => {
+  const records = file(join(dir, "object"));
+  const answer = answering(records);
+  const threads = Array.from({ length: 200 }, (_, n) => `-100:${n}`);
+
+  for (const thread of threads) {
+    records.pins.pinned({ app: "telegram", thread, message: 1, text: "old", note: "Working" });
+  }
+
+  const object = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      const call = await request.text();
+      await Bun.sleep(5);
+
+      return Response.json(answer(call));
+    },
+  });
+
+  writeFileSync(
+    join(stateDir(dir), "store.json"),
+    JSON.stringify({ url: object.url.origin, name: "hex", key: "k".repeat(32) }),
+  );
+
+  const post: Post = {
+    room: 4096,
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- a Link returns string | undefined, which () => {} doesn't
+    link: () => undefined,
+    send: () => Promise.resolve(2),
+    edit: () => Promise.resolve(true),
+    pin: () => Promise.resolve(),
+    unpin: () => Promise.resolve(),
+  };
+
+  const ledger = new Ledger(dir, "telegram");
+
+  const rewrites = threads.map(async (thread) => {
+    await ledger.rewrite(thread, post);
+  });
+
+  try {
+    const began = Date.now();
+
+    await open(stateDir(dir)).messages.deliver({
+      key: "telegram:-100:1:9",
+      to: "-100:1",
+      from: "telegram",
+      author: "owner",
+      body: "hi",
+    });
+    await open(stateDir(dir)).synced();
+
+    expect(Date.now() - began).toBeLessThan(300);
+    expect(records.messages.get("telegram:-100:1:9")?.body).toBe("hi");
+  } finally {
+    await Promise.allSettled(rewrites);
+    await object.stop(true);
+  }
 });

@@ -30,7 +30,7 @@ import {
   EFFORTS,
   MODELS,
   Ledger,
-  open as openStore,
+  reading,
   sinceToday,
   stateDir,
   waits,
@@ -2763,7 +2763,7 @@ const board = (() => {
     return;
   }
 
-  return new Keeper(openStore(stateDir(STATE_DIR)), join(STATE_DIR, "board.json"), {
+  return new Keeper(reading(stateDir(STATE_DIR)), join(STATE_DIR, "board.json"), {
     send: async (state: State) => {
       const sent = await paced(() =>
         widgets.sendWidget({
