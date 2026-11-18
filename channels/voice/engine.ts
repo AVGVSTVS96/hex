@@ -295,7 +295,7 @@ let ended: string | undefined;
 let seq = 0;
 const dials = new Map<string, Dial>();
 const placed = new Map<string, Placed>();
-const RETRIES = [250, 1000, 2000, 4000, 8000];
+const RETRIES = env.VOICE_RETRIES_MS?.split(",").map(Number) ?? [250, 1000, 2000, 4000, 8000];
 const GRACE = Number(env.VOICE_GRACE_SECONDS ?? 120) * 1000;
 const PING_EVERY = 5000;
 const QUIET_MOST = Number(env.VOICE_QUIET_SECONDS ?? 15) * 1000;
