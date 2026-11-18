@@ -181,17 +181,10 @@ export async function startHub({
   const plugin = channel.replace(/^plugin:/u, "");
   const path = `/${plugin.split("@")[0]}`;
   const app = path.slice(1);
-  let started = false;
 
   const owing = keeping(storeDir, {
     app,
     earlier: stateDir === storeDir ? [] : [join(stateDir, `owed.${app}.json`)],
-    letGo: (thread, rows) => {
-      if (started) {
-        inbox.heldLetGo(thread, rows);
-      }
-    },
-    cut: (thread, made) => void (started && waiting.cutLate(thread, made, inbox.wake)),
     queue: (turn, store) => queue(storeDir, turn, store),
     tell: (why) => void tellOwner(why),
   });
@@ -208,7 +201,6 @@ export async function startHub({
     tellAfter,
   });
 
-  started = true;
   const words = wordsSent({ threads, owing, app });
   const turns = sessionTurns({ overdue: (thread) => void inbox.letHeldGo(thread) });
   const waiting = messagesWaiting({ runs, kept, owe: owing.owe, waits });
@@ -266,7 +258,7 @@ export async function startHub({
     failed,
   });
 
-  const pauses = sessionPauses({ runs, threads, waiting, turns, kept, serving, turnEnded, failed });
+  const pauses = sessionPauses({ runs, threads, waiting, turns, must, serving, turnEnded, failed });
 
   const sessions = threadSessions({
     runs,
@@ -359,6 +351,12 @@ export async function startHub({
     serving,
     app,
     fresh,
+  });
+
+  owing.serve({
+    letGo: inbox.heldLetGo,
+    cut: (thread, made) => waiting.cutLate(thread, made, inbox.wake),
+    paused: pauses.told,
   });
 
   const stalls = stalledTurns({ runs, threads, turns, inbox, failed });

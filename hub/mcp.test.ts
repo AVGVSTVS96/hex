@@ -57,8 +57,6 @@ const nothing = (): void => undefined;
 const operationsIn = (dir: string) =>
   keeping(dir, {
     app: "test",
-    letGo: nothing,
-    cut: nothing,
     queue: () => Promise.resolve(),
   }).operations;
 

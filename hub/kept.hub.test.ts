@@ -468,6 +468,46 @@ test("a cut the hub owed gives back what a session it never saved the id of had 
   ).toContain("telegram:1:67");
 });
 
+test("a hub that starts as hex's store stops answering, with a session dead mid-turn, gives what it held to its thread's next session once the store answers", async () => {
+  const store = file(dir);
+  store.threads.keep("telegram", { "chat:7": { name: "Desk anchors", session: SESSION } });
+  store.messages.deliver({
+    key: "telegram:1:9",
+    to: "chat:7",
+    from: "telegram",
+    author: "owner",
+    body: "mid-turn",
+    meta: {},
+  });
+  store.turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
+  store.messages.take("telegram:1:9", SESSION);
+  const midTurnAsked: (() => void)[] = [];
+
+  storeWaits.set(
+    "midTurn",
+    new Promise<void>((resolve) => {
+      midTurnAsked.push(resolve);
+    }),
+  );
+
+  storeCalls.length = 0;
+  const starting = start({ agents: [] });
+  await until(() => storeCalls.includes("midTurn"));
+  fault.outage = "unreached";
+  midTurnAsked[0]?.();
+  await starting;
+  await settled();
+  expect(bgStarts()).toHaveLength(0);
+
+  fault.outage = undefined;
+  await hub.synced();
+  await settled();
+  expect(bgStarts()).toHaveLength(1);
+  const next = await session("chat:7");
+  await until(() => next.received.length);
+  expect(heard(next.received)[0]?.content).toBe("mid-turn");
+});
+
 test("what a session's hooks couldn't keep while hex's store was unreachable, the hub keeps once it answers", async () => {
   const { send } = await onCall();
   fault.outage = "unreached";

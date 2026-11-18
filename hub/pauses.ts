@@ -2,11 +2,12 @@ import { Effect } from "effect";
 
 import * as claude from "./claude.ts";
 import type { Failed } from "./failing.ts";
-import type { Keep } from "./kept.ts";
+import type { Owing, Paused } from "./kept.ts";
 import type { Line } from "./mcp.ts";
 import { ordered } from "./ordered.ts";
 import { present } from "./present.ts";
 import type { Runs } from "./runs.ts";
+import type { Store } from "./store.ts";
 import type { Threads } from "./threads.ts";
 import type { SessionTurns } from "./turns.ts";
 import type { MessagesWaiting } from "./waiting.ts";
@@ -25,7 +26,7 @@ export function sessionPauses({
   threads,
   waiting,
   turns,
-  kept,
+  must,
   serving,
   turnEnded,
   failed,
@@ -34,7 +35,7 @@ export function sessionPauses({
   threads: Threads;
   waiting: MessagesWaiting;
   turns: SessionTurns;
-  kept: Keep;
+  must: Owing["must"];
   serving: () => boolean;
   turnEnded: (thread: string) => Promise<void>;
   failed: Failed;
@@ -45,15 +46,13 @@ export function sessionPauses({
   // Whether the paused session's turn left something unanswered, ending it in hex's record if so: one check at a time for each session, so the next reads what the one before it ended.
   const ending = ordered();
 
-  const ended = (session: string) =>
+  const leftUnanswered = (session: string, store: Store) =>
     ending(session, async () => {
-      if (
-        !(await kept(async (store) => (await store.turns.unanswered(session)).length > 0, false))
-      ) {
+      if ((await store.turns.unanswered(session)).length === 0) {
         return false;
       }
 
-      await kept((store) => store.turns.handled(session), undefined);
+      await store.turns.handled(session);
 
       return true;
     });
@@ -92,9 +91,13 @@ export function sessionPauses({
   });
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // What a paused session's turn left unanswered is told to its chat, once: by the check that finds it paused, or by a stop that reaches it first (stopped), since a stop takes what the session took as handled.
+  // What a paused session's turn left unanswered is told to its chat, once: by the check that finds it paused, or by a stop that reaches it first (stopped), since a stop takes what the session took as handled. It's a read of the store and a write to it, so the hub owes it to a store that doesn't answer, and tells once it does (told).
   async function tell(thread: string, session: string, needs: string | undefined) {
-    if (!(await ended(session))) {
+    await must({ kind: "paused", thread, session, ...(present(needs) && { needs }) }, undefined);
+  }
+
+  async function told({ thread, session, needs }: Paused, store: Store) {
+    if (!(await leftUnanswered(session, store))) {
       return;
     }
 
@@ -124,5 +127,5 @@ export function sessionPauses({
     pauses.of(thread).paused = undefined;
   }
 
-  return { of, check, stopped, connected };
+  return { of, check, stopped, told, connected };
 }

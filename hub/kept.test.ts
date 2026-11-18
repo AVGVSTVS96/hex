@@ -104,8 +104,6 @@ const owing = (earlier: string[] = []) =>
   keeping(dir, {
     app: "telegram",
     earlier,
-    letGo: (): void => undefined,
-    cut: (): void => undefined,
     queue: async () => {
       await Promise.resolve();
     },

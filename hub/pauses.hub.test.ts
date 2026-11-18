@@ -24,6 +24,8 @@ import {
   job,
   slowLauncher,
   NEXT,
+  fault,
+  storeCalls,
 } from "./hub.testing.ts";
 import { file } from "./store.ts";
 import { until } from "./until.ts";
@@ -261,6 +263,29 @@ test("a paused session whose job record doesn't say what it waits on, stopped wi
     [
       "chat:7",
       "its session stopped on a question only its terminal can answer, so your message got no answer. Your next message starts it again.",
+    ],
+  ]);
+});
+
+test("a session that pauses while hex's store can't be reached has its chat told once the store answers", async () => {
+  const needs = "Answer the permission prompt in the terminal to continue";
+  await start({ reconnect: 50 });
+  await hub.deliver("chat:7", "Desk anchors", message);
+  await launched();
+  await turning("chat:7");
+  fault.outage = "unreached";
+  storeCalls.length = 0;
+  await pauses("job12345", needs);
+  await until(() => storeCalls.includes("unanswered"));
+  await settled();
+  expect(failures).toEqual([]);
+
+  fault.outage = undefined;
+  await hub.synced();
+  expect(failures).toEqual([
+    [
+      "chat:7",
+      `its session stopped on a question only its terminal can answer ("${needs}"), so your message got no answer. Your next message starts it again.`,
     ],
   ]);
 });
