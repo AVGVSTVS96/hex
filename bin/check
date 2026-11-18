@@ -25,7 +25,7 @@ bun build hub/store/object.ts --format=esm --target=browser --external 'cloudfla
 beside=$(dirname "$hex")/state
 [ ! -e "$beside" ] || live=1
 # The one time limit on tests, so a test fails on time only when it hangs: on a busy server one that takes a second here took 32.
-bun test --isolate --timeout 300000 plugin/tests hub channels
+bun test --parallel --timeout 300000 plugin/tests hub channels
 # The hub's tests again on a store that answers late, as a home across the network does: there a write lands after the call, not at it.
 bun test --isolate --timeout 300000 --preload ./hub/late.ts hub/hub.test.ts
 [ -n "${live:-}" ] || [ ! -e "$beside" ] || { echo "a test wrote to $beside: give what it starts a hex folder of its own (HEX_DIR, or HEX_STORE)" >&2; exit 1; }
