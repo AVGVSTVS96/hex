@@ -650,6 +650,51 @@ test("a hub that learns another machine holds hex still lands what it owed as fa
   }
 });
 
+test("a hub that learns another machine holds hex lets go of a reply's note of every question the owner had open, so one asked since isn't shown as answered by it, and still lands a question hex asked and a reply to one question", async () => {
+  const ledger = new Ledger(dir, "telegram", (note) => hub.noted(note));
+  const { questions } = file(dir);
+
+  const asks = (at: number, text: string) => {
+    questions.ask({
+      asker: "owner",
+      app: "telegram",
+      thread: "chat:7",
+      message: at,
+      text,
+      options: [],
+    });
+  };
+
+  await onCall();
+  asks(7, "Which day?");
+  asks(8, "When does it ship?");
+  const quoted = questions.get("telegram", "chat:7", 7);
+  fault.outage = "unreached";
+  await ledger.said("chat:7", 9, "Tuesday.");
+  await ledger.said("chat:7", 11, "Deploy now?");
+  await ledger.said(
+    "chat:7",
+    12,
+    "Thursday.",
+    quoted ? { question: quoted, message: 7 } : undefined,
+  );
+  await settled();
+
+  const unlisten = whenLost(ignoreLost);
+  asks(10, "And what does it cost?");
+  fault.outage = "lost";
+
+  try {
+    await settles(hub.synced());
+    expect(questions.get("telegram", "chat:7", 10)?.answer).toBeUndefined();
+    expect(questions.get("telegram", "chat:7", 8)?.answer).toBeUndefined();
+    expect(questions.get("telegram", "chat:7", 7)?.answer).toMatchObject({ message: 12 });
+    expect(questions.get("telegram", "chat:7", 11)?.text).toBe("Deploy now?");
+  } finally {
+    unlisten();
+  }
+});
+
 test("what a hub owed from before another hub held hex keeps its facts and lets go of its old threads", async () => {
   await onCall();
   claimedAs(4);

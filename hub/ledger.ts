@@ -29,12 +29,6 @@ export type Post = {
   /* oxlint-enable anti-slop/no-unknown-returns -- end of the awaited-only calls */
 };
 
-export async function noted(store: Store, note: Note) {
-  await (note.kind === "asked"
-    ? store.questions.ask(note.question)
-    : store.questions.replied(note.app, note.thread, note.answer, note.to));
-}
-
 export class Ledger {
   private readonly store: Store;
   private readonly reads: Store;
@@ -48,7 +42,13 @@ export class Ledger {
     this.store = open(stateDir(appStateDir));
     this.reads = reading(stateDir(appStateDir));
     this.app = app;
-    this.note = note ?? ((made) => noted(this.store, made));
+    this.note =
+      note ??
+      (async (made) => {
+        await (made.kind === "asked"
+          ? this.store.questions.ask(made.question)
+          : this.store.questions.replied(made.app, made.thread, made.answer, made.to));
+      });
   }
 
   get questions(): Promise<readonly Question[]> {

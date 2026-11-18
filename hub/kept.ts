@@ -11,7 +11,6 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
-import { noted } from "./ledger.ts";
 import {
   awayFile,
   isAuthor,
@@ -157,8 +156,11 @@ export type Owed = z.infer<typeof OwedWrite>;
 export type Note = Extract<Owed, { kind: "asked" | "replied" }>;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What stays true whoever holds hex: a message, a take, a turn's memory pass, a tap's answer, a tool call's record, a note of what hex said, each landing once by its key. A whole snapshot of an app's threads and the release of what was held for a turn are this hub's own state, worth nothing once another hub held hex.
-const isFact = (write: Owed) => write.kind !== "threads" && write.kind !== "letHeldGo";
+// What stays true whoever holds hex: a message, a take, a turn's memory pass, a tap's answer, a tool call's record, a question hex asked and a reply to one question, each landing once by its key. A whole snapshot of an app's threads and the release of what was held for a turn are this hub's own state, worth nothing once another hub held hex. So is a reply's note of every question the owner had open (replied, with no to): the store marks the ones open as it lands, so once another hub has held hex it would mark what the owner asked since.
+const isFact = (write: Owed) =>
+  write.kind !== "threads" &&
+  write.kind !== "letHeldGo" &&
+  !(write.kind === "replied" && write.to === undefined);
 
 const SpoolLine = z.object({ write: z.unknown(), tenure: z.number().optional() });
 
@@ -577,9 +579,14 @@ async function madeOn(store: Store, write: Owed, { letGo, queue }: Doing): Promi
       return true;
     }
 
-    case "asked":
+    case "asked": {
+      await store.questions.ask(write.question);
+
+      return true;
+    }
+
     case "replied": {
-      await noted(store, write);
+      await store.questions.replied(write.app, write.thread, write.answer, write.to);
 
       return true;
     }
