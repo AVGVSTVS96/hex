@@ -315,24 +315,74 @@ test("an update that finds hex up to date still deploys the store it's built wit
   expect(deploys()).toHaveLength(1);
 }, 60_000);
 
-test("an update whose deployed store isn't the one hex points at, or doesn't answer as it, puts the store before it back and doesn't ship", async () => {
+const BEFORE = "the store before";
+
+async function updateOverAStoreThatAnswers(
+  after: (deployed: string, asked: number) => string | null,
+) {
   published();
   const before = commit("one");
-  writeFileSync(join(root, "deployed"), "the store before");
+  writeFileSync(join(root, "deployed"), BEFORE);
   pointed();
   const incoming = commit("two");
   push();
   git("reset", "-q", "--hard", before);
-  answering = () => "a store elsewhere";
 
-  const update = await run(join(hex, "bin/update"), "--now");
+  let asked = 0;
+
+  answering = (deployed) => {
+    if (deployed === BEFORE) {
+      return deployed;
+    }
+
+    asked += 1;
+
+    return after(deployed, asked);
+  };
+
+  return { before, incoming, update: await run(join(hex, "bin/update"), "--now") };
+}
+
+test("an update waits out Cloudflare's edge answering as the store before for as long as a move would, then ships", async () => {
+  const { incoming, update } = await updateOverAStoreThatAnswers((deployed, asked) =>
+    asked <= 40 ? BEFORE : deployed,
+  );
+
+  expect(update.code).toBe(0);
+  expect(git("rev-parse", "HEAD")).toBe(incoming);
+  expect(read(join(root, "wrangler.log"))).not.toContain("rollback");
+}, 60_000);
+
+test("an update whose new store still answers as the one before after three minutes leaves it deployed, doesn't ship, and ships at the next update", async () => {
+  let rolledOut = false;
+
+  const { before, incoming, update } = await updateOverAStoreThatAnswers((deployed) =>
+    rolledOut ? deployed : BEFORE,
+  );
+
+  expect(update.code).toBe(1);
+  expect(update.out).toContain("Cloudflare is still taking it out");
+  expect(update.out).toContain(`ships at the next update`);
+  expect(read(join(root, "wrangler.log"))).not.toContain("rollback");
+  expect(git("rev-parse", "HEAD")).toBe(before);
+
+  rolledOut = true;
+  expect((await run(join(hex, "bin/update"), "--now")).code).toBe(0);
+  expect(git("rev-parse", "HEAD")).toBe(incoming);
+  expect(deploys()).toHaveLength(1);
+}, 60_000);
+
+test("an update whose new store doesn't answer at all puts the store before it back and doesn't ship", async () => {
+  const { before, incoming, update } = await updateOverAStoreThatAnswers(() => null);
+
   expect(update.code).toBe(1);
   expect(update.out).toContain(
     `not updated: the store hex ${incoming.slice(0, 7)} needs didn't deploy`,
   );
-  expect(update.out).toContain("within a minute: the store before it is back");
+  expect(update.out).toContain("didn't answer at all in three minutes");
+  expect(update.out).toContain("the store before it is back");
   expect(read(join(root, "wrangler.log"))).toContain("rollback");
-  expect(read(join(root, "deployed"))).toBe("the store before");
+  expect(read(join(root, "deployed"))).toBe(BEFORE);
   expect(git("rev-parse", "HEAD")).toBe(before);
 }, 60_000);
 

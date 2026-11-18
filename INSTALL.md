@@ -142,7 +142,7 @@ hex runs on one machine at a time: a hub that starts takes hex, and the one that
 
 ## Updating
 
-`.hex/bin/update` runs every morning from `schedules.json`. It pulls hex once `bin/check` passes on the new version, and restarts the hub and hex's sessions. When the records are in a Durable Object, it first deploys the store the new version is built with, if it differs, and goes on only once the object `state/store.json` names answers as that store; if it doesn't within a minute, the store before it goes back and hex stays as it was. Nothing deploys over a store that doesn't answer, or that was built from a commit made after the new version's.
+`.hex/bin/update` runs every morning from `schedules.json`. It pulls hex once `bin/check` passes on the new version, and restarts the hub and hex's sessions. When the records are in a Durable Object, it first deploys the store the new version is built with, if it differs, and goes on only once the object `state/store.json` names answers as that store, which Cloudflare can take minutes to show everywhere. If the object still answers as the store before after three minutes, the new one stays deployed and hex ships at the next update; if it doesn't answer at all, the store before it goes back. Either way hex stays as it was until then. Nothing deploys over a store that doesn't answer, or that was built from a commit made after the new version's.
 
 ## Backups
 

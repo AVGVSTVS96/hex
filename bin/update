@@ -44,11 +44,10 @@ if [ "$(git rev-parse HEAD)" = "$incoming" ]; then
   tell "$(printf "$live" "$before")"
   # A hex that got here another way, as a takeover that pulls it does, can run ahead of its store, so the store this hex
   # is built with deploys all the same; one that runs it already is left as it is.
-  if [ -e "$home/state/store.json" ] && ! output=$("$hex/bin/hex" store deploy 2>&1); then
-    printf '%s\n' "$output"
-    echo "but the store hex $before needs didn't deploy"
-    exit 1
-  fi
+  deployed=0
+  [ ! -e "$home/state/store.json" ] || output=$("$hex/bin/hex" store deploy 2>&1) || deployed=$?
+  # 2: deployed, and Cloudflare is still taking it out, which the next update finds done.
+  [ "$deployed" = 0 ] || { printf '%s\n' "$output"; [ "$deployed" = 2 ] || { echo "but the store hex $before needs didn't deploy"; exit 1; }; }
   exit 0
 fi
 if [ "$incoming" = "$(cat "$home/state/bad" 2>/dev/null || :)" ]; then
@@ -106,11 +105,15 @@ fi
 # A busy session would take the new hooks and rules mid-turn, so hex ships only between turns.
 [ "$mode" = --now ] || "$hex/bin/quiet"
 # Records kept in a Durable Object are answered by the store's code there, so it ships first: this hex can call a newer
-# store, never an older one. The deploy proves the object hex points at answers as the new store, or puts the old one back.
-if [ -e "$home/state/store.json" ] && ! output=$("$hex/bin/hex" store deploy "$check" 2>&1); then
+# store, never an older one. The deploy waits for the object hex points at to answer as the new store; one that answers
+# not at all goes back to the old (1), and one Cloudflare is still taking out (2) stays, and ships at the next update.
+deployed=0
+[ ! -e "$home/state/store.json" ] || output=$("$hex/bin/hex" store deploy "$check" 2>&1) || deployed=$?
+if [ "$deployed" != 0 ]; then
   printf '%s\n' "$output"
-  echo "not updated: the store hex $(git rev-parse --short "$incoming") needs didn't deploy"
-  [ "$mode" != --when-quiet ] || tell all "didn't ship: the store hex $(git rev-parse --short "$incoming") needs didn't deploy, so hex stays on $before; its output is in $home/state/jobs/hex-update.log"
+  if [ "$deployed" = 2 ]; then why="deployed, and Cloudflare is still taking it out, so hex $(git rev-parse --short "$incoming") ships at the next update"; else why="didn't deploy"; fi
+  echo "not updated: the store hex $(git rev-parse --short "$incoming") needs $why"
+  [ "$mode" != --when-quiet ] || tell all "didn't ship: the store hex $(git rev-parse --short "$incoming") needs $why, so hex stays on $before; its output is in $home/state/jobs/hex-update.log"
   exit 1
 fi
 git merge -q --ff-only "$incoming"
