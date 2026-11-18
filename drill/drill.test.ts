@@ -1,6 +1,6 @@
 import { afterAll, test } from "bun:test";
 import { appendFileSync, copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { until } from "../hub/until.ts";
 import { cloudflare } from "./cloudflare.ts";
@@ -130,7 +130,7 @@ function drillFor() {
         waitingFor === "" ? error.message : `${waitingFor}: it never happened`,
         ...folders.map(
           (each) =>
-            `${each.dir}/state/hub.log ends:\n${each.log().split("\n").slice(-40).join("\n")}`,
+            `machine ${basename(each.dir)}'s hub log ends:\n${each.log().split("\n").slice(-40).join("\n")}`,
         ),
       ].join("\n\n"),
     end: async () => {
