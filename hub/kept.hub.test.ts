@@ -37,6 +37,7 @@ import {
   bgStarts,
 } from "./hub.testing.ts";
 import { claimedAs, takeOver, whenLost, whenMoved } from "./kept.ts";
+import { Ledger } from "./ledger.ts";
 import * as stores from "./store.ts";
 import { file, LostError, RefusedError } from "./store.ts";
 import { hangUpAll } from "./testing.ts";
@@ -260,6 +261,48 @@ test("a tool call made in an outage and repeated to the next hub is answered fro
   expect(next.told.ran).toBe(0);
   await hub.synced();
   expect(operationsKept()).toEqual([{ id: matching(/tool-3/u), result: matching(/sent 1/u) }]);
+});
+
+test("a reply the owner got while hex's store can't be reached isn't failed by the questions ledger's note of it, which the store has once it answers, though the hub restarted meanwhile", async () => {
+  const ledger = new Ledger(dir, "telegram", (note) => hub.noted(note));
+
+  await start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    call: async (thread) => {
+      await ledger.said(thread, 9, "Tuesday. Is that soon enough?");
+
+      return "sent";
+    },
+  });
+
+  file(dir).questions.ask({
+    asker: "owner",
+    app: "telegram",
+    thread: "chat:7",
+    message: 8,
+    text: "When does it ship?",
+    options: [],
+  });
+
+  const line = await session("chat:7");
+  fault.outage = "unreached";
+  expect((await line.call("reply", { text: "Tuesday." }, "tool-9")).content[0]?.text).toBe("sent");
+  hub.close();
+  hangUpAll();
+
+  const restarting = start();
+  await Bun.sleep(300);
+  fault.outage = undefined;
+  await restarting;
+  await hub.synced();
+
+  expect(file(dir).questions.get("telegram", "chat:7", 8)?.answer).toMatchObject({
+    via: "hex",
+    message: 9,
+  });
+  expect(file(dir).questions.get("telegram", "chat:7", 9)?.text).toBe(
+    "Tuesday. Is that soon enough?",
+  );
 });
 
 test("what the hub owes hex's store lands before what comes after it, and what a session took meanwhile lands as taken", async () => {

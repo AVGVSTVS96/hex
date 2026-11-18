@@ -1,4 +1,5 @@
 import { above, clip } from "./fit.ts";
+import type { Note } from "./kept.ts";
 import { statusPost } from "./status.ts";
 import type { Link } from "./status.ts";
 import { open, reading, stateDir } from "./store.ts";
@@ -28,16 +29,26 @@ export type Post = {
   /* oxlint-enable anti-slop/no-unknown-returns -- end of the awaited-only calls */
 };
 
+export async function noted(store: Store, note: Note) {
+  await (note.kind === "asked"
+    ? store.questions.ask(note.question)
+    : store.questions.replied(note.app, note.thread, note.answer, note.to));
+}
+
 export class Ledger {
   private readonly store: Store;
   private readonly reads: Store;
   private readonly app: string;
+  private readonly note: (note: Note) => Promise<void>;
   private readonly turns = new Map<string, Promise<unknown>>();
 
-  constructor(appStateDir: string, app: string) {
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // note: how what hex said is noted (ask, said), which follows words the owner already has, so a hub owes it to a store that doesn't answer (hub.noted) instead of failing the tool that sent them.
+  constructor(appStateDir: string, app: string, note?: (note: Note) => Promise<void>) {
     this.store = open(stateDir(appStateDir));
     this.reads = reading(stateDir(appStateDir));
     this.app = app;
+    this.note = note ?? ((made) => noted(this.store, made));
   }
 
   get questions(): Promise<readonly Question[]> {
@@ -192,12 +203,15 @@ export class Ledger {
     options: string[],
     how: Pick<Question, "poll" | "multiple" | "shots" | "attached"> = {},
   ) {
-    await this.store.questions.ask({ app: this.app, thread, message, text, options, ...how });
-    await this.store.questions.replied(this.app, thread, {
-      label: clip(text, 60),
-      at: new Date().toISOString(),
-      via: "hex",
-      message,
+    const { app } = this;
+    const at = new Date().toISOString();
+    await this.note({ kind: "asked", question: { app, thread, message, text, options, ...how } });
+
+    await this.note({
+      kind: "replied",
+      app,
+      thread,
+      answer: { label: clip(text, 60), at, via: "hex", message },
     });
   }
 
@@ -215,7 +229,7 @@ export class Ledger {
       their.thread === thread &&
       String(their.message) === String(quoted?.message)
     ) {
-      await this.store.questions.replied(this.app, thread, answer, their.message);
+      await this.note({ kind: "replied", app: this.app, thread, answer, to: their.message });
 
       return;
     }
@@ -224,7 +238,7 @@ export class Ledger {
     const question = remindsOfQuoted ? undefined : asking(text);
 
     await (question === undefined
-      ? this.store.questions.replied(this.app, thread, answer)
+      ? this.note({ kind: "replied", app: this.app, thread, answer })
       : this.ask(thread, message, question, []));
   }
 

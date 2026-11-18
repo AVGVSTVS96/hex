@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 
-import type { Owing } from "./kept.ts";
+import type { Note, Owing } from "./kept.ts";
 import type { NewRow } from "./store.ts";
 import type { Threads } from "./threads.ts";
 import type { Message } from "./waiting.ts";
@@ -44,6 +44,11 @@ export function wordsSent({
 
   return {
     sent,
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // The questions ledger's note of what hex said, owed like the words themselves, so a store that doesn't answer never fails a reply the owner already has.
+    noted: async (note: Note) => {
+      await must(note, undefined);
+    },
     said: (key: string) => kept((store) => store.messages.latest(`${app}:${key}`), null),
     callingAs: <Result>(session: string | undefined, run: () => Result) => caller.run(session, run),
   };

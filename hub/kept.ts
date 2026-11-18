@@ -11,6 +11,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import { noted } from "./ledger.ts";
 import {
   awayFile,
   isAuthor,
@@ -22,7 +23,8 @@ import {
   unclaimed,
   UnreachedError,
 } from "./store.ts";
-import type { Author, Kept, NewRow as NewRowType, Row, Store, Told } from "./store.ts";
+import type { Author, Kept, NewQuestion, NewRow as NewRowType, Row, Store, Told } from "./store.ts";
+import { AnswerJson } from "./store/questions.ts";
 
 export type Keep = <T>(use: (store: Store) => Promise<T> | T, otherwise: T) => Promise<T>;
 
@@ -79,6 +81,14 @@ export type Pass = z.infer<typeof PASS>;
 
 const MessageId = z.union([z.number(), z.string()]);
 
+const AnyQuestion = z.looseObject({
+  app: z.string(),
+  thread: z.string(),
+  message: MessageId,
+  text: z.string(),
+  options: z.array(z.string()),
+});
+
 const AnyTold = z.union([
   z.object({
     answered: z.object({
@@ -127,12 +137,27 @@ export const OwedWrite = z.discriminatedUnion("kind", [
     result: z.string().nullable(),
     begun: z.boolean().optional(),
   }),
+  z.object({
+    kind: z.literal("asked"),
+    question: z.custom<NewQuestion>((value) => AnyQuestion.safeParse(value).success),
+  }),
+  z.object({
+    kind: z.literal("replied"),
+    app: z.string(),
+    thread: z.string(),
+    answer: AnswerJson,
+    to: MessageId.optional(),
+  }),
 ]);
 
 export type Owed = z.infer<typeof OwedWrite>;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What stays true whoever holds hex: a message, a take, a turn's memory pass, a tap's answer, a tool call's record, each landing once by its key. A whole snapshot of an app's threads and the release of what was held for a turn are this hub's own state, worth nothing once another hub held hex.
+// What hex said, as the questions ledger notes it: a question it asked, or a reply that answers what the owner asked (all the owner asked in the thread, or the one question at to).
+export type Note = Extract<Owed, { kind: "asked" | "replied" }>;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What stays true whoever holds hex: a message, a take, a turn's memory pass, a tap's answer, a tool call's record, a note of what hex said, each landing once by its key. A whole snapshot of an app's threads and the release of what was held for a turn are this hub's own state, worth nothing once another hub held hex.
 const isFact = (write: Owed) => write.kind !== "threads" && write.kind !== "letHeldGo";
 
 const SpoolLine = z.object({ write: z.unknown(), tenure: z.number().optional() });
@@ -165,6 +190,14 @@ function keyOf(owed: Owed) {
     case "operation": {
       return `operation:${owed.scope}:${owed.id}`;
     }
+
+    case "asked": {
+      return `asked:${owed.question.app}:${owed.question.thread}:${owed.question.message}`;
+    }
+
+    case "replied": {
+      return `replied:${owed.app}:${owed.thread}:${owed.answer.message ?? owed.answer.at}`;
+    }
   }
 }
 
@@ -181,10 +214,15 @@ function asOf(owed: Owed, at: string): Owed {
       return { ...owed, at: owed.at ?? at };
     }
 
+    case "asked": {
+      return { ...owed, question: { ...owed.question, at: owed.question.at ?? at } };
+    }
+
     case "threads":
     case "letHeldGo":
     case "pass":
-    case "operation": {
+    case "operation":
+    case "replied": {
       return owed;
     }
   }
@@ -535,6 +573,13 @@ async function madeOn(store: Store, write: Owed, { letGo, queue }: Doing): Promi
       if (write.result !== null) {
         await store.operations.finish(write.scope, write.id, write.result);
       }
+
+      return true;
+    }
+
+    case "asked":
+    case "replied": {
+      await noted(store, write);
 
       return true;
     }
