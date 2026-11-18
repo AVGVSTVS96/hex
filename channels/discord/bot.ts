@@ -24,7 +24,6 @@ import {
   transcribe,
   MODELS,
   EFFORTS,
-  Ledger,
   waits,
 } from "@hex/hub";
 import type { Handlers, Message, Permission, Turn, MessageId, Post, Question } from "@hex/hub";
@@ -651,8 +650,6 @@ async function serve(token: string) {
       Partials.PollAnswer,
     ],
   });
-
-  const ledger = new Ledger(STATE_DIR, "discord", (note) => hub.noted(note));
 
   function bot() {
     if (!client.user) {
@@ -1565,6 +1562,8 @@ async function serve(token: string) {
     ...(process.env.HEX_DIR !== undefined && { hexDir: process.env.HEX_DIR }),
     ...(process.env.HEX_LAUNCHER !== undefined && { launcher: process.env.HEX_LAUNCHER }),
   });
+
+  const { ledger } = hub;
 
   clients.set("discord", {
     hub,

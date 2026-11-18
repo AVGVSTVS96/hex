@@ -12,7 +12,7 @@ import {
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 
-import { startHub, clients, begin, move, tappable, title, dispatch, Ledger } from "@hex/hub";
+import { startHub, clients, begin, move, tappable, title, dispatch } from "@hex/hub";
 import type { Handlers, Message, Turn } from "@hex/hub";
 import { decode } from "nostr-tools/nip19";
 import { finalizeEvent } from "nostr-tools/pure";
@@ -27,8 +27,6 @@ import { connectRelay, nostrEvent } from "./relay.ts";
 
 const STATE_DIR =
   process.env.BUZZ_STATE_DIR ?? join(homedir(), ".claude", "channels", "hex", "buzz");
-
-const ledger = new Ledger(STATE_DIR, "buzz");
 
 const ACCESS_FILE = join(STATE_DIR, "access.json");
 const ENV_FILE = join(STATE_DIR, ".env");
@@ -1136,7 +1134,7 @@ async function serve(url: string, secretKey: Uint8Array, authTag: AuthTag) {
     },
     edit_message: async (caller, args) => {
       if (args.settled === true) {
-        await ledger.settled(caller, args.message_id, "✓ Settled");
+        await hub.ledger.settled(caller, args.message_id, "✓ Settled");
       }
 
       if (args.text === undefined) {
@@ -1254,13 +1252,13 @@ async function serve(url: string, secretKey: Uint8Array, authTag: AuthTag) {
     },
     questions: {
       answer: (thread, key, label, via) => {
-        ledger.answered(thread, key, label, via).catch(unsaved(`an answer in ${thread}`));
+        hub.ledger.answered(thread, key, label, via).catch(unsaved(`an answer in ${thread}`));
       },
       settle: (thread, key, note) => {
-        ledger.settled(thread, key, note).catch(unsaved(`a settled question in ${thread}`));
+        hub.ledger.settled(thread, key, note).catch(unsaved(`a settled question in ${thread}`));
       },
       reopen: (thread, key) => {
-        ledger.reopened(thread, key).catch(unsaved(`a reopened question in ${thread}`));
+        hub.ledger.reopened(thread, key).catch(unsaved(`a reopened question in ${thread}`));
       },
     },
     hexDir: process.env.HEX_DIR,

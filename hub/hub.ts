@@ -12,6 +12,7 @@ import { holding } from "./holds.ts";
 import { threadInbox } from "./inbox.ts";
 import { turnInterrupts } from "./interrupt.ts";
 import { keeping, landed } from "./kept.ts";
+import { Ledger } from "./ledger.ts";
 import { PORT, mount } from "./listen.ts";
 import { STARTUP } from "./loaded.ts";
 import { endpoint } from "./mcp.ts";
@@ -25,7 +26,7 @@ import { sessionRests } from "./rest.ts";
 import { restarts } from "./restarts.ts";
 import { threadRuns } from "./runs.ts";
 import { schedule } from "./schedule.ts";
-import { wordsSent } from "./sent.ts";
+import { noting, wordsSent } from "./sent.ts";
 import { threadSessions } from "./sessions.ts";
 import { hubSocket } from "./socket.ts";
 import type { Questions } from "./socket.ts";
@@ -532,7 +533,7 @@ export async function startHub({
   const api = {
     deliver: inbox.deliver,
     sent: words.sent,
-    noted: words.noted,
+    ledger: new Ledger(storeDir, app, noting(must)),
     said: words.said,
     command: sessions.restart,
     configure,

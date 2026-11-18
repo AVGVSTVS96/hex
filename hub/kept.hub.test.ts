@@ -37,7 +37,6 @@ import {
   bgStarts,
 } from "./hub.testing.ts";
 import { claimedAs, takeOver, whenLost, whenMoved } from "./kept.ts";
-import { Ledger } from "./ledger.ts";
 import * as stores from "./store.ts";
 import { file, LostError, RefusedError } from "./store.ts";
 import { hangUpAll } from "./testing.ts";
@@ -264,12 +263,10 @@ test("a tool call made in an outage and repeated to the next hub is answered fro
 });
 
 test("a reply the owner got while hex's store can't be reached isn't failed by the questions ledger's note of it, which the store has once it answers, though the hub restarted meanwhile", async () => {
-  const ledger = new Ledger(dir, "telegram", (note) => hub.noted(note));
-
   await start({
     registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
     call: async (thread) => {
-      await ledger.said(thread, 9, "Tuesday. Is that soon enough?");
+      await hub.ledger.said(thread, 9, "Tuesday. Is that soon enough?");
 
       return "sent";
     },
@@ -651,7 +648,6 @@ test("a hub that learns another machine holds hex still lands what it owed as fa
 });
 
 test("a hub that learns another machine holds hex lets go of a reply's note of every question the owner had open, so one asked since isn't shown as answered by it, and still lands a question hex asked and a reply to one question", async () => {
-  const ledger = new Ledger(dir, "telegram", (note) => hub.noted(note));
   const { questions } = file(dir);
 
   const asks = (at: number, text: string) => {
@@ -670,9 +666,9 @@ test("a hub that learns another machine holds hex lets go of a reply's note of e
   asks(8, "When does it ship?");
   const quoted = questions.get("telegram", "chat:7", 7);
   fault.outage = "unreached";
-  await ledger.said("chat:7", 9, "Tuesday.");
-  await ledger.said("chat:7", 11, "Deploy now?");
-  await ledger.said(
+  await hub.ledger.said("chat:7", 9, "Tuesday.");
+  await hub.ledger.said("chat:7", 11, "Deploy now?");
+  await hub.ledger.said(
     "chat:7",
     12,
     "Thursday.",
@@ -690,6 +686,47 @@ test("a hub that learns another machine holds hex lets go of a reply's note of e
     expect(questions.get("telegram", "chat:7", 8)?.answer).toBeUndefined();
     expect(questions.get("telegram", "chat:7", 7)?.answer).toMatchObject({ message: 12 });
     expect(questions.get("telegram", "chat:7", 11)?.text).toBe("Deploy now?");
+  } finally {
+    unlisten();
+  }
+});
+
+test("what the questions ledger writes while hex's store can't be reached doesn't fail the tool that wrote it, and lands in the order it was written once the store answers", async () => {
+  await onCall();
+  const { questions } = file(dir);
+  questions.ask({ app: "telegram", thread: "chat:7", message: 9, text: "Deploy?", options: [] });
+  questions.ask({ app: "telegram", thread: "chat:7", message: 10, text: "Ship?", options: [] });
+  fault.outage = "unreached";
+
+  expect(await hub.ledger.settled("chat:7", 9, "settled")).toBe(true);
+  expect(await hub.ledger.answered("chat:7", 9, "Yes", "tap")).toBe(true);
+  expect(await hub.ledger.reopened("chat:7", 9)).toBe(true);
+  await hub.ledger.deleted("chat:7", 10);
+  expect(questions.get("telegram", "chat:7", 10)).not.toBeNull();
+
+  fault.outage = undefined;
+  await hub.synced();
+  expect(questions.get("telegram", "chat:7", 9)).toMatchObject({ text: "Deploy?" });
+  expect(questions.get("telegram", "chat:7", 9)?.settled).toBeUndefined();
+  expect(questions.get("telegram", "chat:7", 9)?.answer).toBeUndefined();
+  expect(questions.get("telegram", "chat:7", 10)).toBeNull();
+});
+
+test("a hub that learns another machine holds hex lets go of what its questions ledger wrote, which that machine may have changed since", async () => {
+  await onCall();
+  const { questions } = file(dir);
+  questions.ask({ app: "telegram", thread: "chat:7", message: 9, text: "Deploy?", options: [] });
+  fault.outage = "unreached";
+  await hub.ledger.settled("chat:7", 9, "settled");
+  await settled();
+
+  const unlisten = whenLost(ignoreLost);
+  fault.outage = "lost";
+
+  try {
+    await settles(hub.synced());
+    expect(questions.get("telegram", "chat:7", 9)?.settled).toBeUndefined();
+    expect(existsSync(join(dir, "owed.telegram.json"))).toBe(false);
   } finally {
     unlisten();
   }

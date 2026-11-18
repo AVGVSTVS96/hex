@@ -3,8 +3,10 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { keeping } from "./kept.ts";
 import { asking, Ledger } from "./ledger.ts";
 import type { Post } from "./ledger.ts";
+import { noting } from "./sent.ts";
 import { File, file, open, stateDir } from "./store.ts";
 import { answering } from "./store/wire.ts";
 import { until } from "./until.ts";
@@ -22,6 +24,20 @@ function found<T>(value: T | undefined): T {
 }
 
 let ledgerJson: string;
+
+const ledgerOf = () =>
+  new Ledger(
+    dir,
+    "telegram",
+    noting(
+      keeping(dir, {
+        spool: join(dir, "owed.telegram.json"),
+        refused: join(dir, "refused.telegram.json"),
+        letGo: (): void => undefined,
+        queue: () => Promise.resolve(),
+      }).must,
+    ),
+  );
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "ledger-"));
@@ -96,7 +112,7 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
       },
     }),
   );
-  const ledger = new Ledger(dir, "telegram");
+  const ledger = ledgerOf();
   expect(await ledger.find("-100:7", 41)).toMatchObject({
     app: "telegram",
     text: "Deploy now?",
@@ -175,12 +191,12 @@ test("a hex.db that took a ledger in at each start brings in only what an older 
 
 test("a ledger.json that can't be read stays where it is", async () => {
   writeFileSync(ledgerJson, '{"broken');
-  expect(await new Ledger(dir, "telegram").pin("-100:7")).toBeUndefined();
+  expect(await ledgerOf().pin("-100:7")).toBeUndefined();
   expect(existsSync(ledgerJson)).toBe(true);
 });
 
 test("a question stays open through an edit and leaves the waiting list only when answered or settled", async () => {
-  const ledger = new Ledger(dir, "telegram");
+  const ledger = ledgerOf();
   const store = file(dir);
   await ledger.ask("-100:7", 41, "Deploy now?", ["Deploy", "Wait"]);
   await ledger.edited("-100:7", 41, "Deploy now? CI is green.");
@@ -208,7 +224,7 @@ test("a question stays open through an edit and leaves the waiting list only whe
 });
 
 test("a status post is sent under its note and pinned in place of the last, rewritten from hex.db; a pin made meanwhile stands, and one the app will never edit stays pinned in the chat for the session to unpin", async () => {
-  const ledger = new Ledger(dir, "telegram");
+  const ledger = ledgerOf();
   const done: unknown[][] = [];
   let next = 20;
 
@@ -253,7 +269,7 @@ test("a status post is sent under its note and pinned in place of the last, rewr
   expect(done).toHaveLength(2);
 
   await ledger.rewrite("-100:8", post, "Site: example.org\n\n**🔴 Blocked on you**\n- copied", 21);
-  expect(await new Ledger(dir, "telegram").pin("-100:8")).toMatchObject({
+  expect(await ledgerOf().pin("-100:8")).toMatchObject({
     note: "Site: example.org",
   });
   expect(await rejection(ledger.rewrite("-100:8", post, "Site: elsewhere", 99))).toContain(
@@ -332,7 +348,7 @@ test("Telegram's bot.json, which nothing reads now, is renamed", () => {
 });
 
 test("a reply that ends asking something waits on the owner until they reply to it", async () => {
-  const ledger = new Ledger(dir, "telegram");
+  const ledger = ledgerOf();
   await ledger.said(
     "-100:7",
     70,
@@ -356,7 +372,7 @@ test("a reply that ends asking something waits on the owner until they reply to 
 });
 
 test("the owner's question waits on them once hex answers, until they quote-reply to it or a session settles it", async () => {
-  const ledger = new Ledger(dir, "telegram");
+  const ledger = ledgerOf();
   const store = file(dir);
   await ledger.heard(
     "-100:7",
@@ -395,7 +411,7 @@ test("the owner's question waits on them once hex answers, until they quote-repl
 });
 
 test("a status post is rebuilt when its own thread's questions change, not on every write to hex.db", async () => {
-  const ledger = new Ledger(dir, "telegram");
+  const ledger = ledgerOf();
   const rendered: string[] = [];
   const edited: string[] = [];
 
@@ -480,7 +496,7 @@ test("status posts read hex's store through a client of their own, so a message 
     unpin: () => Promise.resolve(),
   };
 
-  const ledger = new Ledger(dir, "telegram");
+  const ledger = ledgerOf();
 
   const rewrites = threads.map(async (thread) => {
     await ledger.rewrite(thread, post);
@@ -570,7 +586,7 @@ test("status posts whose first read the store didn't answer are kept once it ans
     unpin: () => Promise.resolve(),
   };
 
-  const stop = await new Ledger(dir, "telegram").keep(post, (_, error) => {
+  const stop = await ledgerOf().keep(post, (_, error) => {
     throw error;
   });
 

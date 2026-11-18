@@ -1,8 +1,9 @@
 import { above, clip } from "./fit.ts";
 import type { Note } from "./kept.ts";
+import type { LedgerWrite } from "./noted.ts";
 import { statusPost } from "./status.ts";
 import type { Link } from "./status.ts";
-import { open, reading, stateDir } from "./store.ts";
+import { open, reading } from "./store.ts";
 import type { MessageId, Pin, Question, Store } from "./store.ts";
 
 export type { Answer, MessageId, Pin, Question } from "./store.ts";
@@ -29,26 +30,22 @@ export type Post = {
   /* oxlint-enable anti-slop/no-unknown-returns -- end of the awaited-only calls */
 };
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// How the ledger writes: through the hub that made it (sent.ts, noting), which owes a store that doesn't answer what it couldn't take, so a tool whose message the owner already has is never failed by its record. Whether the write changed anything.
+export type Noting = (note: Note | LedgerWrite) => Promise<boolean>;
+
 export class Ledger {
   private readonly store: Store;
   private readonly reads: Store;
   private readonly app: string;
-  private readonly note: (note: Note) => Promise<void>;
+  private readonly note: Noting;
   private readonly turns = new Map<string, Promise<unknown>>();
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // note: how what hex said is noted (ask, said), which follows words the owner already has, so a hub owes it to a store that doesn't answer (hub.noted) instead of failing the tool that sent them.
-  constructor(appStateDir: string, app: string, note?: (note: Note) => Promise<void>) {
-    this.store = open(stateDir(appStateDir));
-    this.reads = reading(stateDir(appStateDir));
+  constructor(storeDir: string, app: string, note: Noting) {
+    this.store = open(storeDir);
+    this.reads = reading(storeDir);
     this.app = app;
-    this.note =
-      note ??
-      (async (made) => {
-        await (made.kind === "asked"
-          ? this.store.questions.ask(made.question)
-          : this.store.questions.replied(made.app, made.thread, made.answer, made.to));
-      });
+    this.note = note;
   }
 
   get questions(): Promise<readonly Question[]> {
@@ -66,7 +63,10 @@ export class Ledger {
       const text = await this.render(thread, words, post);
       const message = await post.send(thread, text);
       await post.pin(thread, message);
-      await this.store.pins.pinned({ app: this.app, thread, message, text, note: words });
+      await this.note({
+        write: "pinned",
+        args: [{ app: this.app, thread, message, text, note: words }],
+      });
 
       if (was) {
         await post.unpin(thread, was.message).catch(() => null);
@@ -98,7 +98,7 @@ export class Ledger {
       const shown = text === pin.text || (await post.edit(thread, pin.message, text));
 
       if (shown === null) {
-        await this.store.pins.unpinned(this.app, thread, pin.message);
+        await this.note({ write: "unpinned", args: [this.app, thread, pin.message] });
       }
 
       if (shown === null || shown === false) {
@@ -113,10 +113,10 @@ export class Ledger {
         return;
       }
 
-      await this.store.pins.repinned(
-        { app: this.app, thread, message: pin.message, text, note: said },
-        pin.note,
-      );
+      await this.note({
+        write: "repinned",
+        args: [{ app: this.app, thread, message: pin.message, text, note: said }, pin.note],
+      });
     });
   }
 
@@ -243,7 +243,7 @@ export class Ledger {
   }
 
   async heard(thread: string, message: MessageId, text: string, replyTo?: MessageId) {
-    await this.store.questions.returned(this.app, thread);
+    await this.note({ write: "returned", args: [this.app, thread] });
 
     const to =
       replyTo === undefined
@@ -267,39 +267,33 @@ export class Ledger {
     const question = theirs(text);
 
     if (question !== undefined) {
-      await this.store.questions.ask({
-        asker: "owner",
-        app: this.app,
-        thread,
-        message,
-        text: question,
-        options: [],
+      await this.note({
+        kind: "asked",
+        question: { asker: "owner", app: this.app, thread, message, text: question, options: [] },
       });
     }
   }
 
   answered(thread: string, message: MessageId, label: string, via: string, again = false) {
-    return this.store.questions.answered(this.app, thread, message, label, via, again);
+    return this.note({ write: "answered", args: [this.app, thread, message, label, via, again] });
   }
 
   settled(thread: string, message: MessageId, note: string) {
-    return this.store.questions.settled(this.app, thread, message, note);
+    return this.note({ write: "settled", args: [this.app, thread, message, note] });
   }
 
   reopened(thread: string, message: MessageId) {
-    return this.store.questions.reopened(this.app, thread, message);
+    return this.note({ write: "reopened", args: [this.app, thread, message] });
   }
 
   async edited(thread: string, message: MessageId, text: string) {
     const question = await this.store.questions.get(this.app, thread, message);
 
     if (question !== null) {
-      await this.store.questions.reworded(
-        this.app,
-        thread,
-        message,
-        question.options.length ? text : (asking(text) ?? text),
-      );
+      await this.note({
+        write: "reworded",
+        args: [this.app, thread, message, question.options.length ? text : (asking(text) ?? text)],
+      });
     }
   }
 
@@ -313,7 +307,7 @@ export class Ledger {
 
       await post.unpin(thread, target);
 
-      await this.store.pins.unpinned(this.app, thread, target);
+      await this.note({ write: "unpinned", args: [this.app, thread, target] });
 
       return target;
     });
@@ -328,10 +322,10 @@ export class Ledger {
   }
 
   private async forgotten(thread: string, message?: MessageId) {
-    const now = this.store.pins.forgotten(this.app, thread, message);
+    const now = this.note({ write: "forgotten", args: [this.app, thread, message] });
 
     const unpinWhatAPinStillRunningRecorded = this.turn(thread, () =>
-      this.store.pins.unpinned(this.app, thread, message),
+      this.note({ write: "unpinned", args: [this.app, thread, message] }),
     );
 
     await Promise.all([now, unpinWhatAPinStillRunningRecorded]);
