@@ -26,9 +26,11 @@ const Job = z.object({ sessionId: z.string(), pid: z.number().optional() });
 // The sandbox sits beside bun's own cache, on the same disk, so each copy of hex installs by linking from it and downloads nothing.
 const cache = process.env.BUN_INSTALL_CACHE_DIR ?? join(homedir(), ".bun", "install", "cache");
 
-const root = mkdtempSync(
-  join(process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache"), "hex-drill-"),
-);
+const caches = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
+
+mkdirSync(caches, { recursive: true });
+
+const root = mkdtempSync(join(caches, "hex-drill-"));
 
 const groups = new Set<number>();
 let made = 0;
