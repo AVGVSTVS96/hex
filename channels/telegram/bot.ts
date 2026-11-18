@@ -2018,7 +2018,9 @@ const hub = await startHub({
 
 let attempt = 0;
 
-bot.api.config.use(confirmingWhatsKept(hub.synced));
+let deaf = false;
+
+bot.api.config.use(confirmingWhatsKept(hub.synced, { deaf: () => deaf }));
 
 bot.api.config.use(async (previous, method, payload, signal) => {
   if (method !== "getUpdates") {
@@ -2048,8 +2050,6 @@ const file = (id: string) => {
 
   return kept;
 };
-
-let deaf = false;
 
 const deafen = async () => {
   deaf = true;
