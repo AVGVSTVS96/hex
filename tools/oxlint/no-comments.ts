@@ -1,7 +1,8 @@
 import { definePlugin, defineRule } from "@oxlint/plugins";
 import { z } from "zod";
 
-const kept = /^\s*(?:(?:SAFETY|WARNING): [^\n]+$|oxlint-(?:disable|enable)\S* .+ -- \S)|https:\/\//u;
+const kept =
+  /^\s*(?:(?:SAFETY|WARNING): [^\n]+$|oxlint-(?:disable|enable)\S* .+ -- \S)|https:\/\//u;
 const directive = /^\s*oxlint-(?:disable|enable)/u;
 
 const Options = z
