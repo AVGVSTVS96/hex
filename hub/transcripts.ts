@@ -196,7 +196,7 @@ function cutShort(short: string, long: string) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Every hub in the process sends through the one client, whose calls reach the store one at a time, so their sends take turns here: the hub's other calls then wait behind one piece at most.
+// Every hub in the process sends through the one client, whose calls reach the store one at a time, so their sends take turns here: the hub's other calls then wait behind one piece of them at most, and behind one page for each session that is starting, which takes no turn here.
 let line: Promise<unknown> = Promise.resolve();
 
 function inLine<T>(call: () => Promise<T>): Promise<T> {
@@ -384,13 +384,13 @@ async function besideSent(ask: Ask, key: string, path: string, by: string) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The files beside a transcript that the store holds whole and this machine doesn't, brought here: one this machine has none of, or another machine's that this one has otherwise. A session's start doesn't wait for them: until one is here the session has what its transcript's line shows of it, and each start asks again for what is still missing.
-async function besidesBrought(ask: Ask, machine: string, session: string, path: string) {
+// The files beside a transcript that the store holds whole, brought to a machine that lacks them. mine: the conversation's copy is this machine's, so what is here is what the store was or will be sent, and only a file this machine has none of comes; else one it has otherwise comes too, since its own is an older one. Whether the store said what it holds: a file that can't be written here is told and holds nothing up.
+async function besidesBrought(ask: Ask, mine: boolean, session: string, path: string) {
   const folder = besideOf(path);
+  const held = await ask((store) => store.transcripts.besides(session));
 
   try {
-    for (const { file, ...end } of (await ask((store) => store.transcripts.besides(session))) ??
-      []) {
+    for (const { file, ...end } of held ?? []) {
       const name = file.slice(BESIDE.length + 1);
       const to = join(folder, name);
       const here = sizeOf(to);
@@ -399,7 +399,7 @@ async function besidesBrought(ask: Ask, machine: string, session: string, path: 
         file === `${BESIDE}/${name}` &&
         NAME.test(name) &&
         end.size === end.of &&
-        (here === -1 || (end.by !== machine && here !== end.of))
+        (here === -1 || (!mine && here !== end.of))
       ) {
         const copy = await fetched(ask, [`${session}/${file}`, end], to, (text) =>
           Buffer.from(text, "base64"),
@@ -415,6 +415,8 @@ async function besidesBrought(ask: Ask, machine: string, session: string, path: 
       `hub: what is beside ${session}'s conversation couldn't be brought from hex's store: ${String(error)}\n`,
     );
   }
+
+  return held !== undefined;
 }
 
 const underWay = new Set<Promise<void>>();
@@ -497,7 +499,7 @@ function following(changed: (session: string, path: string) => void) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a hub knows of the copies, and how it asks the store: a send in turn with every other send in the process (ask), a session's start at once (first), since it is a few calls a thread waits on and a hub's start may have hundreds of sends ahead of it. ends: where each stands, while this hub's own sends are all that move it. heard: where the store last said each stands. beside: the files beside each transcript that the store holds whole, and how long. changed: the files found changed in place on this machine, whose copies start over. written: the sessions whose transcript changed on this machine under this hub, which holds hex, so no other machine has more of them.
+// What a hub knows of the copies, and how it asks the store: a send in turn with every other send in the process (ask), a session's start with no turn among them (first), since a thread waits on it and a hub's start has every channel's sends ahead of it: it asks where the copy stands and, on a machine that lacks the copy, for all of it, a page a call. ends: where each stands, while this hub's own sends are all that move it. heard: where the store last said each stands. beside: the files beside each transcript that the store holds whole, and how long. changed: the files found changed in place on this machine, whose copies start over. written: the sessions whose transcript changed on this machine under this hub, which holds hex, so no other machine has more of them.
 type Known = {
   ask: Ask;
   first: Ask;
@@ -632,7 +634,7 @@ function placed(
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A session's conversation, here as the store holds it, with the files beside it on their way. A landing that fails, as on a disk with no room, leaves no whole conversation here that anything shows.
+// A session's conversation, here as the store holds it. A landing that fails, as on a disk with no room, leaves no whole conversation here that anything shows.
 async function landing(known: Known, session: string, path: string) {
   try {
     if (!(await brought(known, session, path))) {
@@ -645,8 +647,6 @@ async function landing(known: Known, session: string, path: string) {
 
     return false;
   }
-
-  void besidesBrought(known.ask, known.machine, session, path);
 
   return true;
 }
@@ -740,20 +740,31 @@ export function sessionTranscripts({
         return;
       }
 
-      const besides = declares || full ? true : await besidesSent(known, session, path);
-
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-      // Nothing to say: the copy is this machine's and stands where its file does, or it is another machine's, whole, and this file is that one to the byte, as on a machine that just took hex over, which then takes a copy as its own only with the first line a session writes here.
-      const said = end.by === machine ? end.last === more.last : end.size === end.of;
+      // Another machine's copy that this machine's file is: the copy becomes this machine's, so a change in place here is known for one from then on. The files beside it come here first as the store holds them, since this machine's own may be older, and the copy is taken alone, before any line: what is beside a transcript here is the store's to be sent only once the copy is this machine's.
+      const taking = end.by !== machine && end.by !== NOTHING.by;
 
-      if (besides === true && !over && more.pieces.length === 0 && end.of === more.of && said) {
+      const besides = taking
+        ? (await besidesBrought(ask, false, session, path)) || undefined
+        : declares || full || (await besidesSent(known, session, path));
+
+      if (
+        besides === true &&
+        !over &&
+        more.pieces.length === 0 &&
+        end.by === machine &&
+        end.of === more.of &&
+        end.last === more.last
+      ) {
         owed.delete(session);
 
         return;
       }
 
+      const taken = taking ? { ...more, pieces: [], tail: end.tail } : more;
+
       const now =
-        besides === true ? await appended(ask, session, end, more, machine, over) : besides;
+        besides === true ? await appended(ask, session, end, taken, machine, over) : besides;
 
       if (now === undefined) {
         ends.delete(session);
@@ -806,10 +817,17 @@ export function sessionTranscripts({
     for (const each of new Set([session?.session, session?.fork, fork].filter(present))) {
       const path = join(folder, `${each}.jsonl`);
       const isHere = await landing(known, each, path);
+      const [sends, mine] = [files().has(each), heard.get(each)?.by === machine];
       whole &&= isHere || each !== goesOnFrom;
 
-      if (isHere && files().has(each)) {
+      if (isHere && sends) {
         void ship(each, path);
+      }
+
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      // What is beside the conversation follows it, behind the start: a send that takes the copy over brings it, so here it comes for a copy that is this machine's already, or one this hub sends nothing of.
+      if (isHere && (mine || !sends)) {
+        void besidesBrought(ask, mine, each, path);
       }
     }
 

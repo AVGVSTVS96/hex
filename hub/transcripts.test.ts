@@ -241,11 +241,10 @@ test("a session carries on from another machine with what it wrote on the first,
 
   expect(await twin.hub()).toBe(true);
   expect(twin.written()).toBe(server.written());
-  expect(await store.transcripts.end(SESSION)).toMatchObject({ by: "server" });
+  await until(async () => (await store.transcripts.end(SESSION)).by === "twin");
 
   appendFileSync(twin.path(), line("and the fern on Monday"));
   await until(async () => (await copyIn(store)) === twin.written());
-  expect(await store.transcripts.end(SESSION)).toMatchObject({ by: "twin" });
 
   expect(await server.hub()).toBe(true);
   expect(server.written()).toBe(twin.written());
@@ -296,6 +295,59 @@ test("a transcript changed in place on the machine whose copy it is starts the c
 
   await twin.hub();
   expect(twin.written()).toBe(server.written());
+});
+
+test("a secret taken out of a transcript stays out on a machine that took the session and has written nothing to it since", async () => {
+  const { store } = storeElsewhere();
+  const server = machine("server", store);
+  const twin = machine("twin", store);
+  writeFileSync(server.path(), line("the sudo password is hunter2") + line("noted"));
+  await server.hub();
+  await until(async () => (await copyIn(store)) === server.written());
+  expect(await twin.hub()).toBe(true);
+  await until(async () => (await store.transcripts.end(SESSION)).by === "twin");
+
+  const redacted = line("the sudo password is [redacted]") + line("noted");
+  writeFileSync(twin.path(), redacted);
+  await until(async () => (await copyIn(store)) === redacted);
+
+  expect(await twin.hub()).toBe(true);
+  expect(twin.written()).toBe(redacted);
+  expect(twin.setAside()).toEqual([]);
+  expect(await copyIn(store)).toBe(redacted);
+  expect(await store.transcripts.end(SESSION)).toMatchObject({ by: "twin" });
+});
+
+test("a tool result changed on the machine that holds hex is the one both machines end with, though the other still has the older one", async () => {
+  const { store } = storeElsewhere();
+  const server = machine("server", store);
+  const twin = machine("twin", store);
+  const [old, redacted] = ["the sudo password is hunter2\n", "the sudo password is [redacted]\n"];
+  mkdirSync(dirname(server.beside("toolu_01.txt")), { recursive: true });
+  writeFileSync(server.beside("toolu_01.txt"), old);
+  writeFileSync(server.path(), line("the plants are in the hall"));
+  await server.hub();
+  await until(async () => (await copyIn(store)) === server.written());
+  expect(await twin.hub()).toBe(true);
+  await until(() => existsSync(twin.beside("toolu_01.txt")));
+  await until(async () => (await store.transcripts.end(SESSION)).by === "twin");
+
+  expect(await server.hub()).toBe(true);
+  await until(async () => (await store.transcripts.end(SESSION)).by === "server");
+  writeFileSync(server.beside("toolu_01.txt"), redacted);
+  expect(await server.hub()).toBe(true);
+  await until(async () => (await store.transcripts.besides(SESSION))[0]?.size === redacted.length);
+
+  const start = await twin.started();
+  await until(async () => (await store.transcripts.end(SESSION)).by === "twin");
+  expect(readFileSync(twin.beside("toolu_01.txt"), "utf-8")).toBe(redacted);
+  expect(await start()).toBe(true);
+  expect(await server.hub()).toBe(true);
+  await until(async () => (await store.transcripts.end(SESSION)).by === "server");
+  expect(readFileSync(server.beside("toolu_01.txt"), "utf-8")).toBe(redacted);
+  expect((await store.transcripts.besides(SESSION)).map(({ size }) => size)).toEqual([
+    redacted.length,
+  ]);
 });
 
 test("a file put back shorter on the machine whose copy it is gets the rest from the copy, which stays", async () => {
@@ -558,7 +610,6 @@ test("a tool result this machine wrote and then changed stays as it is here, wha
   net.listed = 0;
   expect(await server.hub()).toBe(true);
   await until(() => net.listed >= 2 && net.out === 0);
-  await Bun.sleep(30);
   expect(readFileSync(server.beside("toolu_01.txt"), "utf-8")).toBe(
     "the sudo password is [redacted]\n",
   );
@@ -601,7 +652,7 @@ test("two starts that bring one copy at once beside an older file set that file 
   ).toEqual([older]);
 });
 
-test("a session's start asks the store at once, while a send's call is still on its way", async () => {
+test("a session's start takes no turn behind the sends: its call leaves while a send's is still on its way", async () => {
   const { store, net } = storeElsewhere();
   const server = machine("server", store);
   writeFileSync(server.path(), line("x".repeat(100_000)).repeat(40));
