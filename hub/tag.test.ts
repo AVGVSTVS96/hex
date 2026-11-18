@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 
 import { prompt } from "./beside.ts";
 import type { Row } from "./store.ts";
-import { holdsTag, keyOf, keys, local, startsWithTag, tag, tagsIn, untag } from "./tag.ts";
+import { holdsTag, keyOf, keys, local, startsWithTag, tag } from "./tag.ts";
 
 const ZONE = "America/Los_Angeles";
 
@@ -59,24 +59,20 @@ test("the key a tag is written with is the key read back from it, whatever it ho
   ]);
 });
 
-test("Claude Code's own tag is read back the same way, entities and all", () => {
+test("Claude Code's own tag gives back its keys, whatever its attributes hold", () => {
   const written =
-    '<channel source="plugin:telegram:telegram" key="telegram:-100:8" reply_to_text="it&apos;s 2 &gt; 1 &amp;amp; &quot;so&quot;">\nok\n</channel>';
+    '<channel source="plugin:telegram:telegram" reply_to_text="it&apos;s 2 &gt; 1, &quot;so&quot; >" key="telegram:-100:8&amp;9">\nok\n</channel>';
 
-  expect(keyOf(written)).toBe("telegram:-100:8");
-  expect(untag(written)?.meta.reply_to_text).toBe(`it's 2 > 1 &amp; "so"`);
+  expect(keys(written)).toEqual(["telegram:-100:8&9"]);
 });
 
-test("a tag read whole gives back the meta and body it was written with", () => {
-  const meta = { key: row.key, reply_to_text: 'x < y > z & "w"' };
-  const body = "a </channel> b";
-  const written = tag("telegram", meta, body, ZONE);
+test("a prompt that is a tag, and a hook's context that holds one, are told apart", () => {
+  const written = held(row);
 
   expect(startsWithTag(written)).toBe(true);
+  expect(startsWithTag(`a word first ${written}`)).toBe(false);
   expect(holdsTag(`The user sent a new message while you were working:\n${written}`)).toBe(true);
-  expect(untag(written)).toEqual({ meta: { source: "telegram", ...meta }, body: `\n${body}\n` });
-  expect(tagsIn(`${written}\n${held(row)}`)).toEqual([written, held(row)]);
-  expect(untag("not a tag")).toBeUndefined();
+  expect(holdsTag("<task-notification>done</task-notification>")).toBe(false);
 });
 
 test("a message's time reaches the session on the owner's clock, with its offset", () => {

@@ -1,10 +1,6 @@
 const OPENING = '<channel source="';
 const KEY_ON_OPENING_TAG = /^<channel source="[^"]*" key="([^"]+)"/u;
 const KEYS = /<channel(?: [\p{L}\p{N}_]+="[^"]*")*? key="([^"]+)"/gu;
-const WHOLE = /^<channel((?: [\p{L}\p{N}_]+="[^"]*")*)>([\s\S]*)<\/channel>\s*$/u;
-const TAGS = /<channel(?: [\p{L}\p{N}_]+="[^"]*")+>[\s\S]*?<\/channel>/gu;
-const ATTRIBUTE = / ([\p{L}\p{N}_]+)="([^"]*)"/gu;
-const ESCAPED_END = "<\\/channel>";
 
 const ENTITIES = { lt: "<", gt: ">", quot: '"', apos: "'", amp: "&" } as const;
 
@@ -42,7 +38,7 @@ export function tag(source: string, meta: Record<string, string>, body: string, 
     .map(([name, value]) => ` ${name}="${escaped(value)}"`)
     .join("");
 
-  return `${OPENING}${escaped(source)}"${attributes}>\n${body.replaceAll("</channel>", ESCAPED_END)}\n</channel>`;
+  return `${OPENING}${escaped(source)}"${attributes}>\n${body.replaceAll("</channel>", "<\\/channel>")}\n</channel>`;
 }
 
 export const startsWithTag = (text: string) => text.startsWith(OPENING);
@@ -57,22 +53,3 @@ export function keyOf(prompt: string) {
 
 export const keys = (text: string) =>
   [...text.matchAll(KEYS)].flatMap(([, key]) => (key === undefined ? [] : [unescaped(key)]));
-
-export const tagsIn = (text: string) => [...text.matchAll(TAGS)].map(([found]) => found);
-
-export function untag(text: string) {
-  const [, attributes = "", body] = WHOLE.exec(text) ?? [];
-
-  if (body === undefined) {
-    return;
-  }
-
-  const meta = Object.fromEntries(
-    [...attributes.matchAll(ATTRIBUTE)].map(([, name = "", value = ""]) => [
-      name,
-      unescaped(value),
-    ]),
-  );
-
-  return { meta, body: body.replaceAll(ESCAPED_END, "</channel>") };
-}

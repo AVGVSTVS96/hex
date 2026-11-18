@@ -17,8 +17,6 @@ import { dirname, join, resolve } from "node:path";
 
 import { z } from "zod";
 
-import { tagsIn, untag } from "../hub/tag.ts";
-
 const USAGE = `One chat that never ends, for a hex thread whose every message gets a fresh session.
 
 Taelin's OptChat (gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449):
@@ -774,20 +772,22 @@ function where() {
 
 const isFresh = () => (process.env.HEX_FRESH ?? "") !== "" && (process.env.HEX_THREAD ?? "") !== "";
 
+const CHANNEL = /^<channel([^>]*)>([\s\S]*)<\/channel>\s*$/u;
+const CHANNELS = /<channel [^>]*>[\s\S]*?<\/channel>/gu;
 const DROPPED = new Set(["source", "chat_id", "message_id", "user", "user_id", "ts"]);
 
 function heard(text: string): [Kind, string] {
-  const message = untag(strip(text));
+  const match = CHANNEL.exec(strip(text));
 
-  if (message === undefined) {
+  if (!match) {
     return ["user", text];
   }
 
-  const tags = Object.entries(message.meta).flatMap(([name, value]) =>
-    DROPPED.has(name) ? [] : [`(${name}: ${value})`],
+  const tags = [...(match[1] ?? "").matchAll(/ ([\p{L}\p{N}_]+)="([^"]*)"/gu)].flatMap(
+    ([, name = "", value = ""]) => (DROPPED.has(name) ? [] : [`(${name}: ${value})`]),
   );
 
-  return ["user", [...tags, strip(message.body)].join(" ")];
+  return ["user", [...tags, strip(match[2] ?? "")].join(" ")];
 }
 
 const Text = z.looseObject({ type: z.json().optional(), text: z.string().optional() });
@@ -877,7 +877,7 @@ function* entries(record: TranscriptLine): Generator<[Kind, string]> {
 
   if (record.type === "attachment" && record.attachment?.type === "hook_additional_context") {
     for (const text of record.attachment.content ?? []) {
-      for (const message of tagsIn(text)) {
+      for (const [message] of text.matchAll(CHANNELS)) {
         yield heard(message);
       }
     }
