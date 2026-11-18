@@ -13,6 +13,7 @@ import { LostError, RefusedError, UnaskedError, UnreachedError } from "./errors.
 import type { NewRow } from "./messages.ts";
 import { move } from "./move.ts";
 import { remote, unlease } from "./remote.ts";
+import { resetting } from "./resetting.ts";
 
 const KEY = "a key long enough that nobody guesses it";
 const HEX = join(import.meta.dir, "../..");
@@ -351,10 +352,38 @@ test("a store whose object is gone fails at once after the first call, and synce
   expect(await thrown(far?.messages.untaken())).toBeInstanceOf(UnreachedError);
 
   const started = performance.now();
-  expect(await thrown(far?.messages.untaken())).toBeInstanceOf(UnreachedError);
-  expect(performance.now() - started).toBeLessThan(20);
+  expect(await thrown(far?.messages.untaken())).toBeInstanceOf(UnaskedError);
+  expect(performance.now() - started).toBeLessThan(QUICK.answerWithin / 4);
   expect(await thrown(far?.synced())).toBeInstanceOf(UnreachedError);
 });
+
+test("one call whose connection resets fails alone, and the calls behind it, here and in another process, reach the store", async () => {
+  const dir = await movedInto("reset");
+  const front = await resetting(url);
+  writeFileSync(
+    join(dir, "store.json"),
+    JSON.stringify({ url: front.url, name: "reset", key: KEY }),
+  );
+
+  try {
+    const hub = remote(dir, QUICK);
+    await hub?.claim();
+    front.arm();
+    const reset = await thrown(hub?.messages.deliver(message));
+    expect(reset).toBeInstanceOf(UnreachedError);
+    expect(reset).not.toBeInstanceOf(UnaskedError);
+    expect(front.resets()).toBe(1);
+    expect(existsSync(join(dir, "store.down"))).toBe(false);
+
+    expect(await hub?.messages.deliver(message)).toBe(true);
+    await hub?.synced();
+    expect(await remote(dir, QUICK)?.messages.get(message.key)).toMatchObject({
+      body: message.body,
+    });
+  } finally {
+    await front.stop();
+  }
+}, 60_000);
 
 const progress: string[] = [];
 

@@ -36,6 +36,7 @@ import {
   UnreachedError,
   unlease,
 } from "./remote.ts";
+import { resetting } from "./resetting.ts";
 import { recordsIn } from "./storage.ts";
 import type { Storage } from "./storage.ts";
 import { answering, client } from "./wire.ts";
@@ -1041,6 +1042,40 @@ test("a file home whose records moved since it opened says so on every call, so 
     expect(await thrown(hub.store.read("select 1 as n"))).toBeInstanceOf(MovedError);
     expect(await open(dir).messages.get(message.key)).toMatchObject({ body: message.body });
   } finally {
+    await object.stop();
+  }
+});
+
+test("one call whose connection resets fails alone: the store answers a probe, so no call behind it, in this process or another, is failed unasked", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage);
+  const object = served(storage);
+  const front = await resetting(object.url);
+  pointedAt(dir, front.url);
+
+  try {
+    const hub = remote(dir, quick);
+    await hub?.claim();
+    expect(await hub?.messages.deliver(message)).toBe(true);
+
+    front.arm();
+
+    const reset = await thrown(
+      hub?.messages.deliver({ ...message, key: "telegram:-100:43" }) ?? never,
+    );
+
+    expect(reset).toBeInstanceOf(UnreachedError);
+    expect(reset).not.toBeInstanceOf(UnaskedError);
+    expect(front.resets()).toBe(1);
+    expect(existsSync(join(dir, "store.down"))).toBe(false);
+
+    expect(await hub?.messages.deliver({ ...message, key: "telegram:-100:43" })).toBe(true);
+    await hub?.synced();
+    expect(await remote(dir, quick)?.messages.get("telegram:-100:43")).toMatchObject({
+      body: message.body,
+    });
+  } finally {
+    await front.stop();
     await object.stop();
   }
 });
