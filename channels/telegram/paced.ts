@@ -1,3 +1,4 @@
+import { HeldBackError } from "@hex/hub";
 import { GrammyError } from "grammy";
 
 export async function paced<T>(
@@ -31,11 +32,10 @@ export async function paced<T>(
           `telegram hub: Telegram asked ${limited.method} to wait ${wait}s, more than it has, so it fails\n`,
         );
 
-        throw new Error(
+        throw new HeldBackError(
           `Telegram asks this chat to wait ${wait}s before its next ${limited.method}`,
-          {
-            cause: error,
-          },
+          wait,
+          { cause: error },
         );
       }
 

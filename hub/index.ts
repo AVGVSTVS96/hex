@@ -32,6 +32,8 @@ export type { Message } from "./waiting.ts";
 
 export { EFFORTS, MODELS, family } from "./threads.ts";
 
+export { HeldBackError } from "./held-back.ts";
+
 export { Ledger, waits } from "./ledger.ts";
 
 export type { MessageId, Pin, Post, Question } from "./ledger.ts";

@@ -1,4 +1,5 @@
 import { above, clip } from "./fit.ts";
+import { HeldBackError } from "./held-back.ts";
 import type { Note } from "./kept.ts";
 import { statusPost } from "./status.ts";
 import type { Link } from "./status.ts";
@@ -43,7 +44,7 @@ export class Ledger {
   // note: how what hex said is noted (ask, said), which follows words the owner already has, so a hub owes it to a store that doesn't answer (hub.noted) instead of failing the tool that sent them.
   constructor(appStateDir: string, app: string, note?: (note: Note) => Promise<void>) {
     this.store = open(stateDir(appStateDir));
-    this.reads = reading(stateDir(appStateDir));
+    this.reads = reading(stateDir(appStateDir), false);
     this.app = app;
     this.note =
       note ??
@@ -170,11 +171,22 @@ export class Ledger {
     // oxlint-disable-next-line anti-slop/no-unknown-parameters -- a failed rewrite's reason is whatever its app threw
     failed: (thread: string, error: unknown) => void,
   ): Promise<() => void> {
+    const afterTheWait = new Set<ReturnType<typeof setTimeout>>();
+
     const rewriteOrReport = async (thread: string) => {
       try {
         await this.rewrite(thread, post);
       } catch (error) {
         failed(thread, error);
+
+        if (error instanceof HeldBackError) {
+          const again = setTimeout(() => {
+            afterTheWait.delete(again);
+            void rewriteOrReport(thread);
+          }, error.seconds * 1000);
+
+          afterTheWait.add(again);
+        }
       }
     };
 
@@ -216,7 +228,13 @@ export class Ledger {
 
     await rewriteChanged();
 
-    return stop;
+    return () => {
+      stop();
+
+      for (const again of afterTheWait) {
+        clearTimeout(again);
+      }
+    };
   }
 
   async find(thread: string, message: MessageId) {

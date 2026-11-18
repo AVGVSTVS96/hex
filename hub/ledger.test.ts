@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { HeldBackError } from "./held-back.ts";
 import { asking, Ledger } from "./ledger.ts";
 import type { Post } from "./ledger.ts";
 import { File, file, open, reading, stateDir, UnreachedError } from "./store.ts";
@@ -488,7 +489,53 @@ test("rewrites asked for while one is slow join into one that runs after it with
   expect(await ledger.pin("-100:8")).toMatchObject({ note: "Fourth" });
 });
 
-test("a status post's reads go out beside the store's other bulk reads, not in a line behind them", async () => {
+test("a background rewrite Telegram holds back is tried again once the wait it names is over", async () => {
+  const ledger = new Ledger(dir, "telegram");
+  const tried: string[] = [];
+  const failures: string[] = [];
+
+  file(dir).pins.pinned({
+    app: "telegram",
+    thread: "-100:8",
+    message: 1,
+    text: "old",
+    note: "Desk",
+  });
+
+  const post: Post = {
+    room: 4096,
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- a Link returns string | undefined, which () => {} doesn't
+    link: () => undefined,
+    send: () => Promise.resolve(1),
+    edit: (_, __, text) => {
+      tried.push(text);
+
+      return tried.length === 1
+        ? Promise.reject(new HeldBackError("Telegram asks this chat to wait 0s", 0))
+        : Promise.resolve(true);
+    },
+    pin: () => Promise.resolve(),
+    unpin: () => Promise.resolve(),
+  };
+
+  const stop = await ledger.keep(post, (_, error) => {
+    failures.push(String(error));
+  });
+
+  try {
+    await until(() => failures.length > 0);
+    let looks = 0;
+    await until(() => tried.length > 1 || (looks += 1) > 50);
+
+    expect(tried).toEqual(["Desk", "Desk"]);
+    expect(await ledger.pin("-100:8")).toMatchObject({ text: "Desk" });
+    expect(failures).toEqual(["HeldBackError: Telegram asks this chat to wait 0s"]);
+  } finally {
+    stop();
+  }
+});
+
+test("a status post's reads don't wait in line behind a board's", async () => {
   const records = file(join(dir, "object"));
   const answer = answering(records);
   records.pins.pinned({
@@ -524,18 +571,31 @@ test("a status post's reads go out beside the store's other bulk reads, not in a
     // oxlint-disable-next-line unicorn/no-useless-undefined -- a Link returns string | undefined, which () => {} doesn't
     link: () => undefined,
     send: () => Promise.resolve(2),
-    edit: () => Promise.resolve(true),
+    edit: (_, __, text) => {
+      edited.push(text);
+
+      return Promise.resolve(true);
+    },
     pin: () => Promise.resolve(),
     unpin: () => Promise.resolve(),
   };
 
-  const board = Array.from({ length: 20 }, async () => await reading(stateDir(dir)).threads.list());
+  const edited: string[] = [];
+  let boardAnswered = false;
+
+  const board = (async () => {
+    await reading(stateDir(dir)).threads.list();
+    boardAnswered = true;
+  })();
 
   try {
     await new Ledger(dir, "telegram").rewrite("-100:7", post);
+
+    expect(edited).toEqual(["Working"]);
+    expect(boardAnswered).toBe(false);
   } finally {
     answerTheBoard(undefined);
-    await Promise.allSettled(board);
+    await Promise.allSettled([board]);
     await object.stop(true);
   }
 });
@@ -562,7 +622,7 @@ test("reads sent at once to a store that stopped answering share one probe of it
 
   try {
     const failed = await Promise.allSettled(
-      Array.from({ length: 50 }, async () => await reading(stateDir(dir)).threads.list()),
+      Array.from({ length: 50 }, async () => await reading(stateDir(dir), false).threads.list()),
     );
 
     expect(
