@@ -515,8 +515,8 @@ them with hex) gets Claude walking the list in order.
    Who the voice is goes in `~/.claude/channels/voice/instructions.md`, the
    first lines of its prompt (a generic assistant if the file is missing),
    for example its name and the person it talks with. Everything else it
-   learns from the session: when a call starts, Claude sends it what's going
-   on now, and questions about the caller are handed to Claude.
+   learns from the session: questions about the caller, and what's going on
+   now, are handed to Claude.
 
    How it talks goes in `~/.claude/channels/voice/settings.json`, which the
    app writes through `/settings` and Claude through `style`, and every call
