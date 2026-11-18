@@ -2,6 +2,8 @@ import { defineConfig } from "oxlint";
 import antiSlop from "ultracite/oxlint/anti-slop";
 import core from "ultracite/oxlint/core";
 
+import allowances from "./tools/oxlint/allowances.json" with { type: "json" };
+
 const functionLines = (
   max: number,
 ): ["error", { max: number; skipBlankLines: boolean; skipComments: boolean }] => [
@@ -32,17 +34,32 @@ const bunMocksIn = {
   "hub/store/object.testing.ts": 1,
 };
 
+const doublesIn = [
+  "channels/discord/bot.test.ts",
+  "channels/telegram/bot.test.ts",
+  "hub/failing.hub.test.ts",
+  "hub/sessions.hub.test.ts",
+];
+
 export default defineConfig({
   extends: [core, antiSlop],
   ignorePatterns: [...(core.ignorePatterns ?? []), "site/**", "media/**", "watch/**"],
   jsPlugins: [
     { name: "no-comments", specifier: "./tools/oxlint/no-comments.ts" },
     { name: "no-bun-mocks", specifier: "./tools/oxlint/no-bun-mocks.ts" },
+    { name: "landmines-testing", specifier: "@interfere/landmines/testing" },
+    { name: "landmines-structure", specifier: "@interfere/landmines/structure" },
   ],
-  overrides: Object.entries(longestFunctionIn).map(([file, lines]) => ({
-    files: [file],
-    rules: { "eslint/max-lines-per-function": functionLines(lines) },
-  })),
+  overrides: [
+    ...Object.entries(longestFunctionIn).map(([file, lines]) => ({
+      files: [file],
+      rules: { "eslint/max-lines-per-function": functionLines(lines) },
+    })),
+    {
+      files: doublesIn,
+      rules: { "landmines-testing/no-test-doubles": "off" },
+    },
+  ],
   options: { reportUnusedDisableDirectives: "error", typeAware: true },
   rules: {
     "eslint/complexity": "off",
@@ -67,6 +84,15 @@ export default defineConfig({
     "unicorn/no-await-expression-member": "off",
     "import/no-cycle": "error",
     "no-bun-mocks/no-bun-mocks": ["error", { allow: bunMocksIn }],
+    "landmines-structure/colocated-tests": "error",
+    "landmines-structure/package-exports": "error",
+    "landmines-structure/test-file-names": "error",
+    "landmines-testing/no-fixed-sleep": ["error", { allow: allowances.sleeps }],
+    "landmines-testing/no-flake-masking": ["error", { allow: allowances.flakes }],
+    "landmines-testing/no-test-doubles": "error",
+    "landmines-testing/no-unsignaled-poll": "error",
+    "landmines-testing/strict-msw": "error",
+    "no-comments/most": ["error", { allow: allowances.comments }],
     "no-comments/no-comments": "error",
     "oxc/no-accumulating-spread": "error",
   },
