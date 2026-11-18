@@ -1,3 +1,4 @@
+import { TELEGRAM_API } from "@hex/hub";
 import { Bot } from "grammy";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -6,5 +7,5 @@ const token = process.env.TELEGRAM_BOT_TOKEN;
 // grammY's calls share their connections to Telegram, so asking who the bot is, which takes in no messages, opens the one the hub's first calls take once hex stops waiting, without a new TLS handshake.
 if (token !== undefined && token !== "") {
   // oxlint-disable-next-line eslint/no-empty-function -- one that fails leaves the hub's first calls to open their own
-  void new Bot(token).api.getMe().catch(() => {});
+  void new Bot(token, { client: { apiRoot: TELEGRAM_API } }).api.getMe().catch(() => {});
 }

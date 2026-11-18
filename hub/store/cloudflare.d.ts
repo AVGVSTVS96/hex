@@ -4,7 +4,7 @@ declare module "cloudflare:workers" {
     // oxlint-disable-next-line typescript/consistent-type-imports -- an ambient module's declarations can't import by a relative path, and a top-level import would make this file a module that augments instead of declares
     readonly storage: import("./storage.ts").Storage;
     acceptWebSocket: (socket: WebSocket) => void;
-    getWebSockets: () => WebSocket[];
+    getWebSockets: () => { send: (data: string) => void; close: () => void }[];
     setWebSocketAutoResponse: (pair: InstanceType<typeof WebSocketRequestResponsePair>) => void;
   };
 

@@ -14,5 +14,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["bin", "hub", "tools", "oxlint.config.ts"]
+  "include": ["bin", "drill", "hub", "tools", "oxlint.config.ts"]
 }

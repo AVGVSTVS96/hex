@@ -42,6 +42,8 @@ export { loaded } from "./loaded.ts";
 
 export { owners } from "./notes.ts";
 
+export { TELEGRAM_API } from "./notice.ts";
+
 export { ready } from "./ready.ts";
 
 export { CLAUDE, busy, ownership, running } from "./running.ts";

@@ -35,6 +35,10 @@ const startQuiet = () => {
 
   return Object.assign(quiet, {
     said: () => said,
+    spoke: async () => {
+      await Promise.race([until(() => said), reading]);
+      expect(said).not.toBe("");
+    },
     saidAll: async () => {
       await reading;
 
@@ -80,7 +84,7 @@ test("bin/quiet waits while a session hex started is mid-turn, and not on other 
   store.turns.turned("unheard", false);
   status("5.json", "unheard", "bg", "busy", Date.now() + 1000);
   const quiet = startQuiet();
-  await until(() => quiet.said());
+  await quiet.spoke();
   await Bun.sleep(500);
   expect(quiet.exitCode).toBeNull();
   store.turns.turned("ours", false);
@@ -118,7 +122,7 @@ test("bin/quiet leaves out the turn of each session that asked for an update, no
   );
   store.turns.turned("later", true);
   const first = startQuiet();
-  await until(() => first.said());
+  await first.spoke();
   expect(first.exitCode).toBeNull();
   await Bun.sleep(5);
   writeFileSync(
@@ -130,7 +134,7 @@ test("bin/quiet leaves out the turn of each session that asked for an update, no
   await Bun.sleep(5);
   store.turns.turned("asker", true);
   const next = startQuiet();
-  await until(() => next.said());
+  await next.spoke();
   expect(next.said()).toBe("waiting on: asker\n");
   expect(next.exitCode).toBeNull();
   next.kill();
@@ -153,7 +157,7 @@ test("bin/quiet waits on a session running beside a thread, though it runs outsi
   );
   store.turns.turned("beside-1", true);
   const quiet = startQuiet();
-  await until(() => quiet.said());
+  await quiet.spoke();
   expect(quiet.said()).toBe("waiting on: hex/heartbeat\n");
   store.turns.turned("beside-1", false);
   expect(await quiet.exited).toBe(0);

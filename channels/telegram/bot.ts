@@ -33,6 +33,7 @@ import {
   reading,
   sinceToday,
   stateDir,
+  TELEGRAM_API,
   waits,
 } from "@hex/hub";
 import type { Call, Handlers, Message, MessageId, Permission, Turn, Post } from "@hex/hub";
@@ -132,7 +133,7 @@ process.on("uncaughtException", (err) => {
   process.stderr.write(`telegram hub: uncaught exception: ${String(err)}\n`);
 });
 
-const bot = new Bot(TOKEN);
+const bot = new Bot(TOKEN, { client: { apiRoot: TELEGRAM_API } });
 
 // SAFETY: grammY's raw API sends any method by name, through the same transformers as every other call.
 // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- grammY's types don't know the widget methods yet
@@ -677,7 +678,7 @@ async function download(file_id: string, uniqueId: string): Promise<string> {
     throw new Error("Telegram returned no file_path — file may have expired");
   }
 
-  const res = await fetch(`https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`);
+  const res = await fetch(`${TELEGRAM_API}/file/bot${TOKEN}/${file.file_path}`);
 
   if (!res.ok) {
     throw new Error(`download failed: HTTP ${res.status}`);
