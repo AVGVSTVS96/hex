@@ -6,8 +6,6 @@ import type { Owing } from "./kept.ts";
 import { present } from "./present.ts";
 import type { Kept } from "./store.ts";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The choices a client offers for a thread's settings. Models are Claude Code's aliases, so a thread runs the newest model of the family it picked.
 export const MODELS = [
   { value: "opus", name: "Opus" },
   { value: "sonnet", name: "Sonnet" },
@@ -27,8 +25,6 @@ export function family(model: string) {
   return MODELS.find(({ value }) => model.startsWith(`claude-${value}-`))?.value ?? model;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// fork: the session the thread continues as a fork with its first message, until it has its own.
 type Saved = Omit<Kept, "link">;
 
 type Patch = Partial<Pick<Saved, "name">> & {
@@ -47,8 +43,6 @@ const FIELDS = Object.values({
 
 export type Threads = Awaited<ReturnType<typeof openThreads>>;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The app's open threads, from hex.db, and the session each is on. The hub starts only once it can read them (answered), after what it owed the store from before a restart, so no save closes threads it never loaded or puts back what it changed since, and each change is saved as it's made, one save after another, so an earlier one never lands last.
 export async function openThreads({
   app,
   storeDir,
@@ -84,12 +78,9 @@ export async function openThreads({
     ]),
   );
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A new session whose conversation Claude hasn't saved yet: one that dies before then can't be resumed, so the thread keeps its last saved session until the new one has a conversation on disk.
+  // WARNING: Claude Code can't resume a session that died before it saved its conversation.
   const unsaved = new Map<string, string>();
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // hex.db keeps a closed thread's row, with its name, for whatever reads one. The app gives each thread's link as it knows it now; one it can't give keeps the last it gave. Changes made while a save is on its way go in the one after it, which takes the threads as they are when it starts.
   let saving: Promise<void> = Promise.resolve();
   let queued = false;
 

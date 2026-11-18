@@ -730,9 +730,7 @@ test("a message for a running session with no channel waits for it, and starts i
   expect(heard(received)[0]?.content).toBe("hi");
 });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A launcher whose resumes fail as Claude Code fails one of a session no project folder has, its conversation in hex's folder gone as it resumes.
-function forgetting() {
+function resumeFindsNoConversation() {
   const launcher = join(dir, "launch");
   const project = join(dir, "projects", join(dir, "hex").replaceAll(/[^a-zA-Z0-9]/gu, "-"));
   writeFileSync(
@@ -786,7 +784,7 @@ test("a thread whose conversation isn't whole on this machine takes over from it
 
 test("a thread whose session's conversation vanishes as it resumes starts a new one, which hears why when it connects", async () => {
   await start({
-    launcher: forgetting(),
+    launcher: resumeFindsNoConversation(),
     registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
     agents: [],
   });
@@ -805,7 +803,7 @@ test("a thread whose session's conversation vanishes as it resumes starts a new 
 
 test("a resume Claude Code can't find, of a session another project folder has, fails and keeps the session", async () => {
   await start({
-    launcher: forgetting(),
+    launcher: resumeFindsNoConversation(),
     registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
     agents: [],
   });
@@ -818,7 +816,7 @@ test("a resume Claude Code can't find, of a session another project folder has, 
 
 test("a thread that would fork a session Claude Code no longer has starts a new one instead", async () => {
   await start({
-    launcher: forgetting(),
+    launcher: resumeFindsNoConversation(),
     registry: { "chat:7": { name: "Desk anchors", from: SESSION } },
     agents: [],
   });

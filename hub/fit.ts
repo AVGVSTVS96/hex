@@ -47,7 +47,7 @@ export function fit(sections: Section[], room: number): string {
   return text;
 }
 
-// Claude Code swaps hook output past 10,000 characters for an unread file path, so ROOM leaves space for the lines around it: https://code.claude.com/docs/en/hooks#json-output
+// WARNING: Claude Code swaps hook output past 10,000 characters for a file path it never reads: https://code.claude.com/docs/en/hooks#json-output
 export const ROOM = 9000;
 
 export const HEADINGS = ["Waiting on you", "Open", "Ideas", "Done"] as const;

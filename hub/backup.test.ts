@@ -208,8 +208,6 @@ async function thrown(pending: Promise<unknown>): Promise<Error | string> {
   return "it didn't throw";
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A client that hears the word, however long the machine takes to ask it, and probes too late to take the word back mid-test.
 const unprobed = {
   answerWithin: 200,
   firstRetry: 3_600_000,

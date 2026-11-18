@@ -87,8 +87,6 @@ test("a daemon on the claude that's installed is left running", async () => {
   expect(calls().some((each) => each[0] === "daemon" && each[1] === "stop")).toBe(false);
 });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Each login shell can put a directory of its own on PATH that links to the same commands, as fnm does for node.
 async function daemonWithPath(ours: string, theirs: string) {
   const daemon = Bun.spawn(["sleep", "60"], { env: { PATH: `${theirs}:${process.env.PATH}` } });
 

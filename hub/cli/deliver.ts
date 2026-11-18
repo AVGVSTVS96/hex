@@ -37,8 +37,6 @@ export default command({
   },
 });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// a delivery goes only to a thread, since only a thread's session takes messages; a closed thread takes it once it opens again.
 async function recipient(hex: Hex, to: string): Promise<string> {
   const all = await named(hex, to);
   const matches = all.some(({ open }) => open) ? all.filter(({ open }) => open) : all;

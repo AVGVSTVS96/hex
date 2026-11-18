@@ -25,8 +25,6 @@ const words = (body: string) => {
 const line = (row: Row & { job?: string; ended?: boolean }) =>
   `- ${row.at.slice(0, 16).replace("T", " ")}Z${row.job === undefined ? "" : ` [${row.job}]`}${row.ended === true ? " (its last words, not sent)" : ""}: ${words(row.body)}`;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The newest that fit the room, oldest first.
 function newest(rows: (Row & { job?: string; ended?: boolean })[], room: number) {
   const shown: string[] = [];
   let left = room;
@@ -45,8 +43,6 @@ function newest(rows: (Row & { job?: string; ended?: boolean })[], room: number)
   return shown;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a thread's session is shown at its prompt: what hex's other sessions said in its chat since it was last shown, or for a new one since its thread's own sessions last took a message, or its job last ran there, so it knows what the owner is answering; and for a timed job run beside the thread, what that job's earlier runs said there, so it tells the owner nothing twice.
 export async function said(
   store: Store,
   thread: string,
@@ -55,8 +51,6 @@ export async function said(
 ): Promise<string> {
   const key = keyOf(prompt);
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Read before the messages are, so one that lands while they're read is shown next time rather than never, and on the store's clock, which stamped them.
   const [shownNow, shown, row] = await Promise.all([
     store.clock.now(),
     store.seen.get(session, "said"),

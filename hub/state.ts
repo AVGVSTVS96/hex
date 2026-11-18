@@ -14,7 +14,6 @@ const busy = process.argv[2] === "busy";
 
 const TASKS_CLAUDE_CODE_COUNTS_AS_WORKING = new Set(["subagent", "workflow"]);
 
-// https://code.claude.com/docs/en/hooks#exit-code-2-behavior-per-event
 const BLOCK_PROMPT = 2;
 
 const given = (value: string | undefined): value is string => value !== undefined && value !== "";
@@ -54,8 +53,6 @@ const fromAnAgent =
   prompt !== undefined &&
   /^<(task-notification|(agent|cross-session|teammate)-message[\s>])/u.test(prompt);
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The hub holds the owner's words for a turn it's told began until that turn's Stop hook, and a command that runs no model turn has none.
 const mayRunNoTurn =
   prompt === undefined || /^([/!]|<(local-command|command-|bash-|system-reminder))/u.test(prompt);
 
@@ -109,8 +106,6 @@ if (key !== undefined) {
 
 if (session_id && !recorded) {
   try {
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // bin/quiet trusts this record over Claude Code's busy status once it says the turn ended, so an update lands between turns.
     await followed(stateDir(), async (store) => {
       await store.turns.recorded(
         session_id,
@@ -124,8 +119,6 @@ if (session_id && !recorded) {
   }
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What hex's store didn't answer goes to the hub, which keeps it once the store answers.
 const owed: Extract<HubLine, { type: "owed" }> = { type: "owed", thread: HEX_THREAD ?? session_id };
 
 const typedInTheTerminal =
@@ -186,8 +179,6 @@ if (owed.said !== undefined || owed.pass !== undefined) {
   lines.push(owed);
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A session beside the thread isn't the thread's own, so its turns are never the thread's state, whatever its settings say.
 if (given(HEX_THREAD) && !given(HEX_BESIDE) && (!busy || !mayRunNoTurn)) {
   lines.push({
     type: "state",

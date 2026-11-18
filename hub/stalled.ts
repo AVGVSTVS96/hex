@@ -18,8 +18,6 @@ const inside = (dir: string) => {
   }
 };
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A session waiting on its agents writes nothing itself while they work, so their transcripts count as its own.
 function lastWrite(cwd: string, session: string) {
   const file = transcript(cwd, session);
   const agents = join(file.replace(/\.jsonl$/u, ""), "subagents");
@@ -28,8 +26,6 @@ function lastWrite(cwd: string, session: string) {
   return times.length > 0 ? Math.max(...times) : undefined;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A session of hex's that's mid-turn and has written nothing for a while signals stalled once for each quiet stretch, keyed by its last write.
 export async function stalled(store: Store, sessions: Iterable<Session>, now = Date.now()) {
   for (const session of sessions) {
     if (!busy(session) || session.thread === undefined || session.cwd === undefined) {

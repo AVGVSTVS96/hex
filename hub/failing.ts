@@ -8,27 +8,19 @@ import type { Runs } from "./runs.ts";
 import type { Threads } from "./threads.ts";
 import type { MessagesWaiting } from "./waiting.ts";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// turn: the session started, and its last turn failed on the API rather than its start.
-export type Failed = (thread: string, reason: string, turn?: boolean) => void;
+export type Failed = (thread: string, reason: string, failedOnATurn?: boolean) => void;
 
 const TELL_GENERAL_AFTER_FAILED_STARTS = 3;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a new session starts with: its first prompt, and the session it continues as a fork. quiet: the prompt is the hub's own (a compaction), so the thread doesn't show as working.
 export type Opening = { prompt?: string | undefined; fork?: string | undefined; quiet?: boolean };
 
 type Starting = {
   opening?: Opening | undefined;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // retried: another session's start set one off since a message's last failed, told: General heard.
-  failing?: { count: number; retried?: boolean; told?: boolean } | undefined;
+  failing?: { count: number; retried?: boolean; generalTold?: boolean } | undefined;
 };
 
 export type FailedStarts = ReturnType<typeof failedStarts>;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A thread's starts until its session connects: a start's prompt and the session it forks are kept, so the next start after a failed one, a retry or the thread's next message, starts with them, and so is the run of starts that failed in a row. Its chat hears of each one a message or prompt set off, but of one the hub set off on its own only as the run's first, and General hears once, from the third on. General's own failed starts reach only its chat, which needs no session to read them.
 export function failedStarts({
   runs,
   threads,
@@ -88,11 +80,11 @@ export function failedStarts({
 
     if (
       failing.count >= TELL_GENERAL_AFTER_FAILED_STARTS &&
-      failing.told !== true &&
+      failing.generalTold !== true &&
       generalMain !== undefined &&
       thread !== generalThread
     ) {
-      failing.told = true;
+      failing.generalTold = true;
       const body = `[hub] hex couldn't start the session of ${app} thread "${threads.get(thread)?.name ?? thread}" ${failing.count} times in a row: ${reason}. Its next message starts it again.`;
       void kept(
         (store) =>
@@ -109,8 +101,6 @@ export function failedStarts({
     }
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Claude Code failed a start for not finding the session it resumed or forked, and no project folder has its conversation, so the thread lets go of it once a note is kept that tells its next session why it starts without it. One another folder has fails as any start does.
   async function lost(thread: string, reason: string) {
     const known = threads.get(thread);
     const start = starting.of(thread);
@@ -168,8 +158,6 @@ export function failedStarts({
     start.opening = undefined;
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // After the owner's stop only the thread's next message starts it again, without the prompt it was opened with, though a moved copy still starts from the conversation it forks.
   function halted(thread: string) {
     const start = starting.get(thread);
 
@@ -182,8 +170,6 @@ export function failedStarts({
     }
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A thread whose session failed to start keeps its prompt and the messages it was handed waiting, and the main thread is always running, so each starts again once starts go through. Once for each failed start a message set off: one that fails even then has a problem of its own, and waits for its next message. Each is yielded as it's marked retried, so its start begins before the next thread is looked at.
   async function* retries(stopped: (thread: string) => boolean) {
     for (const [thread, start] of starting.all()) {
       const { failing } = start;

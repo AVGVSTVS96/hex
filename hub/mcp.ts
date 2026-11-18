@@ -97,13 +97,11 @@ type Hooks = {
   close: (thread: string, line: Line) => void;
 };
 
-// The revisions whose standalone GET stream carries server notifications. Claude Code first probes `server/discover` for 2026-07-28, where it registers no channel ("no unsolicited notification path"), and falls back to `initialize` when that's declined. https://modelcontextprotocol.io/specification/2025-11-25/basic/transports
+// WARNING: Claude Code probes `server/discover` for 2026-07-28 first, where it registers no channel, and falls back to `initialize` once that's declined. https://modelcontextprotocol.io/specification/2025-11-25/basic/transports
 const REVISIONS_WHOSE_GET_STREAM_CARRIES_NOTIFICATIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
 const encoder = new TextEncoder();
 const NUDGE = 250;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Bun notices a disconnected request on the next event-loop tick.
 const untilBunNoticesADisconnect = () =>
   new Promise((resolve) => {
     setTimeout(resolve, 0);
@@ -113,8 +111,7 @@ type Result = { content: { type: "text"; text: string }[]; isError?: true | unde
 
 const failure = (text: string): Result => ({ content: [{ type: "text", text }], isError: true });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// How far a session initialized here is from listening. Claude Code drops channel messages that come before it listens and says nothing when it starts, but it registers its channel handler in the same step as its tools/list_changed handler, so once its stream is open and it has listed the tools, it's told they changed, and the list that answers is the sign it listens. A session starting cold registers them a while after it lists the tools and drops what came before, so it's told again until it answers.
+// WARNING: Claude Code silently drops channel messages that come before it registers its channel handler, which it does in the step that registers its tools/list_changed handler.
 type Handshake =
   | { is: "initialized" }
   | { is: "listed" }
@@ -155,8 +152,6 @@ function result(id: RpcId, value: Answer) {
   return Response.json({ jsonrpc: "2.0", id, result: value });
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A session hex runs beside a thread says its own id here: it speaks in the thread's chat, and is neither its inbound line nor its permission relay.
 function besideOf(request: Request) {
   const session = request.headers.get("x-hex-beside");
 
@@ -175,8 +170,6 @@ const uncertain = (toolName: string, id: string) =>
     `${toolName} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`,
   );
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A channel over MCP's Streamable HTTP transport, for sessions whose plugin's .mcp.json points here with their binding and the hub's token in headers. Every session id is taken as it comes, so a session that connected before the hub restarted carries on where it was without initializing again.
 export function endpoint(
   name: string,
   channel: string,
@@ -197,8 +190,6 @@ export function endpoint(
 
   const active = new Map<string, { input: string; answer: Promise<Result> }>();
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Each operation's begins in this process, one at a time, and a call that begins is under way (active), with its input, before its begin is answered and until its end is with the store or owed to it. So a repeat that finds its call under way joins it without asking the store, and a different call under its id is told so.
   const beginning = ordered();
   const tools = new Map<string, Tool>(server.tools.map((each) => [each.name, each]));
   const list = toolList(server.tools);
@@ -320,8 +311,6 @@ export function endpoint(
     }
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Bun starts a response's body only once it sends it, so writes wait for that.
   function stream(thread: string | undefined, session: string | null) {
     let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
     let line: Line | undefined;
@@ -420,8 +409,7 @@ export function endpoint(
   }
 
   const handle = async (request: Request): Promise<Response> => {
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // The token comes as Authorization: Claude Code then takes a refusal as a failed connection, where with any other header it marks the server as needing a login for 15 minutes.
+    // WARNING: Claude Code takes a refused Authorization header as a failed connection, but marks a server that refuses any other header as needing a login for 15 minutes.
     if (
       request.headers.has("origin") ||
       !["127.0.0.1", "localhost"].includes(new URL(request.url).hostname) ||

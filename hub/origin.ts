@@ -25,8 +25,6 @@ const present = (text: string | undefined): text is string => text !== undefined
 
 const PAGE = 50;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The owner's newest words a session took in a thread, read back a page at a time from its newest message, so a long thread isn't read whole. Each page reaches back to the start of the time its oldest message has, which pages share, and one where every message has the same time is read whole.
 async function newestWordsIn(store: Store, thread: string, takenBefore: string | undefined) {
   for (let before = present(takenBefore) ? takenBefore : "9", most = PAGE; ;) {
     const page = await store.messages.said(thread, most, before);
@@ -74,8 +72,6 @@ export async function origin(
   return `This work comes from my conversation${present(name) ? ` in ${name}` : ""}: ${present(message) ? `${log}, and \`${hex}/bin/hex message ${message}\` my newest message there, word for word.` : `${log}.`}`;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A session beside a thread worked for the row it was started for, not for the owner's newest words there.
 async function besideRun(
   store: Store,
   session: string,

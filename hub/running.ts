@@ -60,8 +60,6 @@ function outranks(kept: Session, status: string, updated: number) {
 const nonEmpty = (value: string | undefined) =>
   value !== undefined && value !== "" ? value : undefined;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Every running session with hex's record of its turn, as the tools that show sessions read them.
 export async function running(store: Store, claude = CLAUDE): Promise<Map<string, Session>> {
   const sessions = live(claude);
 
@@ -74,8 +72,6 @@ export async function running(store: Store, claude = CLAUDE): Promise<Map<string
   return sessions;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Every running session as Claude's own records say, which asks nothing of hex's store.
 export function live(claude = CLAUDE): Map<string, Session> {
   const sessions = new Map<string, Session>();
   const pids = new Map<number, string>();
@@ -116,7 +112,7 @@ export function live(claude = CLAUDE): Map<string, Session> {
       Object.entries({ state, detail, needs }).filter(([, value]) => nonEmpty(value) !== undefined),
     );
 
-    // A background session runs with the supervisor's environment, not its dispatcher's, so its thread comes from its settings' env: https://code.claude.com/docs/en/agent-view#llm-gateway
+    // WARNING: a background session runs with the supervisor's environment, not its dispatcher's, so its thread comes from its settings' env: https://code.claude.com/docs/en/agent-view#llm-gateway
     const env = kind === "bg" ? launched(respawnFlags) : environ(pid);
     const helper = nonEmpty(env.HEX_HELPER);
     const beside = nonEmpty(env.HEX_BESIDE);
@@ -293,8 +289,7 @@ function statAfterName(pid: number): string[] | undefined {
   }
 }
 
-// Sessions are this user's processes, so one the user can't signal (EPERM) is another's: https://man7.org/linux/man-pages/man2/kill.2.html
-// A start time (field 22) other than the record's procStart means a dead session's pid was reused, and state Z is a zombie: https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html
+// WARNING: a dead session's pid can be reused, so its start time (field 22) must still match procStart: https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html
 function alive(pid: number, procStart: string | undefined) {
   try {
     if (!Number.isInteger(pid) || pid <= 0 || !process.kill(pid, 0)) {

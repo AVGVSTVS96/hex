@@ -4,14 +4,11 @@ import * as real from "./store.ts";
 import type { Store } from "./store.ts";
 import { answering, client } from "./store/wire.ts";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A test preload: the store open() hands out is the folder's hex.db answering as a home across the network does, one call at a time, each a few milliseconds after it's made, so nothing lands at the moment of the call. bin/check runs the hub's tests with it as well as without.
 const LATE_MS = 2;
 
 const ignore = (): void => undefined;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Bun's mock replaces the exports of a module already loaded, so the real ones are copied first.
+// WARNING: Bun's mock.module replaces the exports of a module already loaded, so the real ones are copied first.
 const { file } = real;
 const exports = { ...real };
 const lateStores = new Map<string, Store>();

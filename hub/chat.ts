@@ -28,8 +28,6 @@ export function preview({ input_preview, description }: Permission): string {
   }
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Chat apps only link web addresses, so a buzz:// link goes through a page on hex's site that opens it.
 export function tappable(text: string): string {
   return text.replaceAll(
     /buzz:\/\/[^\s)>\]\\]*[^\s)>\]\\.,;:!?'"]/gu,
@@ -37,8 +35,6 @@ export function tappable(text: string): string {
   );
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A thread's chat, oldest first: what the owner said that a session took in, and hex's replies as first sent; with a session, from the first message that session took, the conversation it has.
 export async function history(store: Store, thread: string, session?: string): Promise<Turn[]> {
   const rows = await store.messages.said(thread);
   const start = present(session) ? (rows.find((row) => row.taken?.by === session)?.at ?? "9") : "";
@@ -71,8 +67,6 @@ export async function history(store: Store, thread: string, session?: string): P
   });
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The hex app's photos and clips a message carried, listed in its meta as "<kind> <id>; ...", with their files, where kept, in the same order in "files".
 export function carried(meta?: Record<string, string>): Turn["media"] {
   const files = meta?.files?.split("; ") ?? [];
 
@@ -94,16 +88,12 @@ export function carried(meta?: Record<string, string>): Turn["media"] {
   });
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A message's words without the line it ends with for each photo or clip it carried.
 export function typed(body: string, items: number) {
   return items ? body.split("\n").slice(0, -items).join("\n") : body;
 }
 
 const Transcript = z.object({ text: z.string().optional() });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// TRANSCRIBE_URL is any OpenAI-compatible /audio/transcriptions endpoint.
 export async function transcribe(recording: () => Promise<string>): Promise<string | undefined> {
   const { TRANSCRIBE_URL: url, TRANSCRIBE_MODEL: model, TRANSCRIBE_API_KEY: key } = process.env;
 
