@@ -18,6 +18,7 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 
 import { sleep } from "./clock.ts";
+import { keys } from "./tag.ts";
 
 const ListedAgent = z.object({
   sessionId: z.string(),
@@ -728,14 +729,9 @@ const LinkedEntry = z.object({
 type Linked = z.infer<typeof LinkedEntry>;
 
 const REFUSAL = '"stop_reason":"refusal"';
-const KEY = /<channel [^>]*\bkey="([^"]+)"/gu;
 
 const keysIn = (entry: Linked) =>
-  entry.type === "user"
-    ? Texts.parse(entry.message?.content).flatMap((text) =>
-        [...text.matchAll(KEY)].flatMap(([, key]) => key ?? []),
-      )
-    : [];
+  entry.type === "user" ? Texts.parse(entry.message?.content).flatMap(keys) : [];
 
 export type Refusal = { category?: string | undefined; at?: string | undefined };
 

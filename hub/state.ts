@@ -6,14 +6,13 @@ import { followed } from "./kept.ts";
 import type { HubLine } from "./socket.ts";
 import { MovedError, stateDir, UnreachedError } from "./store.ts";
 import type { NewRow } from "./store.ts";
+import { keyOf, startsWithTag } from "./tag.ts";
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER, HEX_BESIDE } = process.env;
 const at = new Date().toISOString();
 const busy = process.argv[2] === "busy";
 
 const TASKS_CLAUDE_CODE_COUNTS_AS_WORKING = new Set(["subagent", "workflow"]);
-
-const KEY_ON_OPENING_CHANNEL_TAG = /^<channel source="[^"]*" key="([^"]+)"/u;
 
 // https://code.claude.com/docs/en/hooks#exit-code-2-behavior-per-event
 const BLOCK_PROMPT = 2;
@@ -49,7 +48,7 @@ const {
   error_details,
 } = await input();
 
-const fromChat = prompt?.startsWith("<channel source=") === true;
+const fromChat = prompt !== undefined && startsWithTag(prompt);
 
 const fromAnAgent =
   prompt !== undefined &&
@@ -65,10 +64,7 @@ const background =
   background_tasks?.some((task) => TASKS_CLAUDE_CODE_COUNTS_AS_WORKING.has(task.type ?? "")) ===
     true;
 
-const key =
-  busy && prompt !== undefined && fromChat
-    ? KEY_ON_OPENING_CHANNEL_TAG.exec(prompt)?.[1]
-    : undefined;
+const key = busy && prompt !== undefined && fromChat ? keyOf(prompt) : undefined;
 
 const answered = hook_event_name === "Stop";
 

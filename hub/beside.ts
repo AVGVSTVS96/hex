@@ -2,8 +2,8 @@ import { spawn } from "node:child_process";
 import { closeSync, openSync, readFileSync, rmSync } from "node:fs";
 
 import { contained, inherited } from "./claude.ts";
-import { local } from "./mcp.ts";
 import type { Row } from "./store.ts";
+import { tag } from "./tag.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Where hex's own work for a thread goes: a timer, an alarm, a job's report. A session of its own takes each, beside the thread's conversation, and speaks in its chat; one that took a row is reached again at its own session id.
@@ -16,19 +16,10 @@ export const besideWhat = (address: string) =>
 
 const WORDS_KEPT = 400;
 
-const attribute = (value: string) => value.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The row as Claude Code shows a channel's message, key first, so the session's prompt hook takes it (hub/state.ts).
 export function prompt(app: string, row: Row, zone: string) {
   const { stalled: _stalled, ...shown } = row.meta ?? {};
-  const meta = local({ key: row.key, ...shown, ts: row.at }, zone);
 
-  const attributes = Object.entries(meta)
-    .map(([name, value]) => ` ${name}="${attribute(value)}"`)
-    .join("");
-
-  return `<channel source="${app}"${attributes}>\n${row.body}\n</channel>`;
+  return tag(app, { key: row.key, ...shown, ts: row.at }, row.body, zone);
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show

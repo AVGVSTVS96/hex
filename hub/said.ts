@@ -4,13 +4,13 @@ import { besideWhat } from "./beside.ts";
 import { ROOM } from "./fit.ts";
 import { open, stateDir } from "./store.ts";
 import type { Row, Store } from "./store.ts";
+import { keyOf } from "./tag.ts";
 
 const Hook = z.object({
   session_id: z.string().optional(),
   prompt: z.string().optional().catch(undefined),
 });
 
-const KEY_ON_OPENING_CHANNEL_TAG = /^<channel source="[^"]*" key="([^"]+)"/u;
 const WORDS_A_MESSAGE_SHOWS = 600;
 
 const words = (body: string) => {
@@ -53,7 +53,7 @@ export async function said(
   session: string,
   prompt = "",
 ): Promise<string> {
-  const key = KEY_ON_OPENING_CHANNEL_TAG.exec(prompt)?.[1];
+  const key = keyOf(prompt);
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Read before the messages are, so one that lands while they're read is shown next time rather than never, and on the store's clock, which stamped them.

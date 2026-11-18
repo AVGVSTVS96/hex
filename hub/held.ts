@@ -3,10 +3,9 @@ import { connect } from "node:net";
 import { z } from "zod";
 
 import { followed } from "./kept.ts";
-import { local } from "./mcp.ts";
 import type { HubLine } from "./socket.ts";
 import { stateDir } from "./store.ts";
-import type { Row } from "./store/messages.ts";
+import { tag } from "./tag.ts";
 
 const { HEX_THREAD, HEX_HUB } = process.env;
 
@@ -15,17 +14,6 @@ const ToolUse = z.object({
   hook_event_name: z.string().catch("PostToolUse"),
   agent_id: z.string().optional().catch(undefined),
 });
-
-const attribute = (value: string) =>
-  value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
-
-function tag(row: Row, zone: string) {
-  const meta = Object.entries(local({ key: row.key, ...row.meta }, zone))
-    .map(([name, value]) => ` ${name}="${attribute(value)}"`)
-    .join("");
-
-  return `<channel source="${row.from}"${meta}>\n${row.body.replaceAll("</channel>", "<\\/channel>")}\n</channel>`;
-}
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A store already known down fails the take at once, unasked, so a tool call never waits on it. What the store doesn't answer is left to the hub, which gives what it held from memory once the turn ends.
@@ -81,7 +69,7 @@ if (HEX_THREAD !== undefined && HEX_THREAD !== "" && session_id !== "" && agent_
       JSON.stringify({
         hookSpecificOutput: {
           hookEventName: hook_event_name,
-          additionalContext: `The user sent ${one ? "a new message" : "new messages"} while you were working:\n${rows.map((row) => tag(row, zone)).join("\n")}`,
+          additionalContext: `The user sent ${one ? "a new message" : "new messages"} while you were working:\n${rows.map((row) => tag(row.from, { key: row.key, ...row.meta }, row.body, zone)).join("\n")}`,
         },
       }),
     );
