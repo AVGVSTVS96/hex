@@ -51,8 +51,8 @@ if [ "$(git rev-parse HEAD)" = "$incoming" ]; then
   exit 0
 fi
 if [ "$incoming" = "$(cat "$home/state/bad" 2>/dev/null || :)" ]; then
-  echo "not updated: hex $(git rev-parse --short "$incoming") couldn't start here, so hex stays on $before"
-  [ "$mode" != --when-quiet ] || tell all "didn't ship: hex $(git rev-parse --short "$incoming") couldn't start here, so hex stays on $before"
+  echo "not updated: hex went back from $(git rev-parse --short "$incoming") here, so hex stays on $before until main moves past it"
+  [ "$mode" != --when-quiet ] || tell all "didn't ship: hex went back from $(git rev-parse --short "$incoming") here, so hex stays on $before until main moves past it"
   exit 1
 fi
 
