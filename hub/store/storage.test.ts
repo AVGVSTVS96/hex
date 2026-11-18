@@ -601,7 +601,7 @@ test("the object answers only its owner's key, never without one, and refuses a 
           headers: { authorization: `Bearer ${KEY}` },
         })
       ).json(),
-    ).toEqual({ version: "v7", migrations: appendOnlyMigrations.length, offers: OFFERS });
+    ).toEqual({ version: "v7", migrations: appendOnlyMigrations.length, offers: OFFERS, hub: "" });
     expect(await (await post("/hex/claim", by("a"))).json()).toEqual({ value: 1 });
     expect(await (await post("/hex/claim", by("b"))).json()).toEqual({ value: 2 });
     expect((await post("/hex/call", "{}", { "hex-tenure": "2" })).status).toBe(200);
