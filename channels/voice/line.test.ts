@@ -243,9 +243,8 @@ test("a call on another client's line is held like a phone call: PCM both ways, 
   expect(session.input[0]?.content[0]?.text).toBe("They joined you in a Discord voice channel.");
 
   await until(() => call.steps.find((step) => step.step === "keep"));
-  expect(call.steps.find((step) => step.step === "deliver")?.content).toStartWith(
-    "A call started.",
-  );
+  const told = await until(() => call.steps.find((step) => step.step === "deliver"));
+  expect(told.content).toStartWith("A call started.");
   await call.tell("hear AAAA");
   await until(() => call.heard.length);
   expect(call.heard).toEqual(["AAAA"]);
