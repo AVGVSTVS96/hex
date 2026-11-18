@@ -57,7 +57,8 @@ const withImage = (told: Line) => told.meta?.image_path !== undefined;
 
 const engineScript = (
   state: string,
-) => `import { cantAnswer, serve, stopsHere, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
+) => `import { serve } from ${JSON.stringify(join(import.meta.dir, "serve.ts"))}
+import { cantAnswer, stopsHere, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
 const server = serve({ deliver: (content, meta) => console.log(JSON.stringify({ hub: 'deliver', content, meta })), keep: async () => {}, renew: () => console.log(JSON.stringify({ hub: 'renew' })), adrift: (away) => console.log(JSON.stringify({ hub: away ? 'adrift' : 'back' })), session: () => 'brain', interrupt: async () => console.log(JSON.stringify({ hub: 'interrupt' })) }, ${JSON.stringify(state)})
 console.log(JSON.stringify({ port: server.port }))
 for await (const line of console) {

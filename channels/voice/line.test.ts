@@ -133,7 +133,8 @@ async function lineCall({
   mkdirSync(join(hex, "discord"), { recursive: true });
   await readyHexStateBeforeTheEngine(hex);
 
-  const engineWithAHubThatTakesEverything = `import { serve, take, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
+  const engineWithAHubThatTakesEverything = `import { serve } from ${JSON.stringify(join(import.meta.dir, "serve.ts"))}
+import { take, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
 import { clients } from ${JSON.stringify(join(import.meta.dir, "..", "..", "hub", "hub.ts"))}
 const step = (step, more = {}) => console.log(JSON.stringify({ step, ...more }))
 clients.set('discord', {
