@@ -657,6 +657,12 @@ export function record(id: string): Job {
   }
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What a session waits on someone at its terminal for, as its job record says.
+export function needs(session: Agent) {
+  return record(job(session)).needs;
+}
+
 export function watchJob(id: string, change: () => void) {
   return watch(join(home(), "jobs", id), change);
 }
