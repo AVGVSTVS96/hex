@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
+import { clients } from "./apps.ts";
 import {
   CHANNEL,
   heard,
@@ -21,7 +22,6 @@ import {
   besideLauncher,
   runs,
 } from "./hub.testing.ts";
-import { clients } from "./hub.ts";
 import { file } from "./store.ts";
 import { until } from "./until.ts";
 

@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import { clients, say, writable } from "./apps.ts";
 import {
   settled,
   heard,
@@ -20,7 +21,6 @@ import {
   bound,
   toolCall,
 } from "./hub.testing.ts";
-import { clients, say, writable } from "./hub.ts";
 import { pictureId } from "./pictures.ts";
 import { file } from "./store.ts";
 import { until } from "./until.ts";

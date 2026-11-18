@@ -3,6 +3,8 @@ import { statSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { join } from "node:path";
 
+import { begin, clients, mirror, move } from "./apps.ts";
+import { history, tappable, transcribe } from "./chat.ts";
 import {
   CHANNEL,
   partialHub,
@@ -25,7 +27,6 @@ import {
   settingsOf,
   registry,
 } from "./hub.testing.ts";
-import { begin, clients, history, mirror, move, tappable, transcribe } from "./hub.ts";
 import { file } from "./store.ts";
 import type { Author } from "./store.ts";
 import { until } from "./until.ts";

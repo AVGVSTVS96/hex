@@ -22,9 +22,11 @@ import { ATTACH } from "./claude.testing.ts";
 import { settled as commandsSettled } from "./claude.ts";
 import type { Job as JobRecord } from "./claude.ts";
 import { clock, manual } from "./clock.ts";
-import { startHub, tool } from "./hub.ts";
-import type { Call, ChannelServer, Hub, HubOptions, Message, Permission } from "./hub.ts";
+import { startHub } from "./hub.ts";
+import type { Call, Hub, HubOptions } from "./hub.ts";
 import { claimedAs, landed } from "./kept.ts";
+import { tool } from "./mcp.ts";
+import type { ChannelServer, Permission } from "./mcp.ts";
 import type { HubLine } from "./socket.ts";
 import { stamp } from "./start.ts";
 import * as stores from "./store.ts";
@@ -33,6 +35,7 @@ import type { Store } from "./store.ts";
 import { hangUpAll, http as channelLine, port } from "./testing.ts";
 import * as transcripts from "./transcripts.ts";
 import { until } from "./until.ts";
+import type { Message } from "./waiting.ts";
 
 export const CHANNEL = "plugin:telegram@hex";
 
