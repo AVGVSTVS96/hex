@@ -1,5 +1,3 @@
-import { join } from "node:path";
-
 import type { Namespace } from "cloudflare:workers";
 
 import { objectStorage } from "../hub/store/fake.ts";
@@ -9,10 +7,12 @@ type Env = { KEY: string; VERSION: string; STORE: Namespace };
 
 export const KEY = "drill-store-key-long-enough-for-the-worker";
 
-// Cloudflare running hex's store (hub/store/object.ts) as one Durable Object behind its Worker, on SQLite as the runtime keeps it: https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/
+// Cloudflare running hex's store (hub/store/object.ts) as one Durable Object behind its Worker, on SQLite as the runtime keeps it, here in memory: https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A write to disk would hold up every answer of the process that serves this, the other drills' stores and Telegrams among them, for as long as a busy disk takes, and hex gives its store ten seconds.
 // The runtime answers a watching socket's ping itself, and the object tells each socket of every write; both happen here, around the object's code, since Bun has no WebSocketPair: https://developers.cloudflare.com/durable-objects/best-practices/websockets/
-export function cloudflare(dir: string) {
-  const storage = objectStorage(join(dir, "object.db"));
+export function cloudflare() {
+  const storage = objectStorage();
   const sockets = new Set<Bun.ServerWebSocket>();
 
   const env: Env = {

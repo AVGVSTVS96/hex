@@ -4,7 +4,7 @@ import { basename, join } from "node:path";
 
 import { until } from "../hub/until.ts";
 import { cloudflare } from "./cloudflare.ts";
-import { folder, place, removeSandbox } from "./hex.ts";
+import { folder, removeSandbox } from "./hex.ts";
 import type { Folder } from "./hex.ts";
 import { telegram } from "./telegram.ts";
 
@@ -125,7 +125,7 @@ function drillFor() {
     // A new hex folder on its own store and Telegram, running, with General's session connected.
     running: async () => {
       const chat = telegram();
-      const store = cloudflare(place("cloudflare"));
+      const store = cloudflare();
       outside.push(chat, store);
       const hex = await machine("a", chat, store);
       await hex.moveInto();

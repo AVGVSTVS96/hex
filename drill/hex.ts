@@ -1,6 +1,5 @@
 import {
   closeSync,
-  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -10,6 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { cp } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -107,15 +107,8 @@ const kill = (group: number) => {
   }
 };
 
-export function place(name: string) {
-  const dir = join(root, `${++made}-${name}`);
-  mkdirSync(dir, { recursive: true });
-
-  return dir;
-}
-
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// For a drill that ends in a process that goes on: bun test stops what a test file left running, the leash included, as the file ends.
+// For a drill that ends in a process that goes on: bun test stops what a test file left running, the leash included, as the file ends. Every machine's folder goes here, once no drill is left to answer for: removing one takes this process seconds, which the stores and Telegrams it serves would spend not answering.
 export function removeSandbox() {
   rmSync(root, { recursive: true, force: true });
 }
@@ -130,7 +123,7 @@ const copyOfHex = async (to: string) => {
     .filter((file) => file !== "" && !file.endsWith("/") && existsSync(join(repo, file)));
 
   for (const file of files) {
-    cpSync(join(repo, file), join(to, file), { verbatimSymlinks: true });
+    await cp(join(repo, file), join(to, file), { verbatimSymlinks: true });
   }
 };
 
@@ -140,7 +133,7 @@ export async function folder(
   name: string,
   { telegramUrl, storeUrl }: { telegramUrl: string; storeUrl: string },
 ) {
-  const dir = place(name);
+  const dir = join(root, `${++made}-${name}`);
   const hex = join(dir, ".hex");
   const user = join(dir, "user");
   const claude = join(user, "claude");
@@ -283,8 +276,6 @@ export async function folder(
       for (const group of mine) {
         tell(String(-group));
       }
-
-      rmSync(dir, { recursive: true, force: true });
     },
   };
 }
