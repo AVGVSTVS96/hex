@@ -76,5 +76,4 @@ test.skipIf(process.platform !== "linux")(
     expect(waits).toBeLessThanOrEqual(Math.max(before, after));
     expect(reading.includes("waiting over 20% of the time")).toBe(waits > 20);
   },
-  10_000,
 );
