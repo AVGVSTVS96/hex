@@ -126,6 +126,24 @@ export function port() {
   return listener.port;
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What a request nobody awaits failed with, kept for the wait it was sent for to throw (check). Once that wait is over, as when a test ends and its bot is stopped with the request still on its way, nothing checks, so it fails no test: left unhandled, Bun fails whichever test runs next.
+export function unawaited() {
+  let failed: Error | undefined;
+
+  return {
+    // oxlint-disable-next-line anti-slop/no-unknown-parameters -- whatever the request threw
+    keep: (error: unknown) => {
+      failed = error instanceof Error ? error : new Error(String(error));
+    },
+    check: () => {
+      if (failed !== undefined) {
+        throw failed;
+      }
+    },
+  };
+}
+
 export function hangUpAll() {
   for (const stream of streams.splice(0)) {
     stream.abort();
@@ -204,6 +222,7 @@ export function http({
   streams.push(stream);
   let mcp = "";
   let lists = 0;
+  const nudged = unawaited();
   let unheard = deaf;
 
   const post = (body: RpcBody) =>
@@ -228,7 +247,11 @@ export function http({
 
   return {
     received,
-    listed: () => lists,
+    listed: () => {
+      nudged.check();
+
+      return lists;
+    },
     post,
     rpc,
     initialize: async () => {
@@ -260,7 +283,7 @@ export function http({
         if (unheard > 0) {
           unheard--;
         } else {
-          void rpc("tools/list");
+          rpc("tools/list").catch(nudged.keep);
         }
       });
 
