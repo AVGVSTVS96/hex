@@ -3,8 +3,8 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
-import { route } from "./hub.ts";
-import type { ToolArguments } from "./hub.ts";
+import { route } from "./listen.ts";
+import type { ToolArguments } from "./mcp.ts";
 
 export { ATTACH, fakeClaude, flags, noClaude } from "./claude.testing.ts";
 
@@ -65,11 +65,11 @@ export function hangUpAll() {
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A client's bot.ts run in its own process the way serve.ts runs it, behind a listener on a free port, which the hub reads from HEX_PORT as it loads.
 export async function service(bot: string, env: Record<string, string | undefined>) {
-  const hub = JSON.stringify(join(import.meta.dir, "hub.ts"));
+  const listening = JSON.stringify(join(import.meta.dir, "listen.ts"));
 
   const script = `const listener = Bun.serve({ hostname: '127.0.0.1', port: 0, idleTimeout: 0, fetch: request => route(request) })
 process.env.HEX_PORT = String(listener.port)
-const { route } = await import(${hub})
+const { route } = await import(${listening})
 console.log(listener.port)
 await import(${JSON.stringify(bot)})`;
 

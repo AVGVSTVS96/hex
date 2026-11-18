@@ -135,7 +135,7 @@ async function lineCall({
 
   const engineWithAHubThatTakesEverything = `import { serve } from ${JSON.stringify(join(import.meta.dir, "serve.ts"))}
 import { take, tool } from ${JSON.stringify(join(import.meta.dir, "engine.ts"))}
-import { clients } from ${JSON.stringify(join(import.meta.dir, "..", "..", "hub", "hub.ts"))}
+import { clients } from ${JSON.stringify(join(import.meta.dir, "..", "..", "hub", "apps.ts"))}
 const step = (step, more = {}) => console.log(JSON.stringify({ step, ...more }))
 clients.set('discord', {
   hub: { register: () => {}, deliver: (thread, name, message) => step('delivered', { thread, name, message }) },

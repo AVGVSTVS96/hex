@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { listen } from "./hub.ts";
+import { listen } from "./listen.ts";
 import { until } from "./until.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show

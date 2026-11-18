@@ -1,9 +1,9 @@
-import { basename, join } from "node:path";
+import { join } from "node:path";
 
-import { z } from "zod";
-
+import { clients, mirror } from "./apps.ts";
 import { sessionsBeside } from "./besides.ts";
 import { threadCalls } from "./calls.ts";
+import { history } from "./chat.ts";
 import * as claude from "./claude.ts";
 import { failedStarts } from "./failing.ts";
 import type { Failed } from "./failing.ts";
@@ -12,13 +12,13 @@ import { holding } from "./holds.ts";
 import { threadInbox } from "./inbox.ts";
 import { turnInterrupts } from "./interrupt.ts";
 import { keeping, landed } from "./kept.ts";
+import { PORT, mount } from "./listen.ts";
 import { STARTUP } from "./loaded.ts";
 import { endpoint } from "./mcp.ts";
 import type { ChannelServer, Line, Permission, ToolArguments } from "./mcp.ts";
 import { cantStart, tellOwner } from "./notice.ts";
 import { queue } from "./observe.ts";
 import { sessionPauses } from "./pauses.ts";
-import { fileOnly, held as filesIn, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
 import { present } from "./present.ts";
 import { threadRenewals } from "./renewals.ts";
 import { sessionRests } from "./rest.ts";
@@ -32,41 +32,19 @@ import type { Questions } from "./socket.ts";
 import { stalledTurns } from "./stalls.ts";
 import { sessionStarts } from "./start.ts";
 import { sessionStops } from "./stops.ts";
-import { asked, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
-import type { Store } from "./store.ts";
+import { stateDir as storeOf } from "./store.ts";
 import { openThreads } from "./threads.ts";
 import { wentThrough, whenThrough } from "./through.ts";
 import { sessionTurns } from "./turns.ts";
 import { messagesWaiting } from "./waiting.ts";
-import type { Message, Waits } from "./waiting.ts";
+import type { Waits } from "./waiting.ts";
 import { zoneOf } from "./zone.ts";
-
-export { dispatch, tool } from "./mcp.ts";
-
-export type { ChannelServer, Handlers, Permission, Tool, ToolArguments } from "./mcp.ts";
-
-export type { Failed } from "./failing.ts";
-
-export type { Message, Waits } from "./waiting.ts";
 
 export type Call = (thread: string, tool: string, args: ToolArguments) => Promise<string>;
 
 export type State = (thread: string, busy: boolean, background: boolean) => void;
 
 export type Settings = { model?: string | undefined; effort?: string | undefined };
-
-const PreviewFields = z.record(z.string(), z.json());
-
-export function preview({ input_preview, description }: Permission): string {
-  try {
-    return Object.entries(PreviewFields.parse(JSON.parse(input_preview)))
-      .filter(([, value]) => value !== description)
-      .map(([key, value]) => `${key}: ${z.string().safeParse(value).data ?? JSON.stringify(value)}`)
-      .join("\n");
-  } catch {
-    return input_preview;
-  }
-}
 
 export type Hub = Awaited<ReturnType<typeof startHub>>;
 
@@ -84,257 +62,11 @@ export type Limits = {
   tellAfter: number;
 };
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A call on a line a client holds, like a Discord voice channel: the line plays the voice's audio and ends when the call does, and the call engine hears the caller and can be hung up on. Audio is base64 PCM at 24 kHz, mono.
-export type VoiceLine = { play: (audio: string) => void; end: () => void };
-
-export type Held = { hear: (audio: string) => void; hangUp: () => void };
-
-export type CallEngine = {
-  take?: (from: "discord", greeting: string, line: VoiceLine) => Held;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A stop freezes the sessions on this machine while a live call still holds the hub, so the caller is told nothing can answer here.
-  stops?: () => void;
-};
-
-export const engine: CallEngine = {};
-
-export type Turn = {
-  from: "me" | "hex";
-  text: string;
-  // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads a picture's width over height by this name
-  media?: { id: string; kind: string; file?: string; shape?: number }[];
-};
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Every client running in this process, so a thread can move between them. place() opens a thread on the client, led by its about line if given, for a session working in cwd, and returns its id and a link to it. backfill() posts a thread's chat so far into a thread it placed, in order.
-export type Client = {
-  hub: Hub;
-  place: (
-    name: string,
-    where?: string,
-    about?: string,
-    cwd?: string,
-  ) => Promise<{ thread: string; link: string }>;
-  backfill?: (thread: string, turns: Turn[]) => Promise<void>;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The client shows only the turns its own messages start, so a session moved there waits for one.
-  waits?: boolean;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // What the client does as the hub stops, once no call is live.
-  close?: () => Promise<void>;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A stop hands the owner's messages to the hub that runs next, maybe on the cloud twin, so the client stops taking them in at once, while a live call still holds this hub.
-  deafen?: () => Promise<void>;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The owner's stop as the client's own Stop does it, when it keeps state of its own about a turn.
-  stop?: (thread: string) => void;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A local copy of a file the app holds by its own id, such as one a message carried.
-  file?: (id: string) => Promise<string>;
-};
-
-class Clients extends Map<string, Client> {
-  private readonly awaited = new Map<string, (() => void)[]>();
-
-  override set(app: string, joining: Client) {
-    super.set(app, joining);
-    this.awaited.get(app)?.forEach((tell) => {
-      tell();
-    });
-    this.awaited.delete(app);
-
-    return this;
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Once the app's client runs in this process, for a channel that shows another's threads: the channels load in no order.
-  joined(app: string): Promise<void> {
-    return this.has(app)
-      ? Promise.resolve()
-      : new Promise((resolve) => {
-          this.awaited.set(app, [...(this.awaited.get(app) ?? []), resolve]);
-        });
-  }
-}
-
-export const clients = new Clients();
-
 let generalHub: Hub | undefined;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Resolves with the hub serving General once General's session first connects to it: from then on, hex works on the code this process runs.
-let reached: (hub: Hub) => void;
-
-export const up = new Promise<Hub>((resolve) => {
-  reached = resolve;
-});
-
-export const PORT = Number(process.env.HEX_PORT ?? 8789);
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Each hub's channel under its plugin's name, behind the one HTTP listener serve.ts opens.
-const channels = new Map<string, (request: Request) => Promise<Response>>();
-
-export function route(request: Request): Promise<Response> {
-  return (
-    channels.get(new URL(request.url).pathname)?.(request) ??
-    Promise.resolve(new Response("Not Found", { status: 404 }))
-  );
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// serve.ts's listener. A hub a stop left running holds the port until it has finished its call and exited, so the next one waits for the port instead of failing to start, which bin/hex would count against the commit. It tries each second, since nothing says the port is free: a connection to the old hub that hasn't sent anything is never accepted, so it can stay open after the hub exits.
-export async function listen(port = PORT): Promise<ReturnType<typeof Bun.serve>> {
-  for (let held = false; ; held = true) {
-    try {
-      const server = Bun.serve({ hostname: "127.0.0.1", port, idleTimeout: 0, fetch: route });
-
-      if (held) {
-        process.stderr.write(`hub: port ${port} is free; starting\n`);
-      }
-
-      return server;
-    } catch (error) {
-      if (!(error instanceof Error && "code" in error && error.code === "EADDRINUSE")) {
-        throw error;
-      }
-    }
-
-    if (!held) {
-      process.stderr.write(`hub: port ${port} is in use; this hub starts once it's free\n`);
-    }
-
-    await Bun.sleep(1000);
-  }
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Chat apps only link web addresses, so a buzz:// link goes through a page on hex's site that opens it.
-export function tappable(text: string): string {
-  return text.replaceAll(
-    /buzz:\/\/[^\s)>\]\\]*[^\s)>\]\\.,;:!?'"]/gu,
-    (url) => `https://hex-sand.vercel.app/open.html#${encodeURIComponent(url)}`,
-  );
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A thread's chat, oldest first: what the owner said that a session took in, and hex's replies as first sent; with a session, from the first message that session took, the conversation it has.
-export async function history(store: Store, thread: string, session?: string): Promise<Turn[]> {
-  const rows = await store.messages.said(thread);
-  const start = present(session) ? (rows.find((row) => row.taken?.by === session)?.at ?? "9") : "";
-
-  return rows.flatMap((row): Turn[] => {
-    if (row.from === "terminal" || !row.taken || row.at < start) {
-      return [];
-    }
-
-    const sent = pictures(row);
-    const words = sent.length > 0 && fileOnly(row) ? "" : row.body;
-
-    if (replied(row)) {
-      return shown(row)
-        ? [{ from: "hex", text: words, ...(sent.length > 0 && { media: sent }) }]
-        : [];
-    }
-
-    const media = carried(row.meta) ?? (sent.length > 0 ? sent : undefined);
-
-    if (!spoken(row) || row.author !== "owner") {
-      return [];
-    }
-
-    const text = row.from === "t3" ? asked(row.body) : media === sent ? words : row.body;
-
-    return text !== "" || media !== undefined
-      ? [{ from: "me", text, ...(media && { media }) }]
-      : [];
-  });
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The hex app's photos and clips a message carried, listed in its meta as "<kind> <id>; ...", with their files, where kept, in the same order in "files".
-export function carried(meta?: Record<string, string>): Turn["media"] {
-  const files = meta?.files?.split("; ") ?? [];
-
-  return meta?.media?.split("; ").map((entry, i) => {
-    const [kind = "", id = ""] = entry.split(" ");
-    const file = files[i];
-    const widthOverHeight = kind === "photo" ? widthOverHeightOf(file) : undefined;
-
-    return {
-      id,
-      kind,
-      ...(present(file) && { file }),
-      ...(widthOverHeight !== undefined &&
-        widthOverHeight > 0 && {
-          // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads a picture's width over height by this name
-          shape: widthOverHeight,
-        }),
-    };
-  });
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Where a file a chat message holds is on disk, fetched from its app when only the app keeps it.
-export async function heldFile(store: Store, key: string, at: number) {
-  const row = await store.messages.get(key);
-  const kept = row ? filesIn(row)[at] : undefined;
-
-  if (!kept || !row) {
-    return;
-  }
-
-  const path = kept.path ?? (await clients.get(row.from)?.file?.(kept.telegram ?? ""));
-
-  return present(path) ? { path, type: kept.type ?? "application/octet-stream" } : undefined;
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The file of a picture history() named, or undefined when the id names none.
-export async function sentPicture(store: Store, id: string) {
-  const picture = pictureOf(id);
-
-  return picture && (await heldFile(store, picture.key, picture.at));
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A message's words without the line it ends with for each photo or clip it carried.
-export function typed(body: string, items: number) {
-  return items ? body.split("\n").slice(0, -items).join("\n") : body;
-}
-
-const Transcript = z.object({ text: z.string().optional() });
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// TRANSCRIBE_URL is any OpenAI-compatible /audio/transcriptions endpoint.
-export async function transcribe(recording: () => Promise<string>): Promise<string | undefined> {
-  const { TRANSCRIBE_URL: url, TRANSCRIBE_MODEL: model, TRANSCRIBE_API_KEY: key } = process.env;
-
-  if (!present(url) || !present(model)) {
-    return;
-  }
-
-  const path = await recording();
-  const form = new FormData();
-  form.append("file", Bun.file(path), basename(path));
-  form.append("model", model);
-
-  const res = await fetch(url, {
-    method: "POST",
-    body: form,
-    headers: present(key) ? { authorization: `Bearer ${key}` } : {},
-  });
-
-  if (!res.ok) {
-    throw new Error(`transcription failed: HTTP ${res.status}`);
-  }
-
-  const { text } = Transcript.parse(await res.json());
-  const trimmed = text?.trim();
-
-  return trimmed === undefined || trimmed === "" ? undefined : trimmed;
-}
+export const { promise: up, resolve: reached } = Promise.withResolvers<Hub>();
 
 // Claude Code keeps a conversation in the prompt cache for an hour after its last request, and compacts a background session only when told to. It retries a dropped HTTP server at about 0, 1, 3, 7 and 15 seconds, then gives up for good. https://docs.claude.com/en/docs/build-with-claude/prompt-caching
 const LIMITS: Limits = {
@@ -360,16 +92,6 @@ function tokensFrom(name: string, fallback: number) {
   }
 
   return Number(tokens);
-}
-
-export function title(text: string): string {
-  const word = text.trim();
-
-  if (!/^[^\s_-]+$/u.test(word)) {
-    throw new Error(`title must be one word, got "${word}"`);
-  }
-
-  return word;
 }
 
 function startupFiles(hex: string | undefined) {
@@ -768,7 +490,7 @@ export async function startHub({
     zone,
   );
 
-  channels.set(path, serve);
+  const unmount = mount(path, serve);
 
   const sock = hubSocket({
     socketPath,
@@ -888,10 +610,7 @@ export async function startHub({
       }
 
       sock.close();
-
-      if (channels.get(path) === serve) {
-        channels.delete(path);
-      }
+      unmount();
 
       closing.abort();
 
@@ -914,174 +633,4 @@ export async function startHub({
   }
 
   return api;
-}
-
-function client(app: string) {
-  const there = clients.get(app);
-
-  if (!there) {
-    throw new Error(
-      `${app} isn't connected${clients.size ? `; threads open in ${[...clients.keys()].join(", ")}` : ""}`,
-    );
-  }
-
-  return there;
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The app that takes the owner's words for a thread when they're written in another client: it holds the thread, and shows more than the turns it starts itself, as T3 Code does (waits).
-function taking(app: string, thread: string) {
-  const there = clients.get(app);
-  const name = there?.hub.name(thread);
-
-  return there && there.waits !== true && present(name) ? { there, name } : undefined;
-}
-
-export const writable = (app: string, thread: string) => taking(app, thread) !== undefined;
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Each thread's last showing of the owner's words, so the next waits for it and they show in the order they were written.
-const showing = new Map<string, Promise<void>>();
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The owner's words for a thread, written in another client: the thread's app takes them as it does its own messages, then shows them where the thread lives, so its chat there holds everything said in it. A key sent again changes nothing. Whether the thread can take them.
-export async function say(
-  app: string,
-  thread: string,
-  message: Omit<Message, "author">,
-): Promise<boolean> {
-  const home = taking(app, thread);
-
-  if (!home) {
-    return false;
-  }
-
-  const { there, name } = home;
-  const id = `${app}:${thread}`;
-  const earlier = showing.get(id);
-  const taken = there.hub.deliver(thread, name, { ...message, author: "owner" });
-
-  showing.set(
-    id,
-    (async () => {
-      await earlier;
-
-      try {
-        if (!(await taken)) {
-          return;
-        }
-
-        const photos = pictures({ key: `${app}:${message.key ?? ""}`, meta: message.meta });
-        const media = carried(message.meta) ?? (photos.length > 0 ? photos : undefined);
-        const words = photos.length > 0 && fileOnly({ author: "owner", body: message.content });
-        await there.backfill?.(thread, [
-          { from: "me", text: words ? "" : message.content, ...(media && { media }) },
-        ]);
-      } catch (error) {
-        process.stderr.write(
-          `hub: couldn't show the owner's words in ${app} thread ${thread}: ${String(error)}\n`,
-        );
-      }
-    })(),
-  );
-
-  await taken;
-
-  return true;
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Opens a thread on any client and starts its session: on a prompt, its first message as the session starts, or on a message that reaches it the way the app's own messages do.
-export async function begin(
-  app: string,
-  name: string,
-  first: string | Message,
-  { about, where, cwd }: { about?: string; where?: string; cwd?: string } = {},
-) {
-  const there = client(app);
-  const opened = await there.place(name, where, about);
-
-  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- first is TypeScript's own union of a prompt and a message, not unparsed input
-  if (typeof first === "string") {
-    there.hub.open(opened.thread, name, first, cwd);
-  } else {
-    there.hub.register(opened.thread, name, cwd);
-    await there.hub.deliver(opened.thread, name, first);
-  }
-
-  return opened;
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Opens the thread on another client and posts its chat so far there; the backfill settles either way.
-async function carry(from: Hub, thread: string, to: string, name: string, where?: string) {
-  const target = client(to);
-  const session = from.session(thread);
-
-  if (!present(session)) {
-    throw new Error("this thread has no session yet");
-  }
-
-  const cwd = from.cwd(thread);
-
-  const { thread: dest, link } = await target.place(name, where, undefined, cwd);
-  const chat = await from.history(thread);
-
-  const filled = (async () => {
-    try {
-      await target.backfill?.(dest, chat);
-    } catch (error) {
-      process.stderr.write(`hub: couldn't backfill ${to} thread ${dest}: ${String(error)}\n`);
-    }
-  })();
-
-  return { target, session, dest, link, filled, cwd };
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Moves a thread to another client: its session stops here and resumes there, memory intact, once its chat is backfilled. The main thread never leaves, and a thread its app owns (copy) stays, so a copy continues instead.
-export async function move(
-  from: Hub,
-  thread: string,
-  to: string,
-  name: string,
-  where?: string,
-  copy = thread === from.main,
-) {
-  const { target, session, dest, link, filled, cwd } = await carry(from, thread, to, name, where);
-
-  const prompt =
-    target.waits === true
-      ? undefined
-      : `This conversation just moved to ${to}, into the thread "${name}". Your ${to} tools now post there. Carry on where you left off.`;
-
-  if (copy) {
-    void (async () => {
-      await filled;
-
-      if (prompt === undefined) {
-        target.hub.follow(dest, name, session, cwd);
-      } else {
-        target.hub.fork(dest, name, session, prompt, cwd);
-      }
-    })();
-  } else {
-    void (async () => {
-      const [released] = await Promise.all([from.release(thread), filled]);
-      target.hub.adopt(dest, name, released, prompt, cwd);
-    })();
-  }
-
-  return link;
-}
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Opens a copy of the thread on another client with its chat so far, and leaves it here. The copy continues the thread's session as a fork with its first message, so the two never share a session.
-export async function mirror(from: Hub, thread: string, to: string, where?: string) {
-  const name = from.name(thread) ?? thread;
-  const { target, session, dest, link, filled, cwd } = await carry(from, thread, to, name, where);
-  target.hub.follow(dest, name, session, cwd);
-  await filled;
-
-  return link;
 }
