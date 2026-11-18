@@ -4,8 +4,8 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { noClaude } from "./claude.testing.ts";
 import { refused, start } from "./claude.ts";
-import { noClaude } from "./testing.ts";
 
 const scopes =
   Bun.which("systemd-run") !== null &&

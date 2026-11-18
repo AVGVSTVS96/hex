@@ -3,10 +3,10 @@ import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { fakeClaude, flags } from "./claude.testing.ts";
 import { checks, look, research } from "./ideas.ts";
 import type { Found } from "./ideas.ts";
 import { File, file } from "./store.ts";
-import { fakeClaude, flags } from "./testing.ts";
 
 let dir: string;
 
