@@ -29,6 +29,10 @@ fi
 # runs from it keeps its records, so a test that makes one there would write to a live hex's.
 beside=$(dirname "$hex")/state
 [ ! -e "$beside" ] || live=1
+# The preload (tools/sandbox.ts) clears these only from process.env, while a test's own /proc/<pid>/environ, which
+# the hub reads for a session's thread, keeps what bun was started with: a job's HEX_OWNER put the board tests' fake
+# sessions under its thread. Same names as the preload's.
+unset $(env | sed -nE 's/^(HEX_[A-Z0-9_]*|BUZZ_[A-Z0-9_]*|IIKB_[A-Z0-9_]*|VOICE_[A-Z0-9_]*|[A-Z0-9_]*_STATE_DIR|[A-Z0-9_]*_TOKEN|MEMORY_DIR|NOTIFY_SOCKET|INVOCATION_ID)=.*/\1/p')
 # Four files at a time, CI's four cores: more saves little, since one file takes most of the time, and the machine
 # a check runs on is often the one hex runs on.
 bun test --parallel=4 "$@"
