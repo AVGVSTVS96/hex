@@ -1577,37 +1577,56 @@ inEachHome(
 );
 
 inEachHome(
-  "a transcript grows only from the end its sender read, a page at a time, and only an open thread's stays ($home)",
+  "a transcript's copy grows only from where its sender read it to stand, is another machine's once that takes it, and only an open thread's stays ($home)",
   ({ open }) => {
     const store = open(dir);
     const first = [{ upto: 6, text: '{"a"}\n' }];
     const nothing = store.transcripts.end("s-1");
-    expect(nothing).toEqual({ size: 0, tail: "" });
-    expect(store.transcripts.append("s-1", nothing, first, "t1")).toEqual({ size: 6, tail: "t1" });
-    expect(store.transcripts.append("s-1", nothing, first, "t1")).toEqual({ size: 6, tail: "t1" });
+    expect(nothing).toEqual({ size: 0, tail: "", of: 0, by: "" });
+
+    const said = store.transcripts.append("s-1", nothing, [], { tail: "", of: 6, by: "server" });
+    expect(said).toEqual({ size: 0, tail: "", of: 6, by: "server" });
+    const sent = store.transcripts.append("s-1", said, first, { tail: "t1", of: 6, by: "server" });
+    expect(sent).toEqual({ size: 6, tail: "t1", of: 6, by: "server" });
     expect(
-      store.transcripts.append(
-        "s-1",
-        { size: 6, tail: "other" },
-        [{ upto: 9, text: "{}\n" }],
-        "t2",
-      ),
-    ).toEqual({ size: 6, tail: "t1" });
+      store.transcripts.append("s-1", said, first, { tail: "t1", of: 6, by: "server" }),
+    ).toEqual(sent);
+
+    const taken = store.transcripts.append("s-1", sent, [], { tail: "t1", of: 6, by: "twin" });
+    expect(taken.by).toBe("twin");
+    expect(
+      store.transcripts.append("s-1", sent, [{ upto: 9, text: "{}\n" }], {
+        tail: "t2",
+        of: 9,
+        by: "server",
+      }),
+    ).toEqual(taken);
 
     const long = "x".repeat(1024 * 1024);
-
     const more = [1, 2, 3].map((nth) => ({ upto: 6 + nth * long.length, text: long }));
-    expect(store.transcripts.append("s-1", { size: 6, tail: "t1" }, more, "t3").tail).toBe("t3");
+    const grown = { tail: "t3", of: 6 + 3 * long.length, by: "twin" };
+    expect(store.transcripts.append("s-1", taken, more, grown)).toMatchObject(grown);
     expect(store.transcripts.since("s-1", 0).map(({ upto }) => upto)).toEqual([6, 6 + long.length]);
     expect(store.transcripts.since("s-1", 6 + long.length).map(({ text }) => text)).toEqual([
       long,
       long,
     ]);
 
+    const over = store.transcripts.append(
+      "s-1",
+      store.transcripts.end("s-1"),
+      first,
+      { tail: "t1", of: 6, by: "twin" },
+      true,
+    );
+
+    expect(over).toEqual({ size: 6, tail: "t1", of: 6, by: "twin" });
+    expect(store.transcripts.since("s-1", 0)).toEqual(first);
+
     store.threads.keep("telegram", { "-100:7": { name: "plants", session: "s-1" } });
-    store.transcripts.append("s-2", nothing, first, "t1");
+    store.transcripts.append("s-2", nothing, first, { tail: "t1", of: 6, by: "twin" });
     expect(store.transcripts.prune()).toBe(1);
-    expect(store.transcripts.end("s-1").tail).toBe("t3");
+    expect(store.transcripts.end("s-1")).toEqual(over);
     expect(store.transcripts.end("s-2")).toEqual(nothing);
     expect(store.transcripts.since("s-2", 0)).toEqual([]);
   },

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { now } from "./db.ts";
-import type { Core } from "./db.ts";
+import type { Core, Write } from "./db.ts";
 import { Holds } from "./holds.ts";
 import { Jobs } from "./jobs.ts";
 import { Leases } from "./leases.ts";
@@ -20,7 +20,9 @@ import { Threads } from "./threads.ts";
 import { Transcripts } from "./transcripts.ts";
 import { Turns } from "./turns.ts";
 
-export function domains(core: Core) {
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// quiet: a home's write to tables of its own, which it tells no watcher of; a home with no watchers to spare writes them as any other.
+export function domains(core: Core, quiet: Write = core.write) {
   const messages = new Messages(core);
   const questions = new Questions(core, messages);
   const threads = new Threads(core);
@@ -41,7 +43,7 @@ export function domains(core: Core) {
     passes: new Passes(core),
     scheduler: new Scheduler(core, messages),
     operations: new Operations(core),
-    transcripts: new Transcripts(core),
+    transcripts: new Transcripts(core, quiet),
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // The clock that stamps every record: what compares a time against those stamps asks it, since its own machine's can differ from the home's.
     clock: { now },

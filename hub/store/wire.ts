@@ -60,59 +60,36 @@ function methodsOf(domains: Domains): Map<string, Method> {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A home's answers to the calls that reach it: what the method returned, or the words it threw, and the domain the call named.
-export function answeringByDomain(
-  domains: Domains,
-  deployed = false,
-): (call: string) => { reply: Reply; domain?: string } {
+// A home's answers to the calls that reach it: what the method returned, or the words it threw.
+export function answering(domains: Domains, deployed = false): (call: string) => Reply {
   const methods = methodsOf(domains);
 
   return (call) => {
-    let named: string | undefined;
-
     try {
       const { domain, method, args, absent = [] } = CallJson.parse(JSON.parse(call));
-      named = domain;
       const answer = methods.get(`${domain}.${method}`);
 
       if (answer === undefined) {
         return {
-          reply: {
-            error: `the store has no ${domain}.${method}: it is older than this hex`,
-            every: true,
-          },
-          domain,
+          error: `the store has no ${domain}.${method}: it is older than this hex`,
+          every: true,
         };
       }
 
       const value = answer(...args.map((arg, at) => (absent.includes(at) ? undefined : arg)));
 
-      return {
-        reply:
-          value !== null && value !== undefined && Object.getPrototypeOf(value) === null
-            ? { value, prototype: null }
-            : { value },
-        domain,
-      };
+      return value !== null && value !== undefined && Object.getPrototypeOf(value) === null
+        ? { value, prototype: null }
+        : { value };
     } catch (error) {
       const said = error instanceof Error ? error.message : String(error);
       const { code = said } = SqliteFailure.safeParse(error).data ?? {};
 
-      return {
-        reply:
-          HOME_FAILED.test(code) || (deployed && SCHEMA_FAILED.test(said))
-            ? { error: said, every: true }
-            : { error: said },
-        ...(named !== undefined && { domain: named }),
-      };
+      return HOME_FAILED.test(code) || (deployed && SCHEMA_FAILED.test(said))
+        ? { error: said, every: true }
+        : { error: said };
     }
   };
-}
-
-export function answering(domains: Domains, deployed = false): (call: string) => Reply {
-  const answer = answeringByDomain(domains, deployed);
-
-  return (call) => answer(call).reply;
 }
 
 // oxlint-disable-next-line anti-slop/no-unknown-returns -- what a store's own method returned at its home: the client's types say what, since both ends are one hex

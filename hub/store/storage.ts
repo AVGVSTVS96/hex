@@ -1,10 +1,10 @@
 import { z } from "zod";
 
 import { eachVariable, onlyReading } from "./db.ts";
-import type { Core } from "./db.ts";
+import type { Core, Write } from "./db.ts";
 import { domains, migrate, OffersJson, unmet } from "./domains.ts";
 import type { Domains } from "./domains.ts";
-import { answeringByDomain } from "./wire.ts";
+import { answering } from "./wire.ts";
 import type { Reply } from "./wire.ts";
 
 // The part of a Durable Object's storage the store runs on: https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/
@@ -51,10 +51,6 @@ const Leftovers = z.array(
 
 const Arrived = z.object({ version: z.number().int().nonnegative() });
 const Query = z.object({ text: z.string(), bound: z.array(z.unknown()).default([]) });
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A watcher is told when hex's records change. A transcript growing changes none of them, and grows with every line of every session, so it wakes no one.
-const UNWATCHED = "transcripts";
 
 class UndoneError extends Error {
   override name = "UndoneError";
@@ -195,19 +191,39 @@ export function sqlOver(storage: Storage): Core {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A write to the home's own tables (quiet), and how many rows those have changed (unheard), which a call's count of what it wrote leaves out, so a watcher hears only of hex's records.
+function ownWrites(core: Core, changes: () => number) {
+  let unheard = 0;
+
+  const quiet: Write = (fn) => {
+    const before = changes();
+
+    try {
+      return core.write(fn);
+    } finally {
+      unheard += changes() - before;
+    }
+  };
+
+  return { quiet, unheard: () => unheard };
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // hex's records in a Durable Object's storage. It starts empty and takes its records from a hex.db once (store/move.ts); from then on it migrates itself as a file does, counting its migrations in a table, since an object refuses pragma user_version.
 export function recordsIn(storage: Storage, dir = "") {
   const { sql } = storage;
   const core = sqlOver(storage);
   let records: Domains | undefined;
-  let answer: ReturnType<typeof answeringByDomain> | undefined;
+  let answer: ReturnType<typeof answering> | undefined;
 
   const run = (text: string, ...values: unknown[]) => exec(sql, text, values).toArray();
   const home = () => HomeRow.parse(run("select version, tenure, served, lease from _home")[0]);
   const changes = () => Count.parse(run("select total_changes() as n")[0]).n;
 
+  const own = ownWrites(core, changes);
+
   const ready = () => {
-    const made = domains(core);
+    const made = domains(core, own.quiet);
 
     migrate(
       core,
@@ -222,7 +238,7 @@ export function recordsIn(storage: Storage, dir = "") {
     );
 
     records = made;
-    answer = answeringByDomain(made, true);
+    answer = answering(made, true);
   };
 
   run(
@@ -327,13 +343,12 @@ export function recordsIn(storage: Storage, dir = "") {
       }
 
       const answered = answer;
-      const before = changes();
+      const before = changes() - own.unheard();
       let reply: Reply = { error: "the call didn't run" };
-      let domain: string | undefined;
 
       try {
         core.write(() => {
-          ({ reply, domain } = answered(text));
+          reply = answered(text);
 
           if ("error" in reply) {
             throw new UndoneError();
@@ -347,7 +362,7 @@ export function recordsIn(storage: Storage, dir = "") {
         return { reply, wrote: false };
       }
 
-      return { reply, wrote: changes() !== before && domain !== UNWATCHED };
+      return { reply, wrote: changes() - own.unheard() !== before };
     },
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
