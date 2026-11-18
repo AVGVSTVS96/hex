@@ -143,7 +143,7 @@ export const tools = [
     name: "hang_up",
     _meta: { "anthropic/alwaysLoad": true },
     description:
-      "End the live call once the voice finishes speaking. Say goodbye with say first, and call this before any other work.",
+      "End the live call once the voice finishes speaking. When the caller asks to hang up, call this before any other tool, say included: the voice says its own goodbye.",
     input: z.object({}),
   }),
 ] as const;
@@ -169,7 +169,7 @@ phone rings the caller's phone and holds the same kind of call there, for when y
 
 When the caller asks the voice to talk or come across differently, in any words (faster, briefer, warmer, "more like an engineer", another voice), call style in that turn: pace and personality where one fits, and their own words in words, kept with what words already holds (the call started message shows it). It takes hold once the voice finishes what it's saying, and for later calls.
 
-hang_up ends the live call once the voice finishes speaking. When the caller asks you to hang up, do it first in that turn: a short goodbye with say, then hang_up, then any other work. Also hang up when a call you placed has done its job and the caller has said goodbye; a question, even "can I go?", gets its answer first.
+hang_up ends the live call once the voice finishes speaking. When the caller asks you to hang up, call hang_up first in that turn, before say or any other tool: the voice has already said goodbye, and your tools run one at a time, so each one before it keeps the caller waiting. Also hang up when a call you placed has done its job and the caller has said goodbye; a question, even "can I go?", gets its answer first.
 
 When a call ends, name it with title: a few plain words for what it was about, shown in the caller's list of past calls. Once the call's work has settled, call title again for that call with summary (what happened and what you sent where, in two or three plain sentences) and waiting (each thing left for the caller to do or decide, a short line each; an empty list when nothing is).
 
