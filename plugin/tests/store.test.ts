@@ -285,7 +285,9 @@ test("an update deploys the store the new hex is built with, with the token in t
   const [deployed, ...more] = deploys();
   expect(more).toEqual([]);
   expect(deployed).toStartWith(`deploy --config ${join(root, "cache")}/hex-check-`);
-  expect(deployed).toEndWith(`/.hex/hub/store/wrangler.jsonc --var VERSION:${version}`);
+  expect(deployed).toEndWith(
+    `/.hex/hub/store/wrangler.jsonc --durable-objects-code-update-mode immediate --var VERSION:${version}`,
+  );
   expect(version).toMatch(new RegExp(`@${incoming}@\\d+$`, "u"));
   expect(read(join(root, "wrangler.log"))).toContain("token from-dotenv");
   expect(existsSync(join(root, "secrets"))).toBe(false);
@@ -353,7 +355,7 @@ test("an update waits out Cloudflare's edge answering as the store before for as
   expect(read(join(root, "wrangler.log"))).not.toContain("rollback");
 }, 60_000);
 
-test("an update whose new store still answers as the one before after three minutes leaves it deployed, doesn't ship, and ships at the next update", async () => {
+test("an update whose new store still answers as the one before after five and a half minutes leaves it deployed, doesn't ship, and ships at the next update", async () => {
   let rolledOut = false;
 
   const { before, incoming, update } = await updateOverAStoreThatAnswers((deployed) =>
@@ -379,7 +381,7 @@ test("an update whose new store doesn't answer at all puts the store before it b
   expect(update.out).toContain(
     `not updated: the store hex ${incoming.slice(0, 7)} needs didn't deploy`,
   );
-  expect(update.out).toContain("didn't answer at all in three minutes");
+  expect(update.out).toContain("didn't answer at all in five and a half minutes");
   expect(update.out).toContain("the store before it is back");
   expect(read(join(root, "wrangler.log"))).toContain("rollback");
   expect(read(join(root, "deployed"))).toBe(BEFORE);
