@@ -1004,10 +1004,13 @@ async function toolCall(thread: string) {
   });
 
   await run.exited;
+  const said = await new Response(run.stdout).text();
 
-  return z
-    .object({ hookSpecificOutput: z.object({ additionalContext: z.string() }) })
-    .parse(JSON.parse(await new Response(run.stdout).text())).hookSpecificOutput.additionalContext;
+  return said === ""
+    ? undefined
+    : z
+        .object({ hookSpecificOutput: z.object({ additionalContext: z.string() }) })
+        .parse(JSON.parse(said)).hookSpecificOutput.additionalContext;
 }
 
 test("a steer leaves the session running, its message reaches the session at its next tool call, and its turn ends with the session's", async () => {
@@ -1031,12 +1034,7 @@ test("a steer leaves the session running, its message reaches the session at its
     prompt: [{ type: "text", text: "and check the tests" }],
   });
 
-  await eventually(async () =>
-    (await hexdb(join(dir, "hex", "state")).messages.untaken(sessionId)).some(
-      (row) => row.body === "and check the tests",
-    ),
-  );
-  const context = await toolCall(sessionId);
+  const context = await eventually(async () => await toolCall(sessionId));
   expect(context).toContain("and check the tests");
   expect(hex.inbound()).toHaveLength(2);
   hex.write(
