@@ -397,7 +397,7 @@ case "${1:-}" in
         elif [ -n "$now" ]; then
           why="a hub runs it (pid $now), but General hasn't connected to that hub"
         else
-          why="no hub stays up on it: what it printed is in the hub's log (state/hub.log, or the journal of the unit that runs hex), and \`hex rollback <an earlier commit>\` goes further back"
+          why="none stays up, and what it printed is in the hub's log (state/hub.log, or the journal of the unit that runs hex), and \`hex rollback <an earlier commit>\` goes further back"
         fi
         echo "hex rollback: hex's code is on $(described "$to"), but after ${waited}s no hub is up on it: $why. \`hex rollback $(git -C "$hex" rev-parse --short "$to")\` again finishes the rollback." >&2
         exit 1

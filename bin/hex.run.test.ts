@@ -431,7 +431,7 @@ test("when the commit hex went back to can't start, hex stays down and says so, 
 
   const rolled = rollback(crashing, { HEX_ROLLBACK_WAIT: "20" });
   expect(rolled.exitCode).toBe(1);
-  expect(rolled.stderr.toString()).toContain("no hub stays up on it");
+  expect(rolled.stderr.toString()).toContain("no hub is up on it: none stays up");
   expect(await running.exited).toBe(1);
   expect(await new Response(running.stderr).text()).toContain(
     "there's no earlier hex to go back to",
