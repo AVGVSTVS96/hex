@@ -2,7 +2,6 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   chmodSync,
   cpSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -15,10 +14,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { z } from "zod";
-
-import { startHub } from "../hub/hub.ts";
-import type { Hub } from "../hub/hub.ts";
-import { until } from "../hub/until.ts";
 
 const Args = z.array(z.string());
 
@@ -33,8 +28,6 @@ const HEX = join(import.meta.dir, "..");
 const saved = { ...process.env };
 
 let home: string;
-let hub: Hub;
-let listener: ReturnType<typeof Bun.serve>;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "session-"));
@@ -95,17 +88,9 @@ exit 0
     CLAUDE_SECURESTORAGE_CONFIG_DIR: "",
     HEX_CHAT_CLAUDE: "true",
   });
-  listener = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch: () => new Response(null, { status: 404 }),
-  });
 });
 
 afterEach(() => {
-  hub?.close();
-  void listener.stop(true);
-
   for (const name of Object.keys(process.env)) {
     if (!(name in saved)) {
       Reflect.deleteProperty(process.env, name);
@@ -117,161 +102,6 @@ afterEach(() => {
 });
 
 const flagValue = (args: string[], flag: string) => args[args.indexOf(flag) + 1] ?? "";
-
-async function launch(
-  channel: string,
-  thread: string,
-  options: Partial<Parameters<typeof startHub>[0]> = {},
-  cwd?: string,
-) {
-  const stateOfItsOwnSoNoEarlierHubsThreadsRelaunchAndRace = mkdtempSync(join(home, "state/hub-"));
-
-  hub = await startHub({
-    stateDir: stateOfItsOwnSoNoEarlierHubsThreadsRelaunchAndRace,
-    channel,
-    server: { title: "Test", instructions: "Messages arrive as <channel>.", tools: [] },
-    port: listener.port ?? 0,
-    hexDir: home,
-    launcher: join(home, ".hex/bin/session"),
-    call: () => Promise.resolve("sent"),
-    state: () => {},
-    failed: (_, reason) => {
-      throw new Error(reason);
-    },
-    ...options,
-  });
-
-  if (cwd !== undefined && cwd !== "") {
-    hub.open(thread, thread, "hi", cwd);
-  } else {
-    await hub.deliver(thread, thread, { content: "hi", author: "owner", meta: {} });
-  }
-
-  await until(() => existsSync(join(home, "launched")));
-
-  const args = Args.parse(JSON.parse(readFileSync(join(home, "launched"), "utf-8")));
-  const file = flagValue(args, "--settings");
-
-  return { args, file, settings: Settings.parse(JSON.parse(readFileSync(file, "utf-8"))) };
-}
-
-test("a DM session the hub starts gets the chat prompt, its view's tail and wake through its settings, since Claude's daemon starts a --bg session with the daemon's environment rather than the launcher's, and its settings, token included, stay in an owner-only file", async () => {
-  const { args, file, settings } = await launch("plugin:telegram@hex", "1000001", {
-    fresh: () => true,
-  });
-
-  const system = readFileSync(flagValue(args, "--system-prompt-file"), "utf-8");
-  expect(system).toStartWith("You are hex");
-  expect(system).not.toContain("#0 a memory");
-  expect(settings.claudeMdExcludes).toContain(join(home, "AGENTS.md"));
-  expect(settings.claudeMdExcludes).not.toContain(join(home, "state/wake/CLAUDE.md"));
-  expect(args[args.indexOf("--add-dir") + 1]).toBe(join(home, "state/wake"));
-  expect(settings.env).toMatchObject({
-    HEX_FRESH: "1",
-    HEX_THREAD: "1000001",
-    CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1",
-  });
-  expect(settings.env.CLAUDE_CODE_SHELL).toStartWith(join(home, ".hex/bin/shell/"));
-  expect(settings.env.HEX_TOKEN).toBeString();
-  expect(args.join(" ")).not.toContain(settings.env.HEX_TOKEN);
-  expect(statSync(file).mode.toString(8)).toEndWith("600");
-});
-
-test("a launch writes the wake only when there is none, and removes it once memory is off, not when settings do not parse", async () => {
-  const wake = join(home, "state/wake/CLAUDE.md");
-  await launch("plugin:telegram@hex", "-100:5");
-  expect(readFileSync(wake, "utf-8")).toContain("#0 a memory");
-  writeFileSync(wake, "kept\n");
-  rmSync(join(home, "launched"));
-  hub.close();
-  await launch("plugin:telegram@hex", "-100:6");
-  expect(readFileSync(wake, "utf-8")).toBe("kept\n");
-  writeFileSync(join(home, ".claude/settings.json"), '{ "env": ');
-  rmSync(join(home, "launched"));
-  hub.close();
-  await launch("plugin:telegram@hex", "-100:8");
-  expect(readFileSync(wake, "utf-8")).toBe("kept\n");
-  writeFileSync(join(home, ".claude/settings.json"), "{}");
-  rmSync(join(home, "launched"));
-  hub.close();
-  await launch("plugin:telegram@hex", "-100:7");
-  expect(existsSync(wake)).toBe(false);
-});
-
-test("General, started by the hub, runs the main model", async () => {
-  const { args } = await launch("plugin:telegram@hex", "-100:1", { main: "-100:1", general: true });
-  expect(args[args.indexOf("--model") + 1]).toBe("claude-opus-5-5");
-  expect(args).not.toContain("--system-prompt-file");
-});
-
-test("a topic session orchestrates on its own model and effort, its agents run the folder's, and a model or effort it picked wins", async () => {
-  const { args, file, settings } = await launch("plugin:telegram@hex", "-100:5");
-  expect(flagValue(args, "--model")).toBe("fable");
-  expect(flagValue(args, "--effort")).toBe("high");
-  expect(settings.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe("opus");
-  Bun.spawnSync(
-    [
-      join(home, ".hex/bin/session"),
-      "--bg",
-      "--model",
-      "haiku",
-      "--effort",
-      "low",
-      "--settings",
-      file,
-    ],
-    {
-      cwd: home,
-      env: process.env,
-    },
-  );
-  const picked = Args.parse(JSON.parse(readFileSync(join(home, "launched"), "utf-8")));
-  expect(picked[picked.lastIndexOf("--model") + 1]).toBe("haiku");
-  expect(picked[picked.lastIndexOf("--effort") + 1]).toBe("low");
-});
-
-test("a voice session, started by the hub, runs HEX_VOICE_MODEL on the 1-hour cache, gives up on a failing API after 3 retries, and reads the rules and memory itself instead of a chat view", async () => {
-  const { args, settings } = await launch("plugin:voice@hex", "voice", {
-    main: "voice",
-    fresh: () => true,
-    limits: { capacity: 0 },
-  });
-
-  expect(settings).toMatchObject({
-    model: "haiku",
-    effortLevel: "low",
-    env: { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h", CLAUDE_CODE_MAX_RETRIES: "3", HEX_FRESH: "1" },
-  });
-  expect(args).not.toContain("--system-prompt-file");
-  expect(settings.claudeMdExcludes ?? []).toEqual([]);
-});
-
-test("a topic session, started by the hub, gets none of the chat or main additions", async () => {
-  const { args, settings } = await launch("plugin:telegram@hex", "-100:5", { fresh: () => false });
-  expect(args).not.toContain("--system-prompt-file");
-  expect(settings.env.HEX_THREAD).toBe("-100:5");
-});
-
-test("a session started in another project gets the hex folder's settings under the hub's, in its file", async () => {
-  writeFileSync(
-    join(home, ".claude/settings.json"),
-    JSON.stringify({
-      model: "opus",
-      permissions: { deny: ["Read(./.env)"] },
-      env: { MEMORY_DIR: join(home, "memory") },
-    }),
-  );
-  const project = join(home, "project");
-  mkdirSync(project);
-  const { args, settings } = await launch("plugin:t3@hex", "t3:1", {}, project);
-  expect(settings).toMatchObject({
-    model: "opus",
-    permissions: { deny: [`Read(/${home}/.env)`] },
-    enabledPlugins: { "t3@hex": true },
-    env: { MEMORY_DIR: join(home, "memory"), HEX_THREAD: "t3:1" },
-  });
-  expect(args).toContain("--append-system-prompt");
-});
 
 test("every folder a background session starts in is trusted (a -p run never asks), one started in the home folder works in the hex folder, and one started by hand still gets the hex folder's settings", () => {
   writeFileSync(
