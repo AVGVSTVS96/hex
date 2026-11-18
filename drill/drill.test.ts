@@ -176,7 +176,7 @@ scenario(
     hex.hold(true);
     const key = chat.say("kill test");
     const taker = await soon('the session taking "kill test"', () => takerOf(store, key));
-    const channel = () => hex.sessions().find(({ session }) => session === taker)?.channel;
+    const channel = () => hex.sessions().find(({ sessionId }) => sessionId === taker)?.channel;
     const before = channel();
     const killed = await hex.hub();
     process.kill(killed, "SIGKILL");
@@ -192,6 +192,22 @@ scenario(
     await answered(chat, "kill test");
     await talk(chat, store, "after the kill");
     once(chat, store, key, "kill test");
+  },
+);
+
+scenario(
+  "a session killed while it holds a message: the thread's next session answers it, once",
+  async ({ running, soon, answered, talk }) => {
+    const { chat, store, hex } = await running();
+    hex.hold(true);
+    const key = chat.say("crash test");
+    const taker = await soon('the session taking "crash test"', () => takerOf(store, key));
+    const pid = hex.sessions().find(({ sessionId }) => sessionId === taker)?.pid ?? 0;
+    process.kill(pid, "SIGKILL");
+    hex.hold(false);
+    await answered(chat, "crash test");
+    await talk(chat, store, "after the crash");
+    once(chat, store, key, "crash test");
   },
 );
 
@@ -252,7 +268,7 @@ scenario(
     );
     const taker = takerOf(store, key);
     insist(
-      second.sessions().some(({ session }) => session === taker),
+      second.sessions().some(({ sessionId }) => sessionId === taker),
       `"after the move" was taken by ${String(taker)}, not by a session of the second machine`,
     );
     await talk(chat, store, "later on the second machine");

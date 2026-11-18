@@ -20,7 +20,7 @@ import { GENERAL, OWNER } from "./telegram.ts";
 
 const repo = join(import.meta.dir, "..");
 const fakes = join(import.meta.dir, "bin");
-const Job = z.object({ sessionId: z.string() });
+const Job = z.object({ sessionId: z.string(), pid: z.number().optional() });
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The sandbox sits beside bun's own cache, on the same disk, so each copy of hex installs by linking from it and downloads nothing.
@@ -234,9 +234,7 @@ export async function folder(
     },
     sessions: () =>
       readdirSync(join(claude, "jobs")).map((id) => ({
-        session: Job.parse(
-          JSON.parse(readFileSync(join(claude, "jobs", id, "state.json"), "utf-8")),
-        ).sessionId,
+        ...Job.parse(JSON.parse(readFileSync(join(claude, "jobs", id, "state.json"), "utf-8"))),
         channel: existsSync(join(claude, "jobs", id, "channel"))
           ? readFileSync(join(claude, "jobs", id, "channel"), "utf-8")
           : "",
