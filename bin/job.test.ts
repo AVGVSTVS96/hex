@@ -66,9 +66,8 @@ beforeAll(() => {
     "hub/until.ts",
     "hub/beside.ts",
     "hub/origin.ts",
-    "hub/mcp.ts",
     "hub/kept.ts",
-    "hub/ordered.ts",
+    "hub/tag.ts",
   ]) {
     cpSync(join(HEX, path), join(home, ".hex", path), { dereference: true, recursive: true });
   }

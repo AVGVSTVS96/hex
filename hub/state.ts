@@ -6,7 +6,7 @@ import { followed } from "./kept.ts";
 import type { HubLine } from "./socket.ts";
 import { MovedError, stateDir, UnreachedError } from "./store.ts";
 import type { NewRow } from "./store.ts";
-import { keyOf } from "./tag.ts";
+import { keyOf, startsWithTag } from "./tag.ts";
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER, HEX_BESIDE } = process.env;
 const at = new Date().toISOString();
@@ -48,7 +48,7 @@ const {
   error_details,
 } = await input();
 
-const fromChat = prompt?.startsWith("<channel source=") === true;
+const fromChat = prompt !== undefined && startsWithTag(prompt);
 
 const fromAnAgent =
   prompt !== undefined &&

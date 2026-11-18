@@ -7,6 +7,7 @@ import {
   toAcpNotifications,
 } from "@agentclientprotocol/claude-agent-acp";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
+import { holdsTag } from "@hex/hub";
 import { z } from "zod";
 
 const PROJECTS = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects");
@@ -66,8 +67,7 @@ const contentSchema = z.union([
 // A message that came mid-turn reaches the session through hub/held.ts, as a tool call's hook context.
 function heldForTheTurn(attachment: z.infer<typeof entrySchema>["attachment"]) {
   return (
-    attachment?.type === "hook_additional_context" &&
-    attachment.content?.some((text) => text.includes('<channel source="')) === true
+    attachment?.type === "hook_additional_context" && attachment.content?.some(holdsTag) === true
   );
 }
 
