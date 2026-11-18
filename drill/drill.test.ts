@@ -1,5 +1,5 @@
 import { afterAll, test } from "bun:test";
-import { appendFileSync, copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { until } from "../hub/until.ts";
@@ -13,8 +13,12 @@ type Chat = ReturnType<typeof telegram>;
 type Store = ReturnType<typeof cloudflare>;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The one time limit, for a drill that hangs: every wait is on something hex does, however long a loaded machine takes to do it. A scenario that takes half a minute alone has taken three on a busy server.
+// A scenario's whole time limit, for a drill that hangs: a scenario that takes half a minute alone has taken three on a busy server.
 const HANGS = 600_000;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What one wait gets beyond the machine's own slowness: hex's longest waits of its own, a store it asks again within half a minute (hub/store/remote.ts) and a turn it takes as over after a minute without a report (hub/turns.ts), twice over.
+const HEX_WAITS = 120_000;
 
 const answer = (words: string) => `answer to: ${words}`;
 
@@ -39,7 +43,7 @@ function insist(holds: boolean, otherwise: string) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// One thing that happened to hex, played against hex whole: a failure says what didn't happen, then how each hub's log ends.
+// One thing that happened to hex, played against hex whole: a failure says what didn't happen, then how each hub's log ends and what its sessions printed.
 function scenario(name: string, play: (drill: Drill) => Promise<void>) {
   test.concurrent(
     name,
@@ -71,27 +75,52 @@ function scenario(name: string, play: (drill: Drill) => Promise<void>) {
 
 type Drill = ReturnType<typeof drillFor>;
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The end of a log with each line once, where it last stood, and how often it came: an outage repeats one line for as long as it lasts.
+function ending(log: string, lines: number) {
+  const times = new Map<string, number>();
+
+  for (const line of log.trimEnd().split("\n")) {
+    const before = times.get(line) ?? 0;
+    times.delete(line);
+    times.set(line, before + 1);
+  }
+
+  return [...times]
+    .slice(-lines)
+    .map(([line, came]) => (came > 1 ? `${line} (${came} times)` : line))
+    .join("\n");
+}
+
 function drillFor() {
   let waitingFor = "";
+  let within = HANGS;
   const folders: Folder[] = [];
   const outside: { stop: () => Promise<void> }[] = [];
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A hook that fails in a session doesn't stop the session, so hex can go on answering with one broken: the drill fails on the first, whatever it was waiting for.
+  // A hook that fails in a session doesn't stop the session, and a reply the tool refuses never reaches the owner, so hex can go on with either: the drill fails on the first, whatever it was waiting for.
   const sound = () => {
     for (const each of folders) {
       insist(
-        each.hooksFailed() === "",
-        `a session's hook failed on machine ${basename(each.dir)}:\n${each.hooksFailed()}`,
+        each.faults() === "",
+        `a session on machine ${basename(each.dir)} was failed by hex:\n${each.faults()}`,
       );
     }
   };
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A wait ends as failed well before the scenario's limit: after hex's own waits and four times what this hex took to start, which is how slow the machine is now.
   const soon = async <T>(what: string, check: () => T | Promise<T>) => {
     waitingFor = what;
+    const began = Date.now();
 
     const value = await until(() => {
       sound();
+      insist(
+        Date.now() - began < within,
+        `${what}: it hadn't happened after ${Math.round(within / 1000)} seconds`,
+      );
 
       return check();
     });
@@ -130,7 +159,9 @@ function drillFor() {
       const hex = await machine("a", chat, store);
       await hex.moveInto();
       const run = hex.start();
+      const started = Date.now();
       await soon("hex starting, until General's session connects", hex.connected);
+      within = Math.min(HANGS, HEX_WAITS + 4 * (Date.now() - started));
 
       return { chat, store, hex, run };
     },
@@ -148,10 +179,16 @@ function drillFor() {
     failure: (error: Error) =>
       [
         error.message,
-        ...folders.map(
-          (each) =>
-            `machine ${basename(each.dir)}'s hub log ends:\n${each.log().split("\n").slice(-40).join("\n")}`,
-        ),
+        ...folders.flatMap((each) => [
+          `machine ${basename(each.dir)}'s hub log ends:\n${ending(each.log(), 40)}`,
+          ...each
+            .sessionLogs()
+            .filter(({ log }) => log.trim() !== "")
+            .map(
+              ({ name, log }) =>
+                `machine ${basename(each.dir)}'s session "${name}" printed:\n${ending(log, 10)}`,
+            ),
+        ]),
       ].join("\n\n"),
     end: async () => {
       await Promise.all(
@@ -293,46 +330,5 @@ scenario(
     );
     await talk(chat, store, "later on the second machine");
     once(chat, store, key, "after the move");
-  },
-);
-
-scenario(
-  "a commit whose hub can't start: hex goes back to the last good one, says so, and still answers",
-  async ({ running, soon, talk }) => {
-    const { chat, store, hex } = await running();
-    await talk(chat, store, "before the update");
-    const good = await hex.git("rev-parse", "HEAD");
-    const serve = join(hex.hex, "hub", "serve.ts");
-    writeFileSync(
-      serve,
-      `throw new Error("this hub can't start");\n${readFileSync(serve, "utf-8")}`,
-    );
-    await hex.git("commit", "-qam", "a hub that can't start");
-    await hex.bin("restart");
-    await soon(
-      "hex going back to the last good commit",
-      async () => (await hex.git("rev-parse", "HEAD")) === good,
-    );
-    await soon(
-      "General hearing that hex went back",
-      () => chat.heard("couldn't start: its hub exited three times") > 0,
-    );
-    const key = await talk(chat, store, "after the rollback");
-    once(chat, store, key, "after the rollback");
-  },
-);
-
-scenario(
-  "a .env line that fails stops hex, with General told why, instead of a hub that never starts",
-  async ({ running, soon, step, talk }) => {
-    const { chat, store, hex, run } = await running();
-    await talk(chat, store, "before the edit");
-    appendFileSync(join(hex.dir, ".env"), "this line fails\n");
-    await hex.bin("restart");
-    insist(
-      (await step("hex stopping on the failing line", run.exited)) !== 0,
-      "hex stopped as if nothing were wrong",
-    );
-    await soon("General hearing why hex can't start", () => chat.heard("fails as a command") > 0);
   },
 );

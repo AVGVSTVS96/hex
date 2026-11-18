@@ -6,6 +6,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -21,7 +22,12 @@ import { GENERAL, OWNER } from "./telegram.ts";
 
 const repo = join(import.meta.dir, "..");
 const fakes = join(import.meta.dir, "bin");
-const Job = z.object({ sessionId: z.string(), pid: z.number().optional() });
+
+const Job = z.object({
+  sessionId: z.string(),
+  pid: z.number().optional(),
+  respawnFlags: z.array(z.string()).default([]),
+});
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The sandbox sits beside bun's own cache, on the same disk, so each copy of hex installs by linking from it and downloads nothing.
@@ -32,11 +38,18 @@ const caches = process.env.XDG_CACHE_HOME ?? join(homedir(), ".cache");
 mkdirSync(caches, { recursive: true });
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A drill stopped together with its leash, as when systemd stops the job an update runs in, leaves its sandbox behind: each drill removes the ones whose runner is gone.
+// A drill stopped together with its leash, as by a kill of both, leaves its sandbox behind, and its hex running: each drill ends what still runs in the ones whose runner is gone, and removes them.
 for (const left of readdirSync(caches).filter((name) => name.startsWith("hex-drill-"))) {
   const runner = join(caches, left, "runner");
 
   if (existsSync(runner) && !alive(Number(readFileSync(runner, "utf-8")))) {
+    const running = runningIn(join(caches, left));
+
+    for (const pid of running) {
+      process.kill(pid, "SIGKILL");
+    }
+
+    await until(() => !running.some(alive));
     rmSync(join(caches, left), { recursive: true, force: true });
   }
 }
@@ -91,6 +104,24 @@ function alive(pid: number) {
   } catch {
     return false;
   }
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Every process whose working folder is inside a folder, which a hex's run loop, hub, door and sessions all are of their sandbox's. Linux tells it in /proc; a machine without one finds none, and only the folder goes.
+function runningIn(sandbox: string) {
+  const inside = (pid: string) => {
+    try {
+      return `${readlinkSync(`/proc/${pid}/cwd`)}/`.startsWith(`${sandbox}/`);
+    } catch {
+      return false;
+    }
+  };
+
+  return existsSync("/proc")
+    ? readdirSync("/proc")
+        .filter((name) => /^\d+$/u.test(name) && inside(name))
+        .map(Number)
+    : [];
 }
 
 const gone = (group: number) => {
@@ -246,11 +277,24 @@ export async function folder(
     },
     connected: () => existsSync(join(state, "good")),
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // Each hook of a session here that failed, as the drill's claude wrote it down.
-    hooksFailed: () =>
-      existsSync(join(claude, "hooks.failed"))
-        ? readFileSync(join(claude, "hooks.failed"), "utf-8").trim()
+    // Each hook of a session here that failed, and each reply its tool refused, as the drill's claude wrote them down.
+    faults: () =>
+      existsSync(join(claude, "faults"))
+        ? readFileSync(join(claude, "faults"), "utf-8").trim()
         : "",
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // What each session here printed, its hooks' errors among it, under the name hex started it with.
+    sessionLogs: () =>
+      (existsSync(join(claude, "jobs")) ? readdirSync(join(claude, "jobs")) : []).map((id) => {
+        const { respawnFlags } = Job.parse(
+          JSON.parse(readFileSync(join(claude, "jobs", id, "state.json"), "utf-8")),
+        );
+
+        return {
+          name: respawnFlags[respawnFlags.indexOf("--name") + 1] ?? id,
+          log: readFileSync(join(claude, "jobs", id, "log"), "utf-8"),
+        };
+      }),
     hub: async () =>
       Number(
         await sh(["pgrep", "-P", String(run?.pid), "-f", "hub/serve.ts"], { cwd: dir }).catch(

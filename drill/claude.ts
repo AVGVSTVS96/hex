@@ -32,7 +32,7 @@ if (config === "" || !existsSync(config)) {
 
 const jobs = join(config, "jobs");
 const hold = join(config, "hold");
-const failed = join(config, "hooks.failed");
+const faults = join(config, "faults");
 
 const JobRecord = z.object({
   sessionId: z.string(),
@@ -194,7 +194,7 @@ type Session = {
   transcript: string;
 };
 
-// Every hook an event's matchers select runs at once, with the event's input on stdin; exit 2 blocks a prompt, and any other exit but 0 is a hook that failed, which Claude Code shows its user and the drill is told of: https://code.claude.com/docs/en/hooks#hook-input-and-output
+// Every hook an event's matchers select runs at once, with the event's input on stdin; exit 2 blocks a prompt, and any other exit but 0 is a hook that failed, which Claude Code shows its user and the drill is told of (faults), as it is of a reply the tool refused: https://code.claude.com/docs/en/hooks#hook-input-and-output
 async function hooks(
   { job, env, plugin, cwd, transcript }: Session,
   event: string,
@@ -241,7 +241,7 @@ async function hooks(
 
         if (code !== 0 && code !== 2) {
           appendFileSync(
-            failed,
+            faults,
             `${event}: \`${hook.command}\` exited ${code}: ${err.trim().split("\n").at(-1) ?? ""}\n`,
           );
         }
@@ -460,7 +460,7 @@ async function session(id: string) {
       const response = await channel.reply(said);
 
       if (response.isError === true) {
-        console.error(`the reply tool failed: ${JSON.stringify(response.content)}`);
+        appendFileSync(faults, `the reply tool failed: ${JSON.stringify(response.content)}\n`);
       }
 
       const event = response.isError === true ? "PostToolUseFailure" : "PostToolUse";
