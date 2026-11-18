@@ -6,8 +6,6 @@ import { difference } from "./carry.ts";
 import type { Read } from "./carry.ts";
 import { awayFile, remote } from "./remote.ts";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Brings a folder's records back from its Durable Object into a hex.db, and proves every row came before the folder stops pointing hex at the object. hex is stopped first. The claim makes any other machine's hub lost from then on. The hex.db is in place before store.json goes aside, so no process ever finds the folder with neither. Anything that fails leaves hex on the object, and running it again starts over.
 export async function back(dir: string, say: (line: string) => void) {
   const store = remote(dir, undefined, false);
   const file = join(dir, "hex.db");

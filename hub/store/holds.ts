@@ -88,8 +88,6 @@ export class Holds {
     this.threads = threads;
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A hold and the word of it to each held thread that is working land in one write.
   place(hold: NewHold, { zone, working }: { zone?: string | undefined; working: string[] }): Hold {
     return this.write(() => {
       const placed = this.create(hold);
@@ -111,8 +109,6 @@ export class Holds {
     });
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Wakes the threads a hold freed, a few at once, each with the word that its hold ended: when to look again, if any still wait.
   wake(at: string, { patience, atOnce }: { patience: number; atOnce: number }): string | undefined {
     return this.write(() => {
       const waking = this.waking(patience, at);

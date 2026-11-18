@@ -43,8 +43,7 @@ const AUTHOR_BEFORE_HEX_KEPT_AUTHORS = `case
 
 const AUTHORS = `(${AuthorColumn.options.map((author) => `'${author}'`).join(", ")})`;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The rows these triggers write count in Bun's `.changes` of the statement that set them off, unlike sqlite3_changes(), so a check on these tables counts what the statement returns.
+// WARNING: Bun's .changes also counts the rows these triggers write, unlike sqlite3_changes(), so count a write to these tables by what it returns: https://sqlite.org/c3ref/changes.html
 const STATUS_INPUTS = [
   { table: "tasks", thread: (row: string) => `${row}.owner` },
   { table: "questions", thread: (row: string) => `${row}.thread` },
@@ -299,8 +298,6 @@ const JobRecord = JobSpecJson.extend({
 
 const MarkRow = z.object({ record: z.string(), at: z.string() }).nullable();
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Before hex.db kept them, each job's record was a file in state/jobs, with a stop mark in seen and a file for its last end: a job that ended or can't be read is left out. The files stay for the resume where hex runs to remove, since they sync to the other machine, whose hex.db may take them in first.
 function carryJobRecords({ db, dir }: Migrating) {
   const records = join(dir, "jobs");
 
@@ -695,8 +692,6 @@ const SentRows = z.array(
 
 const SENT_TOGETHER_WITHIN_MS = 30_000;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Before questions kept the messages their files went in, a reply sent its files right after its words, or as the first file's caption: each question gets the file messages hex sent with it.
 function attachOldQuestionsTheirFiles({ db }: Migrating) {
   const asked = AskedRows.parse(
     db

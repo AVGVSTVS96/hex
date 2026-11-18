@@ -37,8 +37,7 @@ const MoveState = z.object({
   moving: z.object({ id: z.string(), step: z.number() }).nullable(),
 });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Cloudflare's edge can answer for the object with a page of its own, as it did with a 404 in the first minute after a Worker's first deploy; a move waits that out, a minute or two in all, before it gives up.
+// WARNING: for about a minute after a Worker's first deploy, Cloudflare's edge can answer for it with a 404 page of its own.
 const TIMES = {
   answerWithin: 120_000,
   firstRetry: 1000,
@@ -46,8 +45,6 @@ const TIMES = {
   giveUpAfter: 180_000,
 };
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Moves a folder's hex.db into the Durable Object `name` behind url, and proves every row arrived before the folder's store.json points hex there. hex is stopped first, and the move holds the file's write lock, so no process writes a row the object never gets. As the lock is let go the file refuses every write, so a process that opened it before the move, like a hook waiting on the lock, fails instead of keeping a record no hex reads; it then stays under another name. Until a hub has used the object, the same move run again finishes one whose last reply was lost, by comparing again, or starts it over.
 export async function move(dir: string, to: Away, say: (line: string) => void, times = TIMES) {
   const away = StoreJson.parse(to);
 
@@ -62,8 +59,6 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
   const id = crypto.randomUUID();
   let steps = 0;
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // One request, answered by the object, or rejected with UnreachedError when the answer isn't the object's own (none, a page of Cloudflare's, a 5xx or 429).
   const reply = async (route: string, body?: Posted, mark?: string) => {
     let response: Response;
     let text: string;
@@ -113,8 +108,6 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
   const post = async (route: string, body?: Posted) => await waitedOut(() => once(route, body));
   const state = async () => MoveState.parse(await post("move/state"));
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A step that changes the object carries its mark, so one whose answer was lost is asked after rather than sent again, and the object takes it once even if the network held a copy back.
   const step = async (route: string, body?: Posted) => {
     steps += 1;
     const mine = steps;
@@ -216,8 +209,7 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
     setAside(dir);
     renameSync(file, join(dir, MOVED));
 
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // A process that still reads hex.db, like a backup streaming it, keeps the last writes from reaching the file, so they go with it in its WAL.
+    // WARNING: a reader still on hex.db, like a backup streaming it, keeps the checkpoint from emptying the WAL: https://www.sqlite.org/wal.html#bigwal
     if (existsSync(`${file}-wal`) && statSync(`${file}-wal`).size > 0) {
       renameSync(`${file}-wal`, join(dir, `${MOVED}-wal`));
     }
@@ -233,8 +225,7 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
   }
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A file kept from an earlier move stays, its WAL with it, under the time this move set it aside, and its shared-memory index goes: a kept file read through another's WAL breaks both.
+// WARNING: a database opened beside another file's WAL or shm reads them as its own and corrupts: https://www.sqlite.org/howtocorrupt.html#_mispairing_database_files_and_hot_journals_
 function setAside(dir: string) {
   const kept = join(dir, MOVED);
   const stamp = new Date().toISOString().replaceAll(/\D/gu, "").slice(0, 14);

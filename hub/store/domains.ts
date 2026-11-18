@@ -20,9 +20,7 @@ import { Threads } from "./threads.ts";
 import { Transcripts } from "./transcripts.ts";
 import { Turns } from "./turns.ts";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// quiet: a home's write to tables of its own, which it tells no watcher of; a home with no watchers to spare writes them as any other.
-export function domains(core: Core, quiet: Write = core.write) {
+export function domains(core: Core, writeNoWatcherHears: Write = core.write) {
   const messages = new Messages(core);
   const questions = new Questions(core, messages);
   const threads = new Threads(core);
@@ -43,9 +41,7 @@ export function domains(core: Core, quiet: Write = core.write) {
     passes: new Passes(core),
     scheduler: new Scheduler(core, messages),
     operations: new Operations(core),
-    transcripts: new Transcripts(core, quiet),
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // The clock that stamps every record: what compares a time against those stamps asks it, since its own machine's can differ from the home's.
+    transcripts: new Transcripts(core, writeNoWatcherHears),
     clock: { now },
   };
 }
@@ -55,8 +51,6 @@ export type Domains = ReturnType<typeof domains>;
 const methodsOfClass = (kind: { prototype: object }) =>
   Object.getOwnPropertyNames(kind.prototype).filter((name) => name !== "constructor");
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Every method a store's home answers, by domain, known without a database, so a client of a home that is elsewhere can be built.
 export const METHODS = {
   messages: methodsOfClass(Messages),
   questions: methodsOfClass(Questions),
@@ -84,8 +78,6 @@ export const OffersJson = z.object({
 
 export type Offers = z.infer<typeof OffersJson>;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What this hex's store runs: the migrations it keeps its records at and the methods it answers. A client needs the same of a home, and any newer home offers all of it, since migrations only append and methods stay.
 export const OFFERS: Offers = {
   migrations: appendOnlyMigrations.length,
   methods: Object.entries(METHODS).flatMap(([domain, names]) =>
@@ -93,8 +85,6 @@ export const OFFERS: Offers = {
   ),
 };
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a home lacks of what a client needs, in words, or nothing when it serves that client: a home as new or newer always does.
 export function unmet(needs: Offers, offers: Offers = OFFERS): string | undefined {
   const offered = new Set(offers.methods);
   const lacking = needs.methods.filter((method) => !offered.has(method));
@@ -108,8 +98,6 @@ export function unmet(needs: Offers, offers: Offers = OFFERS): string | undefine
     : `it has no ${lacking.slice(0, 3).join(", ")}${lacking.length > 3 ? ` or ${lacking.length - 3} more` : ""}`;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Where a home keeps how many migrations its database has had: a file in pragma user_version, a Durable Object, which refuses that pragma, in a table.
 export type Version = { get: () => number; set: (version: number) => void };
 
 export function migrate(

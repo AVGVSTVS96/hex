@@ -18,8 +18,6 @@ export type Row = {
   taken?: { by: string; at: string };
 };
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A message as it's kept: stamped by the store's clock, or, for one the hub held while the store didn't answer, with the time it first came.
 export type NewRow = Omit<Row, "at" | "taken"> & { at?: string };
 
 export const isAuthor = (value: unknown): value is Author => AuthorColumn.safeParse(value).success;
@@ -141,8 +139,6 @@ export class Messages {
     );
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A message held for a session's turn waits for that session's next tool call, which takes it (takeHeld), or for the turn's end, which lets it go (letHeldGo).
   hold(key: string, session: string): boolean {
     return this.write(
       () =>
@@ -152,8 +148,6 @@ export class Messages {
     );
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A hook from before calls had names sends its own time, and after a lost reply asks again with it, so it gets every row it took under that time; a store deploys before the hex beside it updates, so it keeps that until no hook sends one.
   takeHeld(thread: string, session: string, at = now()): Row[] {
     return this.write(() => {
       this.db
@@ -191,11 +185,9 @@ export class Messages {
     );
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Messages after a time, oldest first, starting after the message keyed `past`: at most `most` of them, and, when there's a most, about 4 MB, so whatever reads every message reads them a page at a time and no page is too big for a reply. A page may be shorter than `most`; only an empty one ends the log.
-  since(after = "", past = "", most = -1): Row[] {
+  since(after = "", pastKey = "", most = -1): Row[] {
     const { at, n } = Cursor.parse(
-      this.db.query("select at, n from messages where key = ?").get(past),
+      this.db.query("select at, n from messages where key = ?").get(pastKey),
     ) ?? { at: after, n: Number.MAX_SAFE_INTEGER };
 
     if (most < 0) {
@@ -371,8 +363,6 @@ export class Messages {
     );
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Untaken rows for sessions beside threads: to a beside address, for a new session, or to a session that took one, which takes it as it resumes.
   beside(addresses: string[]): (Row & { beside: string; resume?: string })[] {
     const rows = BesideRows.parse(
       this.db
@@ -394,22 +384,18 @@ export class Messages {
     }));
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // When a session of the thread other than this one last took a message there.
-  lastTakenIn(thread: string, session: string): string | undefined {
+  lastTakenIn(thread: string, bySessionOtherThan: string): string | undefined {
     return (
       TakenAtRow.parse(
         this.db
           .query(
             `select max(taken_at) as at from messages indexed by sessions where "to" = ? and taken_by is not null and taken_by <> ? and author <> 'hex'`,
           )
-          .get(thread, session),
+          .get(thread, bySessionOtherThan),
       ).at ?? undefined
     );
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A timed job catches up only its newest slot, so a stalled run of it beside a thread is left to a newer one, taken by the hub.
   supersede(addresses: string[], at = now()) {
     this.write(() => {
       this.db
@@ -424,8 +410,6 @@ export class Messages {
     });
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // What hex said in the thread's chat since a time from sessions that aren't the thread's own (they took none of its messages), newest first, each with the job its writer ran beside the thread, if any.
   saidByOthers(thread: string, session: string, since = ""): (Row & { job?: string })[] {
     return JobRows.parse(
       this.db
@@ -440,8 +424,6 @@ export class Messages {
     ).map(({ row, job }) => ({ ...row, ...(job !== null && { job }) }));
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // What the earlier runs of a timed job beside a thread said in its chat, and the last words each ended with, newest first.
   saidByEarlierRuns(beside: string, thread: string, schedule: string, session: string): Row[] {
     return MessageRows.parse(
       this.db
@@ -455,8 +437,6 @@ export class Messages {
     );
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A timed job's last runs, newest first: when each fired and the words its session ended that turn with ("" for none yet).
   runsOf(schedule: string, last: number): { at: string; said: string }[] {
     return RunRows.parse(
       this.db
@@ -469,8 +449,6 @@ export class Messages {
     );
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The row a session beside a thread was first started for.
   ranFor(session: string): Row | null {
     return MessageRow.nullable().parse(
       this.db

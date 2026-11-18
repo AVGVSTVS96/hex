@@ -5,8 +5,6 @@ import { z } from "zod";
 import { bare, eachVariable } from "./db.ts";
 import type { Storage } from "./storage.ts";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a Durable Object's SQLite refuses, as its runtime answers (workerd 2026-08): transactions are the storage's own, and the pragmas and functions that tell of the file under it are not for the object's code.
 const REFUSED: [RegExp, string][] = [
   [
     /^\s*(begin|commit|end|rollback|savepoint|release)\b/iu,
@@ -20,7 +18,7 @@ const REFUSED: [RegExp, string][] = [
   [/^\s*(attach|detach|vacuum)\b/iu, "not authorized: SQLITE_AUTH"],
 ];
 
-// The runtime's limits, as Cloudflare states them (https://developers.cloudflare.com/durable-objects/platform/limits/) and as the runtime hex deploys with keeps them: 100 variables in a statement, 100,000 bytes of statement, and 8 MiB in a value or a row.
+// WARNING: Durable Objects' SQL limits, which the fake keeps: https://developers.cloudflare.com/durable-objects/platform/limits/
 const MOST_VARIABLES = 100;
 const LONGEST_STATEMENT = 100_000;
 const LONGEST_ROW = 8 * 1024 * 1024;
@@ -38,8 +36,6 @@ const bytes = (sized: z.infer<typeof Sized> | undefined) =>
       ? Buffer.byteLength(sized)
       : sized.byteLength;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Where each statement of some SQL ends: at a semicolon outside its strings and comments, and a trigger's at the end of its body.
 function split(query: string): string[] {
   const code = bare(query);
   const statements: string[] = [];
@@ -62,8 +58,6 @@ function split(query: string): string[] {
   return statements.filter((statement) => bare(statement).trim() !== "");
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The runtime binds every number as a double, as JavaScript holds it, and a boolean as its word: a statement here is given the same.
 function asTheRuntimeBinds(statement: string, bound: unknown[]): [string, unknown[]] {
   const { text, most } = eachVariable(statement, (index) =>
     // oxlint-disable-next-line anti-slop/no-runtime-typeof -- the members of what was bound that the runtime turns into doubles
@@ -87,7 +81,6 @@ function asTheRuntimeBinds(statement: string, bound: unknown[]): [string, unknow
   ];
 }
 
-// A Durable Object's storage, as far as the store uses it, over a SQLite file, for tests: Cloudflare's runtime is the same SQLite behind this API (https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/), with foreign keys on, and refuses here what it refuses there.
 export function objectStorage(file = ":memory:"): Storage {
   const db = new Database(file, { create: true });
   db.run("pragma foreign_keys = on");
