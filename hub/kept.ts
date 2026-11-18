@@ -125,6 +125,7 @@ export const OwedWrite = z.discriminatedUnion("kind", [
     id: z.string(),
     input: z.string(),
     result: z.string().nullable(),
+    begun: z.boolean().optional(),
   }),
 ]);
 
@@ -527,7 +528,9 @@ async function madeOn(store: Store, write: Owed, { letGo, queue }: Doing): Promi
     }
 
     case "operation": {
-      await store.operations.begin(write.scope, write.id, write.input);
+      if (write.begun !== true) {
+        await store.operations.begin(write.scope, write.id, write.input);
+      }
 
       if (write.result !== null) {
         await store.operations.finish(write.scope, write.id, write.result);
@@ -584,7 +587,7 @@ function owedAtStart(spool: string, others: string[]) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A tool call's record, which keeps it to running once: the store's, or the hub's own while it's owed, so a repeat is answered from it until the store has it. A call the store can't be asked about runs, since a first call and a repeat of one from before the outage look the same from here.
+// A tool call's record, which keeps it to running once: the store's, or the hub's own while it's owed, so a repeat is answered from it until the store has it. A call the store can't be asked about counts as new, since a first call and a repeat of one that ended before the outage look the same from here. Its end is one write where the store has its start (begun), and the whole record where the start is still owed.
 function operationsOwed({
   owed,
   current,
@@ -620,7 +623,8 @@ function operationsOwed({
       }
     },
     finish: async (scope: string, id: string, input: string, result: string) => {
-      await must({ kind: "operation", scope, id, input, result }, false);
+      const whole = { kind: "operation" as const, scope, id, input, result };
+      await must({ ...whole, begun: !owed.has(keyOf(whole)) }, false);
     },
   };
 }

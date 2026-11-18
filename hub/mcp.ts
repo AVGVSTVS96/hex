@@ -162,6 +162,11 @@ function besideOf(request: Request) {
   return session === null || session === "" ? undefined : session;
 }
 
+const uncertain = (toolName: string, id: string) =>
+  failure(
+    `${toolName} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`,
+  );
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A channel over MCP's Streamable HTTP transport, for sessions whose plugin's .mcp.json points here with their binding and the hub's token in headers. Every session id is taken as it comes, so a session that connected before the hub restarted carries on where it was without initializing again.
 export function endpoint(
@@ -185,7 +190,7 @@ export function endpoint(
   const active = new Map<string, Promise<Result>>();
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Each operation's begins in this process, one at a time, so a repeat's is answered only once the call before it is under way (active).
+  // Each operation's begins in this process, one at a time, and a call that begins is under way (active) before its begin is answered. So a repeat joins the call this hub is still running, whatever the store says or can't say of it.
   const beginning = ordered();
   const tools = new Map<string, Tool>(server.tools.map((each) => [each.name, each]));
   const list = toolList(server.tools);
@@ -222,36 +227,38 @@ export function endpoint(
     const key = JSON.stringify([scope, id]);
     const value = [toolName, args];
     const input = JSON.stringify(value);
-    const kept = await beginning(key, () => operations.begin(scope, id, input));
+
+    const run = () => {
+      const answer = call(thread, toolName, args, beside)
+        .then(async (answered) => {
+          await operations.finish(scope, id, input, JSON.stringify(answered));
+
+          return answered;
+        })
+        .finally(() => {
+          active.delete(key);
+        });
+
+      active.set(key, answer);
+
+      return answer;
+    };
+
+    const { kept, running } = await beginning(key, async () => {
+      const begun = await operations.begin(scope, id, input);
+
+      return { kept: begun, running: active.get(key) ?? (begun.fresh ? run() : undefined) };
+    });
 
     if (!isDeepStrictEqual(JSON.parse(kept.input), value)) {
       return failure(`${toolName} didn't run: identity ${id} already identifies a different call`);
     }
 
-    if (!kept.fresh) {
-      if (kept.result !== null) {
-        return Kept.parse(JSON.parse(kept.result));
-      }
-
-      return await (active.get(key) ??
-        failure(
-          `${toolName} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`,
-        ));
+    if (kept.result !== null) {
+      return Kept.parse(JSON.parse(kept.result));
     }
 
-    const answer = call(thread, toolName, args, beside)
-      .then(async (answered) => {
-        await operations.finish(scope, id, input, JSON.stringify(answered));
-
-        return answered;
-      })
-      .finally(() => {
-        active.delete(key);
-      });
-
-    active.set(key, answer);
-
-    return await answer;
+    return await (running ?? uncertain(toolName, id));
   }
 
   async function call(

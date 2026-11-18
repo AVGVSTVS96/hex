@@ -62,6 +62,7 @@ let movedTo: string | undefined;
 
 const openedFirst = stores.open;
 const outages = new Map<string, Store>();
+const storeCalls: string[] = [];
 
 const MessageArgs = z
   .tuple([z.looseObject({ body: z.string().optional(), key: z.string().optional() })])
@@ -92,7 +93,7 @@ function refusal(name: string | symbol, args: unknown[]) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Every call the store's client makes, on any domain, answered as the outage says: a test seam over a client whose methods are a table built from names (store/wire.ts), so it reads them by name too. A store moved from answers nothing as it did.
+// Every call the store's client makes, on any domain, noted by name (storeCalls) and answered as the outage says: a test seam over a client whose methods are a table built from names (store/wire.ts), so it reads them by name too. A store moved from answers nothing as it did.
 function answering<Domain extends object>(
   domain: Domain,
   movedFrom = false,
@@ -113,6 +114,7 @@ function answering<Domain extends object>(
       }
 
       return async (...args: unknown[]) => {
+        storeCalls.push(String(name));
         const refusing = claimed || outage !== "lost" ? refusal(name, args) : undefined;
 
         if (refusing !== undefined && (outage !== "moved" || movedFrom)) {
@@ -5835,6 +5837,8 @@ const OperationsKept = z.array(z.object({ id: z.string(), result: z.string().nul
 const operationsKept = () =>
   OperationsKept.parse(file(dir).db.query("select id, result from operations").all());
 
+const begins = () => storeCalls.filter((name) => name === "begin").length;
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A session on a hub whose reply tool counts how often it ran, and waits to answer while held is set.
 async function replying() {
@@ -5894,6 +5898,47 @@ test("a tool call whose start the store missed, though it answers again by the c
   told.held = false;
   expect(await reply("tool-2")).toBe("sent 1");
   expect(told.ran).toBe(1);
+});
+
+test("a tool call still running as hex's store stops answering runs once, its repeat joining it: one that began with the store answering, and one that began in an outage the store came back from", async () => {
+  const { told, waiting, reply } = await replying();
+
+  const repeatedInAnOutage = async (id: string) => {
+    outage = "unreached";
+    told.held = false;
+    const begun = begins();
+    const again = reply(id);
+    await until(() => begins() > begun);
+    waiting.shift()?.();
+
+    return await again;
+  };
+
+  told.held = true;
+  const first = reply("tool-4");
+  await until(() => waiting.length);
+  expect(await repeatedInAnOutage("tool-4")).toBe("sent 1");
+  expect(await first).toBe("sent 1");
+
+  told.held = true;
+  const second = reply("tool-5");
+  await until(() => waiting.length);
+  outage = undefined;
+  await hub.synced();
+  expect(await repeatedInAnOutage("tool-5")).toBe("sent 2");
+  expect(await second).toBe("sent 2");
+  expect(told.ran).toBe(2);
+});
+
+test("a tool call's start and its end are one write each to a store that answers", async () => {
+  const { reply } = await replying();
+  storeCalls.length = 0;
+
+  expect(await reply("tool-6")).toBe("sent 1");
+  expect(storeCalls.filter((name) => name === "begin" || name === "finish")).toEqual([
+    "begin",
+    "finish",
+  ]);
 });
 
 test("a tool call made in an outage and repeated to the next hub is answered from what the last hub owed, and the store holds its record", async () => {
