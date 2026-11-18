@@ -183,7 +183,7 @@ down() {
     set +eu
     . "$hex/bin/settings"
     [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${HEX_MAIN_THREAD:-}" ] &&
-      printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN" |
+      printf 'url = "%s/bot%s/sendMessage"\n' "${TELEGRAM_API_ROOT:-https://api.telegram.org}" "$TELEGRAM_BOT_TOKEN" |
       curl -sf -m 10 -o /dev/null -K - --data-urlencode "chat_id=$HEX_MAIN_THREAD" --data-urlencode "text=$1 General hears here once it's back."
   ) && date +%s > "$told" || :
 }
