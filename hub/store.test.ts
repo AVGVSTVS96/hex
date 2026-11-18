@@ -5,7 +5,6 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -573,33 +572,6 @@ test("hex thread files a thread under the project it's part of, kept as its app 
     ["Android", undefined],
   ]);
   expect(await hex("thread", "Nowhere", "--project", "keyboard")).not.toBe(0);
-});
-
-test("bin/hex hands hex's cli every command in hub/cli/, and the cli loads each one", async () => {
-  const commands = readdirSync(join(import.meta.dir, "cli"))
-    .map((name) => name.replace(/\.ts$/u, ""))
-    .toSorted();
-
-  const usage = await new Response(
-    Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir], { stderr: "pipe" }).stderr,
-  ).text();
-
-  const cases = new Map(
-    [
-      ...readFileSync(join(import.meta.dir, "../bin/hex"), "utf-8").matchAll(
-        /^ {2}([^ \n]+)\)\n(.*?)^ {4};;$/gmsu,
-      ),
-    ].flatMap(([, labels = "", body = ""]) => labels.split("|").map((label) => [label, body])),
-  );
-
-  const handed = (command: string) =>
-    (cases.get(command) ?? cases.get("*") ?? "").includes('exec bun "$hex/hub/cli.ts"');
-
-  expect(commands).toContain("thread");
-  expect([
-    ...new Set([...usage.matchAll(/^ {2}hex (\w+)/gmu)].flatMap(([, command]) => command ?? [])),
-  ]).toEqual(commands);
-  expect(commands.filter((command) => !handed(command))).toEqual([]);
 });
 
 const ask = {

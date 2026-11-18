@@ -8,7 +8,7 @@ import type { Store } from "../store.ts";
 export default command({
   usage: "hex watch",
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // hex watch opens hex.db only when its records live in an object, so a restore can replace hex.db underneath it.
+  // While hex's records are in hex.db, watch opens no store, so a restore can replace hex.db underneath it.
   async run(hex) {
     await (existsSync(awayFile(hex.state))
       ? followAway(hex.store)

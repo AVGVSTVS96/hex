@@ -1,3 +1,5 @@
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import type { parseArgs, ParseArgsOptionsConfig } from "node:util";
 
 import { checks } from "./ideas.ts";
@@ -25,6 +27,47 @@ export type Command<F extends ParseArgsOptionsConfig = ParseArgsOptionsConfig> =
 
 export function command<F extends ParseArgsOptionsConfig>(given: Command<F>): Command {
   return given;
+}
+
+export async function commands() {
+  const folder = join(import.meta.dir, "cli");
+
+  return new Map(
+    await Promise.all(
+      readdirSync(folder)
+        .toSorted()
+        .flatMap((file) => /^([a-z]+)\.ts$/u.exec(file)?.[1] ?? [])
+        .map(async (name): Promise<[string, Command]> => {
+          // SAFETY: every hub/cli/<name>.ts default-exports what command() returns.
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- an import by a path built at run time has no type to narrow from
+          const loaded = (await import(join(folder, `${name}.ts`))) as { default: Command };
+
+          return [name, loaded.default];
+        }),
+    ),
+  );
+}
+
+export function flagsOf(all: Map<string, Command>) {
+  const flags: ParseArgsOptionsConfig = {};
+  const takers = new Map<string, string>();
+
+  for (const [name, { flags: own = {} }] of all) {
+    for (const [flag, option] of Object.entries(own)) {
+      const first = takers.get(flag);
+
+      if (first !== undefined && !Bun.deepEquals(flags[flag], option)) {
+        throw new Error(
+          `--${flag} is declared one way in hub/cli/${first}.ts and another in hub/cli/${name}.ts: a flag means the same in every command`,
+        );
+      }
+
+      flags[flag] = option;
+      takers.set(flag, first ?? name);
+    }
+  }
+
+  return flags;
 }
 
 export function filled(text: string | undefined): text is string {

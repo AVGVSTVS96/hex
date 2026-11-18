@@ -611,12 +611,13 @@ case "${1:-}" in
     [ "${free:-0}" -ge 5 ] && ok "$free GB free on disk" || fix "only ${free:-0} GB free on disk: sessions and backups need room"
     [ "$problems" -eq 0 ] && echo "hex looks healthy" || { echo "$problems to fix"; exit 1; }
     ;;
-  '')
-    echo "usage: hex init|link|restore|start|stop|restart|status|doctor|run|acp|elsewhere|store deploy|store move|store back" >&2
-    exec bun "$hex/hub/cli.ts" "$home/state"
-    ;;
   *)
-    # Every other command is one file in hub/cli/.
+    # Every other command is a file in hub/cli/, named in lowercase letters; anything else gets the usage, at once.
+    case ${1:-} in '' | *[!a-z]*) command= ;; *) command=$1 ;; esac
+    if [ -z "$command" ] || [ ! -f "$hex/hub/cli/$command.ts" ]; then
+      echo "usage: hex init|link|restore|start|stop|restart|status|doctor|run|acp|elsewhere|store deploy|store move|store back" >&2
+      exec bun "$hex/hub/cli.ts" "$home/state"
+    fi
     export MEMORY_DIR="${MEMORY_DIR:-$home/memory}"
     # While hex runs on another machine, its commands run there, as whoever ran them here.
     moved=0
