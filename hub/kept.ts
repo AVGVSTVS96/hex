@@ -587,7 +587,7 @@ function owedAtStart(spool: string, others: string[]) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A tool call's record, which keeps it to running once: the store's, or the hub's own while it's owed, so a repeat is answered from it until the store has it. A call the store can't be asked about counts as new, since a first call and a repeat of one that ended before the outage look the same from here. Its end is one write where the store has its start (begun), and the whole record where the start is still owed. The hub's own record is read again once the store has failed to answer, since the call may have ended, and its end become owed, while the store was being asked.
+// A tool call's record, which keeps it to running once: the store's, or the hub's own while it's owed, so a repeat is answered from it until the store has it. A call the store can't be asked about counts as new, since a first call and a repeat of one that ended before the outage look the same from here. Its end is one write where the store has its start (begun), and the whole record where the start is still owed.
 function operationsOwed({
   owed,
   current,
@@ -604,20 +604,10 @@ function operationsOwed({
 }) {
   return {
     begin: async (scope: string, id: string, input: string) => {
-      const start = { kind: "operation" as const, scope, id, input, result: null };
+      const mine = owed.get(keyOf({ kind: "operation", scope, id, input, result: null }));
 
-      const mine = () => {
-        const held = owed.get(keyOf(start));
-
-        return held?.kind === "operation"
-          ? { fresh: false, input: held.input, result: held.result }
-          : undefined;
-      };
-
-      const held = mine();
-
-      if (held !== undefined) {
-        return held;
+      if (mine?.kind === "operation") {
+        return { fresh: false, input: mine.input, result: mine.result };
       }
 
       try {
@@ -627,13 +617,7 @@ function operationsOwed({
           throw error;
         }
 
-        const since = mine();
-
-        if (since !== undefined) {
-          return since;
-        }
-
-        owe(start);
+        owe({ kind: "operation", scope, id, input, result: null });
 
         return { fresh: true, input, result: null };
       }

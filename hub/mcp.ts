@@ -162,6 +162,13 @@ function besideOf(request: Request) {
   return session === null || session === "" ? undefined : session;
 }
 
+async function ended(answer: Promise<Result>, keep: (result: string) => Promise<void>) {
+  const answered = await answer;
+  await keep(JSON.stringify(answered));
+
+  return answered;
+}
+
 const uncertain = (toolName: string, id: string) =>
   failure(
     `${toolName} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`,
@@ -190,7 +197,7 @@ export function endpoint(
   const active = new Map<string, { input: string; answer: Promise<Result> }>();
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Each operation's begins in this process, one at a time, and a call that begins is under way (active) before its begin is answered. So a repeat joins the call this hub is still running, and a different call under its id is told so, whatever the store says or can't say of it.
+  // Each operation's begins in this process, one at a time, and a call that begins is under way (active), with its input, before its begin is answered and until its end is with the store or owed to it. So a repeat that finds its call under way joins it without asking the store, and a different call under its id is told so.
   const beginning = ordered();
   const tools = new Map<string, Tool>(server.tools.map((each) => [each.name, each]));
   const list = toolList(server.tools);
@@ -229,34 +236,36 @@ export function endpoint(
     const input = JSON.stringify(value);
 
     const run = () => {
-      const answer = call(thread, toolName, args, beside)
-        .then(async (answered) => {
-          await operations.finish(scope, id, input, JSON.stringify(answered));
-
-          return answered;
-        })
-        .finally(() => {
-          active.delete(key);
-        });
+      const answer = ended(call(thread, toolName, args, beside), (kept) =>
+        operations.finish(scope, id, input, kept),
+      ).finally(() => {
+        active.delete(key);
+      });
 
       return active.set(key, { input, answer }).get(key);
     };
 
-    const { kept, running } = await beginning(key, async () => {
-      const begun = await operations.begin(scope, id, input);
+    const known = await beginning(key, async () => {
+      const running = active.get(key);
 
-      return { kept: begun, running: active.get(key) ?? (begun.fresh ? run() : undefined) };
+      if (running !== undefined) {
+        return { input: running.input, result: null, running };
+      }
+
+      const kept = await operations.begin(scope, id, input);
+
+      return { input: kept.input, result: kept.result, running: kept.fresh ? run() : undefined };
     });
 
-    if (!isDeepStrictEqual(JSON.parse(running?.input ?? kept.input), value)) {
+    if (!isDeepStrictEqual(JSON.parse(known.input), value)) {
       return failure(`${toolName} didn't run: identity ${id} already identifies a different call`);
     }
 
-    if (kept.result !== null) {
-      return Kept.parse(JSON.parse(kept.result));
+    if (known.result !== null) {
+      return Kept.parse(JSON.parse(known.result));
     }
 
-    return await (running?.answer ?? uncertain(toolName, id));
+    return await (known.running?.answer ?? uncertain(toolName, id));
   }
 
   async function call(

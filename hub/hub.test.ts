@@ -5840,7 +5840,22 @@ const OperationsKept = z.array(z.object({ id: z.string(), result: z.string().nul
 const operationsKept = () =>
   OperationsKept.parse(file(dir).db.query("select id, result from operations").all());
 
-const begins = () => storeCalls.filter((name) => name === "begin").length;
+const asked = (call: string) => storeCalls.filter((name) => name === call).length;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The store's calls of one name wait, from now until the function this gives is called.
+function holdStore(call: string) {
+  const go: (() => void)[] = [];
+
+  storeWaits.set(
+    call,
+    new Promise<void>((resolve) => {
+      go.push(resolve);
+    }),
+  );
+
+  return () => go.shift()?.();
+}
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A session on a hub whose reply tool counts how often it ran, and waits to answer while held is set.
@@ -5869,7 +5884,13 @@ async function replying() {
   const reply = async (id: string, text = "still here") =>
     (await line.call("reply", { text }, id)).content[0]?.text;
 
-  return { told, waiting, reply };
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A repeat has reached the hub once a call made after it under its id is answered, since the hub takes an id's calls in the order they came; while the first still runs, a different one is told so at once.
+  const arrived = async (id: string) => {
+    expect(await reply(id, "a call made after it")).toContain("identifies a different call");
+  };
+
+  return { told, waiting, reply, arrived };
 }
 
 test("a tool call made while hex's store can't be reached runs, and runs once however often it's repeated: in the outage, and once the store is back, which then holds its record", async () => {
@@ -5904,14 +5925,13 @@ test("a tool call whose start the store missed, though it answers again by the c
 });
 
 test("a tool call still running as hex's store stops answering runs once, its repeat joining it: one that began with the store answering, and one that began in an outage the store came back from", async () => {
-  const { told, waiting, reply } = await replying();
+  const { told, waiting, reply, arrived } = await replying();
 
   const repeatedInAnOutage = async (id: string) => {
     outage = "unreached";
     told.held = false;
-    const begun = begins();
     const again = reply(id);
-    await until(() => begins() > begun);
+    await arrived(id);
     waiting.shift()?.();
 
     return await again;
@@ -5933,28 +5953,26 @@ test("a tool call still running as hex's store stops answering runs once, its re
   expect(told.ran).toBe(2);
 });
 
-test("a repeat the store is still being asked about as its call ends, and then can't answer, is answered from the end the hub owes", async () => {
-  const { told, waiting, reply } = await replying();
+test("a repeat that comes while its call's end is on its way to hex's store joins the call, though the store takes the end and then stops answering", async () => {
+  const { told, waiting, reply, arrived } = await replying();
   told.held = true;
   const first = reply("tool-7");
   await until(() => waiting.length);
 
-  const answerIt: (() => void)[] = [];
-
-  storeWaits.set(
-    "begin",
-    new Promise<void>((resolve) => {
-      answerIt.push(resolve);
-    }),
-  );
-  const begun = begins();
-  const again = reply("tool-7");
-  await until(() => begins() > begun);
-  outage = "unreached";
+  const finishes = asked("finish");
+  const begins = asked("begin");
+  const endLands = holdStore("finish");
   told.held = false;
   waiting.shift()?.();
+  await until(() => asked("finish") > finishes);
+
+  const beginAnswered = holdStore("begin");
+  const again = reply("tool-7");
+  await Promise.race([arrived("tool-7"), until(() => asked("begin") > begins)]);
+  endLands();
   expect(await first).toBe("sent 1");
-  answerIt.shift()?.();
+  outage = "unreached";
+  beginAnswered();
 
   expect(await again).toBe("sent 1");
   expect(told.ran).toBe(1);
@@ -5967,12 +5985,9 @@ test("a different call under the id of one still running is told so, though hex'
   await until(() => waiting.length);
 
   outage = "unreached";
-  const begun = begins();
-  const other = reply("tool-8", "something else");
-  await until(() => begins() > begun);
+  expect(await reply("tool-8", "something else")).toContain("identifies a different call");
   waiting.shift()?.();
 
-  expect(await other).toContain("already identifies a different call");
   expect(await first).toBe("sent 1");
   expect(told.ran).toBe(1);
 });
