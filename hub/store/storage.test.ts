@@ -1188,6 +1188,50 @@ test("a 409 that isn't the object's word, like Cloudflare's edge sends for its o
   }
 });
 
+test("a page Cloudflare's edge answers in place of the Worker, as it does for minutes after a deploy, is asked again and never counts as the store not answering", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage);
+  const object = served(storage);
+  let calls = 0;
+  let stray = 0;
+
+  const front = Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      calls += 1;
+
+      if (calls % 2 === 1) {
+        stray += 1;
+
+        return new Response("<!DOCTYPE html><html>There is nothing here yet</html>", {
+          status: 404,
+        });
+      }
+
+      return await fetch(new URL(new URL(request.url).pathname, object.url), {
+        method: request.method,
+        headers: request.headers,
+        body: await request.text(),
+      });
+    },
+  });
+
+  pointedAt(dir, front.url.origin);
+
+  try {
+    const store = remote(dir, quick);
+    await store?.claim();
+    expect(await store?.messages.deliver(message)).toBe(true);
+    expect((await store?.messages.untaken())?.length).toBe(1);
+    await store?.synced();
+    expect(stray).toBeGreaterThan(2);
+    expect(existsSync(join(dir, "store.down"))).toBe(false);
+  } finally {
+    await front.stop(true);
+    await object.stop();
+  }
+});
+
 test("a first claim the network holds back until after its retry never makes a lone hub refuse itself", async () => {
   const storage = objectStorage();
   startedEmpty(storage);

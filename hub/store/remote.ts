@@ -201,6 +201,8 @@ function watcher(address: URL, headers: Asking, times: Times) {
   };
 }
 
+const WORKER_UNKNOWN_TO_EDGE_TRIES = 4;
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A process that finds the object not answering says so in the state folder, so the next process, like a hook, fails at once instead of waiting out its own time, until one gets an answer again or the word is older than the longest wait between tries.
 function word(dir: string, times: Times) {
@@ -266,22 +268,32 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
   const socket = watcher(at(away, "watch"), headers, times);
   const elsewhere = shared ? word(dir, times) : alone;
 
-  const reach = async (route: string, body: string) => {
-    let response: Response;
-    let text: string;
-
+  const sent = async (route: string, body: string) => {
     try {
-      response = await fetch(at(away, route), {
+      const response = await fetch(at(away, route), {
         method: "POST",
         headers,
         body,
         signal: AbortSignal.timeout(times.answerWithin),
       });
-      text = await response.text();
+
+      return { response, text: await response.text() };
     } catch (error) {
       throw new UnreachedError(`hex's store at ${away.url} didn't answer: ${String(error)}`, {
         cause: error,
       });
+    }
+  };
+
+  const reach = async (route: string, body: string) => {
+    let { response, text } = await sent(route, body);
+
+    for (
+      let again = 0;
+      again < WORKER_UNKNOWN_TO_EDGE_TRIES && response.status === 404 && !text.startsWith("{");
+      again++
+    ) {
+      ({ response, text } = await sent(route, body));
     }
 
     const lostTo = response.status === 409 ? lostIn(text) : null;
