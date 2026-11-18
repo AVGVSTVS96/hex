@@ -525,6 +525,45 @@ test("whole numbers keep their type in the object, a late message keeps its time
   ).toContain("messages_in_time");
 });
 
+test("the object keeps a digest with each piece of a copy, starts a copy over from one of its pieces, and reads its marks through their index", async () => {
+  const store = remote(await movedInto("copies"), QUICK);
+  const to = { tail: "t2", digest: "d2", of: 6, last: "l", by: "server" };
+
+  const sent = await store?.transcripts.append(
+    "s-1",
+    { size: 0, tail: "", digest: "", of: 0, last: "", by: "" },
+    [
+      { upto: 3, text: "{}\n", digest: "d1" },
+      { upto: 6, text: "{}\n", digest: "d2" },
+    ],
+    to,
+  );
+
+  expect(sent).toEqual({ size: 6, ...to });
+
+  expect(
+    await store?.transcripts.append(
+      "s-1",
+      { size: 6, ...to },
+      [{ upto: 5, text: "{\n", digest: "d3" }],
+      { ...to, tail: "t3", digest: "d3", of: 5 },
+      3,
+    ),
+  ).toMatchObject({ size: 5, digest: "d3" });
+  expect(await store?.transcripts.marks("s-1", 0)).toEqual([
+    { upto: 3, digest: "d1" },
+    { upto: 5, digest: "d3" },
+  ]);
+  expect(
+    JSON.stringify(
+      await sqlIn(
+        "copies",
+        "explain query plan select upto, digest from _transcripts where session = 's-1' and upto > 0 order by upto limit 8192",
+      ),
+    ),
+  ).toContain("_transcript_marks");
+}, 60_000);
+
 test("the object keeps a value or row of 8 MiB and refuses one past it, as the stand-in does", async () => {
   const store = remote(await movedInto("sizes"), { ...QUICK, answerWithin: 60_000 });
   const length = "select length(?) as n";

@@ -56,7 +56,7 @@ function objectIn(state: string) {
 const Call = z.object({ domain: z.string(), method: z.string(), args: z.array(z.unknown()) });
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A store every machine reaches, as a folder's store.json names one: the object's own code over a database in memory. ring: what its watchers hear when it answers again. net: what the way to it does to a call, by the call's name: drop it, take a while over it, or have the store refuse more of a file for want of room, and how many calls were on their way at once.
+// A store every machine reaches, as a folder's store.json names one: the object's own code over a database in memory. ring: what its watchers hear when it answers again. net: what the way to it does to a call, by the call's name: drop it, take a while over it, or have the store refuse more of a file for want of room, which calls about transcripts it was asked, and how many calls were on their way at once.
 function storeElsewhere() {
   const state = join(dir, "state");
   mkdirSync(state, { recursive: true });
@@ -67,7 +67,7 @@ function storeElsewhere() {
   const net = {
     drops: (_call: string) => false,
     dropped: 0,
-    listed: 0,
+    asked: new Array<string>(),
     takes: 0,
     full: false,
     out: 0,
@@ -89,7 +89,9 @@ function storeElsewhere() {
         net.out -= 1;
       }
 
-      net.listed += Number(method === "besides");
+      if (domain === "transcripts") {
+        net.asked.push(method);
+      }
 
       if (net.drops(`${domain}.${method}`)) {
         net.dropped += 1;
@@ -241,7 +243,6 @@ test("a session carries on from another machine with what it wrote on the first,
 
   expect(await twin.hub()).toBe(true);
   expect(twin.written()).toBe(server.written());
-  await until(async () => (await store.transcripts.end(SESSION)).by === "twin");
 
   appendFileSync(twin.path(), line("and the fern on Monday"));
   await until(async () => (await copyIn(store)) === twin.written());
@@ -274,13 +275,14 @@ test("what a machine wrote after it lost the store is kept beside the copy once 
   );
 });
 
-test("a transcript changed in place on the machine whose copy it is starts the copy over, and keeps its next turn", async () => {
+test("a transcript changed in place on the machine that holds hex leaves the copy as it was changed, keeps its next turn, and reaches a machine that held the older one with nothing kept aside", async () => {
   const { store } = storeElsewhere();
   const server = machine("server", store);
   const twin = machine("twin", store);
   writeFileSync(server.path(), line("the sudo password is hunter2") + line("noted"));
   await server.hub();
   await until(async () => (await copyIn(store)).includes("hunter2"));
+  expect(await twin.hub()).toBe(true);
 
   writeFileSync(
     server.path(),
@@ -293,61 +295,248 @@ test("a transcript changed in place on the machine whose copy it is starts the c
   expect(server.written()).not.toContain("hunter2");
   expect(server.setAside()).toEqual([]);
 
-  await twin.hub();
+  expect(await twin.hub()).toBe(true);
   expect(twin.written()).toBe(server.written());
+  expect(twin.setAside()).toEqual([]);
 });
 
-test("a secret taken out of a transcript stays out on a machine that took the session and has written nothing to it since", async () => {
+const SECRET = line("the sudo password is hunter2") + line("noted");
+const REDACTED = line("the sudo password is [redacted]") + line("noted");
+const [OLD, STRUCK] = ["the sudo password is hunter2\n", "the sudo password is [redacted]\n"];
+const RESULT = "toolu_01.txt";
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Both machines hold a session's conversation as the server wrote it, and the server holds hex, its hub watching.
+async function bothHold(store: Store, said = SECRET) {
+  const server = machine("server", store);
+  const twin = machine("twin", store);
+  writeFileSync(server.path(), said);
+  await server.hub();
+  expect(await twin.hub()).toBe(true);
+  expect(twin.written()).toBe(said);
+  expect(await server.hub()).toBe(true);
+
+  return { server, twin };
+}
+
+test("a secret taken out of a transcript on the machine that doesn't hold hex stays out there and in the store, and leaves the other machine's file at its next start", async () => {
+  const { store } = storeElsewhere();
+  const { server, twin } = await bothHold(store);
+  expect(await store.transcripts.end(SESSION)).toMatchObject({ by: "server" });
+
+  writeFileSync(twin.path(), REDACTED);
+  expect(await twin.hub()).toBe(true);
+  expect(twin.written()).toBe(REDACTED);
+  expect(twin.setAside()).toEqual([]);
+  expect(await copyIn(store)).toBe(REDACTED);
+
+  expect(await server.hub()).toBe(true);
+  expect(server.written()).toBe(REDACTED);
+  expect(server.setAside()).toEqual([]);
+});
+
+test("a secret taken out of a transcript on the machine that doesn't hold hex stays out though the other machine wrote on meanwhile, and keeps those lines", async () => {
+  const { store } = storeElsewhere();
+  const { server, twin } = await bothHold(store);
+  appendFileSync(server.path(), line("a turn on the server"));
+  await until(async () => (await copyIn(store)) === server.written());
+
+  writeFileSync(twin.path(), REDACTED);
+  const both = REDACTED + line("a turn on the server");
+  expect(await twin.hub()).toBe(true);
+  expect(twin.written()).toBe(both);
+  expect(await copyIn(store)).toBe(both);
+
+  expect(await server.hub()).toBe(true);
+  expect(server.written()).toBe(both);
+  expect([...server.setAside(), ...twin.setAside()]).toEqual([]);
+});
+
+test("a secret taken out of a transcript with its length kept, far from its end, leaves the store", async () => {
+  const { store } = storeElsewhere();
+  const rest = line("x".repeat(3000)) + line("y".repeat(3000));
+  const { server, twin } = await bothHold(store, line("the sudo password is hunter2456") + rest);
+
+  writeFileSync(server.path(), line("the sudo password is [redacted]") + rest);
+  expect(await server.hub()).toBe(true);
+  expect(await copyIn(store)).toBe(server.written());
+
+  expect(await twin.hub()).toBe(true);
+  expect(twin.written()).toBe(server.written());
+  expect(twin.setAside()).toEqual([]);
+});
+
+test("a transcript changed in place on both machines since they held the same ends as the store's, the other kept beside it", async () => {
+  const { store } = storeElsewhere();
+  const { server, twin } = await bothHold(store);
+  writeFileSync(server.path(), REDACTED);
+  await until(async () => (await copyIn(store)) === REDACTED);
+
+  const other = line("the sudo password is hunter2") + line("struck out");
+  writeFileSync(twin.path(), other);
+  expect(await twin.hub()).toBe(true);
+  expect(twin.written()).toBe(REDACTED);
+  expect(await copyIn(store)).toBe(REDACTED);
+  expect(
+    twin.setAside().map((aside) => readFileSync(join(twin.transcripts, aside), "utf-8")),
+  ).toEqual([other]);
+});
+
+test("a transcript rewritten while its send waited on the store is looked at again, so the copy is the file and not the old one's start with the new one's end", async () => {
+  const { store, net } = storeElsewhere();
+  const server = machine("server", store);
+  mkdirSync(dirname(server.beside(RESULT)), { recursive: true });
+  writeFileSync(server.beside(RESULT), OLD);
+  writeFileSync(server.path(), SECRET);
+  await server.hub();
+  expect(await copyIn(store)).toBe(SECRET);
+  let rewrites = true;
+
+  net.drops = (call) => {
+    if (rewrites && call === "transcripts.append") {
+      rewrites = false;
+      writeFileSync(server.path(), REDACTED + line("a turn after it"));
+    }
+
+    return false;
+  };
+
+  writeFileSync(server.beside(RESULT), STRUCK);
+  await until(() => !rewrites);
+  await until(async () => (await copyIn(store)) === server.written());
+  expect(server.written()).toBe(REDACTED + line("a turn after it"));
+});
+
+test("what a machine keeps of where a file and its copy agreed goes once no open thread is on the session", async () => {
+  const { store } = storeElsewhere();
+  const server = machine("server", store);
+  const kept = join(dir, "state", "copies", "server", `${SESSION}.agreed`);
+  writeFileSync(server.path(), SECRET);
+  await server.hub();
+  expect(readFileSync(kept, "utf-8")).toContain(String(Buffer.byteLength(SECRET)));
+
+  const moved = machine("server", store, { session: "7c1d2e3f-0a1b-4c2d-8e3f-9a0b1c2d3e4f" });
+  await moved.started();
+  await until(() => !existsSync(kept));
+});
+
+test("a copy sent before copies had digests reaches a machine that lacks it, and starts over from the file that holds its end", async () => {
   const { store } = storeElsewhere();
   const server = machine("server", store);
   const twin = machine("twin", store);
-  writeFileSync(server.path(), line("the sudo password is hunter2") + line("noted"));
-  await server.hub();
-  await until(async () => (await copyIn(store)) === server.written());
-  expect(await twin.hub()).toBe(true);
-  await until(async () => (await store.transcripts.end(SESSION)).by === "twin");
+  const said = line("the plants are in the hall") + line("water them on Friday");
 
-  const redacted = line("the sudo password is [redacted]") + line("noted");
-  writeFileSync(twin.path(), redacted);
-  await until(async () => (await copyIn(store)) === redacted);
+  await store.transcripts.append(
+    SESSION,
+    await store.transcripts.end(SESSION),
+    [{ upto: Buffer.byteLength(said), text: said }],
+    { tail: endOf(said), of: Buffer.byteLength(said), last: endOf(said), by: "server" },
+  );
 
   expect(await twin.hub()).toBe(true);
-  expect(twin.written()).toBe(redacted);
-  expect(twin.setAside()).toEqual([]);
-  expect(await copyIn(store)).toBe(redacted);
+  expect(twin.written()).toBe(said);
+  expect(await copyIn(store)).toBe(said);
+  expect(await store.transcripts.end(SESSION)).toMatchObject({ by: "twin" });
+
+  expect(
+    (await store.transcripts.marks(SESSION, 0)).map(({ upto, digest }) => [upto, digest]),
+  ).toEqual([[Buffer.byteLength(said), createHash("sha256").update(said).digest("hex")]]);
+
+  writeFileSync(server.path(), said);
+  expect(await server.hub()).toBe(true);
   expect(await store.transcripts.end(SESSION)).toMatchObject({ by: "twin" });
 });
 
-test("a tool result changed on the machine that holds hex is the one both machines end with, though the other still has the older one", async () => {
-  const { store } = storeElsewhere();
+async function besideIn(store: Store, name = RESULT) {
+  const held = await store.transcripts.since(`${SESSION}/tool-results/${name}`, 0);
+
+  return Buffer.concat(held.map(({ text }) => Buffer.from(text, "base64"))).toString("utf-8");
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Both machines hold a session's conversation and one tool result beside it, as the server wrote them, and the server holds hex, its hub watching.
+async function bothHoldBeside(store: Store) {
   const server = machine("server", store);
   const twin = machine("twin", store);
-  const [old, redacted] = ["the sudo password is hunter2\n", "the sudo password is [redacted]\n"];
-  mkdirSync(dirname(server.beside("toolu_01.txt")), { recursive: true });
-  writeFileSync(server.beside("toolu_01.txt"), old);
+  mkdirSync(dirname(server.beside(RESULT)), { recursive: true });
+  writeFileSync(server.beside(RESULT), OLD);
   writeFileSync(server.path(), line("the plants are in the hall"));
   await server.hub();
-  await until(async () => (await copyIn(store)) === server.written());
   expect(await twin.hub()).toBe(true);
-  await until(() => existsSync(twin.beside("toolu_01.txt")));
-  await until(async () => (await store.transcripts.end(SESSION)).by === "twin");
+  expect(readFileSync(twin.beside(RESULT), "utf-8")).toBe(OLD);
+  expect(await server.hub()).toBe(true);
+
+  return { server, twin };
+}
+
+test("a tool result changed on the machine that holds hex reaches the store with no line written after it, and the other machine at its next start", async () => {
+  const { store } = storeElsewhere();
+  const { server, twin } = await bothHoldBeside(store);
+  writeFileSync(server.beside(RESULT), STRUCK);
+  await until(async () => (await besideIn(store)) === STRUCK);
+
+  expect(await twin.hub()).toBe(true);
+  expect(readFileSync(twin.beside(RESULT), "utf-8")).toBe(STRUCK);
+  expect(await server.hub()).toBe(true);
+  expect(readFileSync(server.beside(RESULT), "utf-8")).toBe(STRUCK);
+});
+
+test("a tool result changed on a machine that lost hex before it could send it is the one both machines and the store end with", async () => {
+  const { store } = storeElsewhere();
+  const { server, twin } = await bothHoldBeside(store);
+  server.reaches(false);
+  writeFileSync(server.beside(RESULT), STRUCK);
+  expect(await twin.hub()).toBe(true);
+  expect(await besideIn(store)).toBe(OLD);
 
   expect(await server.hub()).toBe(true);
-  await until(async () => (await store.transcripts.end(SESSION)).by === "server");
-  writeFileSync(server.beside("toolu_01.txt"), redacted);
-  expect(await server.hub()).toBe(true);
-  await until(async () => (await store.transcripts.besides(SESSION))[0]?.size === redacted.length);
+  expect(readFileSync(server.beside(RESULT), "utf-8")).toBe(STRUCK);
+  expect(await besideIn(store)).toBe(STRUCK);
+  expect(await twin.hub()).toBe(true);
+  expect(readFileSync(twin.beside(RESULT), "utf-8")).toBe(STRUCK);
+});
 
+test("a tool result changed on the machine that doesn't hold hex is the one both machines and the store end with", async () => {
+  const { store } = storeElsewhere();
+  const { server, twin } = await bothHoldBeside(store);
+  writeFileSync(twin.beside(RESULT), STRUCK);
+  expect(await twin.hub()).toBe(true);
+  expect(readFileSync(twin.beside(RESULT), "utf-8")).toBe(STRUCK);
+  expect(await besideIn(store)).toBe(STRUCK);
+
+  expect(await server.hub()).toBe(true);
+  expect(readFileSync(server.beside(RESULT), "utf-8")).toBe(STRUCK);
+});
+
+test("a tool result that doesn't arrive as a machine takes hex over stays the store's newer one, and arrives once the store gives it", async () => {
+  const { store, net } = storeElsewhere();
+  const { server, twin } = await bothHoldBeside(store);
+  writeFileSync(server.beside(RESULT), STRUCK);
+  await until(async () => (await besideIn(store)) === STRUCK);
+
+  net.drops = (call) => call === "transcripts.since";
+  expect(await twin.hub()).toBe(true);
+  net.drops = () => false;
+  expect(readFileSync(twin.beside(RESULT), "utf-8")).toBe(OLD);
+  expect(await besideIn(store)).toBe(STRUCK);
+
+  expect(await twin.hub()).toBe(true);
+  expect(readFileSync(twin.beside(RESULT), "utf-8")).toBe(STRUCK);
+  expect(await besideIn(store)).toBe(STRUCK);
+});
+
+test("a machine that holds a conversation and what is beside it asks the store twice as it takes hex over, where the copy stands and what is beside it, and once more as the session starts", async () => {
+  const { store, net } = storeElsewhere();
+  const { twin } = await bothHoldBeside(store);
+  net.asked.length = 0;
   const start = await twin.started();
-  await until(async () => (await store.transcripts.end(SESSION)).by === "twin");
-  expect(readFileSync(twin.beside("toolu_01.txt"), "utf-8")).toBe(redacted);
+  await until(() => net.asked.includes("besides"));
+  await sent();
+  expect(net.asked).toEqual(["prune", "end", "besides"]);
+
+  net.asked.length = 0;
   expect(await start()).toBe(true);
-  expect(await server.hub()).toBe(true);
-  await until(async () => (await store.transcripts.end(SESSION)).by === "server");
-  expect(readFileSync(server.beside("toolu_01.txt"), "utf-8")).toBe(redacted);
-  expect((await store.transcripts.besides(SESSION)).map(({ size }) => size)).toEqual([
-    redacted.length,
-  ]);
+  expect(net.asked).toEqual(["end"]);
 });
 
 test("a file put back shorter on the machine whose copy it is gets the rest from the copy, which stays", async () => {
@@ -534,7 +723,7 @@ test("the tool results beside a transcript, text or not, come with it, and one t
   const { store } = storeElsewhere();
   const server = machine("server", store);
   const twin = machine("twin", store);
-  const image = Buffer.from(Array.from({ length: 300_000 }, (_byte, at) => (at * 7) % 256));
+  const image = Buffer.from(Array.from({ length: 1_300_000 }, (_byte, at) => (at * 7) % 256));
   mkdirSync(dirname(server.beside("toolu_01.txt")), { recursive: true });
   writeFileSync(server.beside("toolu_01.txt"), "what the tool said, in full\n");
   writeFileSync(server.beside("shot-1.png"), image);
@@ -596,23 +785,39 @@ test("a tool result comes at a later start when the first didn't bring it, thoug
   expect(readFileSync(twin.beside("toolu_01.txt"), "utf-8")).toBe("what the tool said, in full\n");
 });
 
-test("a tool result this machine wrote and then changed stays as it is here, whatever the store still holds of it", async () => {
+test("a machine behind on a conversation asks the store once where its copy stands as it takes hex over, and takes what it lacks as the session starts", async () => {
+  const { store, net } = storeElsewhere();
+  const { server, twin } = await bothHold(store, line("x".repeat(300_000)));
+  appendFileSync(server.path(), line("y".repeat(300_000)) + line("water them on Friday"));
+  await until(async () => (await copyIn(store)) === server.written());
+
+  net.asked.length = 0;
+  const start = await twin.started();
+  await until(() => net.asked.includes("end"));
+  await sent();
+  expect(net.asked).toEqual(["prune", "end"]);
+
+  net.asked.length = 0;
+  expect(await start()).toBe(true);
+  expect(twin.written()).toBe(server.written());
+  expect(net.asked).toEqual(["end", "since", "besides"]);
+});
+
+test("a tool result this machine wrote and then changed stays as it is here while the store can't be sent it", async () => {
   const { store, net } = storeElsewhere();
   const server = machine("server", store);
-  mkdirSync(dirname(server.beside("toolu_01.txt")), { recursive: true });
-  writeFileSync(server.beside("toolu_01.txt"), "the sudo password is hunter2\n");
+  mkdirSync(dirname(server.beside(RESULT)), { recursive: true });
+  writeFileSync(server.beside(RESULT), OLD);
   writeFileSync(server.path(), line("the plants are in the hall"));
   await server.hub();
-  await until(async () => (await store.transcripts.besides(SESSION))[0]?.size === 29);
+  expect(await besideIn(store)).toBe(OLD);
 
-  writeFileSync(server.beside("toolu_01.txt"), "the sudo password is [redacted]\n");
+  server.reaches(false);
+  writeFileSync(server.beside(RESULT), STRUCK);
   net.drops = (call) => call === "transcripts.append";
-  net.listed = 0;
   expect(await server.hub()).toBe(true);
-  await until(() => net.listed >= 2 && net.out === 0);
-  expect(readFileSync(server.beside("toolu_01.txt"), "utf-8")).toBe(
-    "the sudo password is [redacted]\n",
-  );
+  expect(net.dropped).toBeGreaterThan(0);
+  expect(readFileSync(server.beside(RESULT), "utf-8")).toBe(STRUCK);
 });
 
 test("a thread goes on only from a conversation that is whole here: the one it forks, when it forks one, and else its own", async () => {
@@ -731,13 +936,13 @@ test("a transcript growing wakes none of the store's watchers, as a record chang
 
   const grown = call("transcripts", "append", [
     SESSION,
-    { size: 0, tail: "", of: 0, last: "", by: "" },
-    [{ upto: 3, text: "{}\n" }],
-    { tail: "t1", of: 3, last: "t1", by: "server" },
+    { size: 0, tail: "", digest: "", of: 0, last: "", by: "" },
+    [{ upto: 3, text: "{}\n", digest: "d1" }],
+    { tail: "t1", digest: "d1", of: 3, last: "t1", by: "server" },
   ]);
 
   expect(grown.reply).toEqual({
-    value: { size: 3, tail: "t1", of: 3, last: "t1", by: "server" },
+    value: { size: 3, tail: "t1", digest: "d1", of: 3, last: "t1", by: "server" },
   });
   expect(grown.wrote).toBe(false);
 
