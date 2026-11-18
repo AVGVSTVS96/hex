@@ -13,9 +13,9 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { file } from "../../hub/store.ts";
+import { file } from "../hub/store.ts";
 
-const BIN = join(import.meta.dir, "../../bin");
+const BIN = import.meta.dir;
 
 const withoutTheHexSessionSteeringTheseHooks = Object.fromEntries(
   Object.entries(process.env).filter(([name]) => !name.startsWith("HEX_") && name !== "MEMORY_DIR"),

@@ -22,7 +22,7 @@ const McpRequest = z.object({
   params: z.unknown().optional(),
 });
 
-const HEX = join(import.meta.dir, "../..");
+const HEX = join(import.meta.dir, "..");
 const home = mkdtempSync(join(tmpdir(), "away-"));
 let calls: z.infer<typeof ToolCall>[] = [];
 let waits: object[] = [];

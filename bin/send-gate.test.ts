@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 
-const GATE = join(import.meta.dir, "../../bin/send-gate");
+const GATE = join(import.meta.dir, "send-gate");
 const FORWARD = "mcp__claude_ai_Gmail__forward";
 const MACHINES = "track@machine.example, inbox@other.example";
 

@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const TRASH = join(import.meta.dir, "../../bin/worktree-trash");
+const TRASH = join(import.meta.dir, "worktree-trash");
 const root = realpathSync(mkdtempSync(join(tmpdir(), "worktree-trash-")));
 const repo = join(root, "repo");
 const home = join(root, "home");

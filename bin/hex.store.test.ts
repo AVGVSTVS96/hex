@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const HEX = join(import.meta.dir, "../..");
+const HEX = join(import.meta.dir, "..");
 const BUNX = Bun.which("bunx") ?? "bunx";
 const CURL = Bun.which("curl") ?? "curl";
 const WORKERS_DEV = "https://hex-store.test.workers.dev";

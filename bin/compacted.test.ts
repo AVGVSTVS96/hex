@@ -3,10 +3,10 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { Author } from "../../hub/store.ts";
-import { file } from "../../hub/store.ts";
+import type { Author } from "../hub/store.ts";
+import { file } from "../hub/store.ts";
 
-const BIN = join(import.meta.dir, "../../bin");
+const BIN = import.meta.dir;
 const SESSION = "b7e2c5a9-0000-4000-8000-000000000000";
 const LIMIT = 10_000;
 
@@ -21,7 +21,7 @@ beforeEach(() => {
     copyFileSync(join(BIN, script), join(home, ".hex/bin", script));
   }
 
-  symlinkSync(join(import.meta.dir, "../../hub"), join(home, ".hex/hub"));
+  symlinkSync(join(import.meta.dir, "../hub"), join(home, ".hex/hub"));
 });
 
 afterEach(() => {

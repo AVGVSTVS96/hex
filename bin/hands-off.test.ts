@@ -9,7 +9,7 @@ const GUARD = join(hex, "bin/hands-off");
 
 mkdirSync(join(hex, "bin"), { recursive: true });
 
-copyFileSync(join(import.meta.dir, "../../bin/hands-off"), GUARD);
+copyFileSync(join(import.meta.dir, "hands-off"), GUARD);
 
 const git = (...args: string[]) => Bun.spawnSync(["git", "-C", hex, ...args]);
 

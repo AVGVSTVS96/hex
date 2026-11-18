@@ -16,9 +16,9 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
-import { startHub } from "../../hub/hub.ts";
-import type { Hub } from "../../hub/hub.ts";
-import { until } from "../../hub/until.ts";
+import { startHub } from "../hub/hub.ts";
+import type { Hub } from "../hub/hub.ts";
+import { until } from "../hub/until.ts";
 
 const Args = z.array(z.string());
 
@@ -29,7 +29,7 @@ const Settings = z.looseObject({
 
 const ClaudeJson = z.looseObject({ projects: z.record(z.string(), z.unknown()) });
 
-const HEX = join(import.meta.dir, "../..");
+const HEX = join(import.meta.dir, "..");
 const saved = { ...process.env };
 
 let home: string;

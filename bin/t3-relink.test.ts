@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const RELINK = join(import.meta.dir, "../../bin/t3-relink");
+const RELINK = join(import.meta.dir, "t3-relink");
 const ID = "5e1f0000-0000-4000-8000-000000000000";
 
 let root: string;

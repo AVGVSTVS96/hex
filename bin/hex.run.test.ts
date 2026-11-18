@@ -14,9 +14,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { until } from "../../hub/until.ts";
+import { until } from "../hub/until.ts";
 
-const BIN = join(import.meta.dir, "../../bin");
+const BIN = import.meta.dir;
 
 const HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS = `import { appendFileSync } from 'fs'
 const log = (line: string) => appendFileSync(process.env.HEX_DIR + '/state/hubs', line + ' ' + process.pid + '\\n')
