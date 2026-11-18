@@ -416,22 +416,6 @@ case "${1:-}" in
     fi
     exec bun "$hex/hub/cli.ts" "$home/state" "$@"
     ;;
-  deliver|signal|task|tasks|hold|holds|questions|pins|threads|thread|running|message|profile|log|recall|sql|watch)
-    export MEMORY_DIR="${MEMORY_DIR:-$home/memory}"
-    # While hex runs on another machine, its commands run there, as whoever ran them here.
-    moved=0
-    where=$(elsewhere) || moved=$?
-    [ "$moved" != 2 ] || { echo "hex is moving between machines; try again in a minute" >&2; exit 1; }
-    if [ "$moved" = 0 ]; then
-      set -- "$hex/bin/hex" "$@"
-      for name in HEX_OWNER HEX_THREAD HEX_CHANNEL HEX_MAIN HEX_BESIDE HEX_HELPER; do
-        eval "value=\${$name:-}"
-        [ -z "$value" ] || set -- "$name=$value" "$@"
-      done
-      exec ssh -o BatchMode=yes -o ConnectTimeout=5 "$where" "bash -c 'mapfile -d \"\" -t a < <(printf %s $(printf '%s\0' "$@" | base64 -w0) | base64 -d); exec env \"\${a[@]}\"'"
-    fi
-    exec bun "$hex/hub/cli.ts" "$home/state" "$@"
-    ;;
   elsewhere)
     elsewhere
     ;;
@@ -627,8 +611,25 @@ case "${1:-}" in
     [ "${free:-0}" -ge 5 ] && ok "$free GB free on disk" || fix "only ${free:-0} GB free on disk: sessions and backups need room"
     [ "$problems" -eq 0 ] && echo "hex looks healthy" || { echo "$problems to fix"; exit 1; }
     ;;
+  '')
+    echo "usage: hex init|link|restore|start|stop|restart|status|doctor|run|acp|elsewhere|store deploy|store move|store back" >&2
+    exec bun "$hex/hub/cli.ts" "$home/state"
+    ;;
   *)
-    echo "usage: hex init|link|restore|start|stop|restart|status|doctor|run|acp|deliver|task|tasks|hold|holds|questions|pins|threads|thread|running|message|profile|log|recall|watch" >&2
-    exit 2
+    # Every other command is one file in hub/cli/.
+    export MEMORY_DIR="${MEMORY_DIR:-$home/memory}"
+    # While hex runs on another machine, its commands run there, as whoever ran them here.
+    moved=0
+    where=$(elsewhere) || moved=$?
+    [ "$moved" != 2 ] || { echo "hex is moving between machines; try again in a minute" >&2; exit 1; }
+    if [ "$moved" = 0 ]; then
+      set -- "$hex/bin/hex" "$@"
+      for name in HEX_OWNER HEX_THREAD HEX_CHANNEL HEX_MAIN HEX_BESIDE HEX_HELPER; do
+        eval "value=\${$name:-}"
+        [ -z "$value" ] || set -- "$name=$value" "$@"
+      done
+      exec ssh -o BatchMode=yes -o ConnectTimeout=5 "$where" "bash -c 'mapfile -d \"\" -t a < <(printf %s $(printf '%s\0' "$@" | base64 -w0) | base64 -d); exec env \"\${a[@]}\"'"
+    fi
+    exec bun "$hex/hub/cli.ts" "$home/state" "$@"
     ;;
 esac
