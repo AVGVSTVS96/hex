@@ -613,3 +613,31 @@ test("words a lost reply took mid-turn come back when the take is made again wit
     message.key,
   ]);
 }, 60_000);
+
+test("a claim from a hex whose store differs from the object's is answered as another store, apart from an outage", async () => {
+  await movedInto("contracts");
+
+  const answer = await fetch(`${url}/contracts/claim`, {
+    method: "POST",
+    headers: auth,
+    body: JSON.stringify({ claimant: "a", contract: "older" }),
+  });
+
+  expect(answer.status).toBe(503);
+  expect(await answer.json()).toMatchObject({ every: true, other: true });
+}, 60_000);
+
+test("the log of large messages is read in pages of about 4 MB", async () => {
+  const store = remote(await movedInto("pages"), { ...QUICK, answerWithin: 60_000 });
+
+  for (let n = 0; n < 7; n += 1) {
+    await store?.messages.deliver({
+      ...message,
+      key: `telegram:-100:${n}`,
+      body: "a".repeat(1_000_000),
+    });
+  }
+
+  const read = store === undefined ? [] : await Array.fromAsync(messagesSince(store));
+  expect(read.map((page) => page.length)).toEqual([3, 3, 1]);
+}, 120_000);

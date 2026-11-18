@@ -42,6 +42,13 @@ live="shipped: hex is live at %s, with what this thread asked for; the hub resta
 if [ "$(git rev-parse HEAD)" = "$incoming" ]; then
   echo "up to date at $before"
   tell "$(printf "$live" "$before")"
+  # A hex that got here another way, as a takeover that pulls it does, can run ahead of its store, so the store this hex
+  # is built with deploys all the same; one that runs it already is left as it is.
+  if [ -e "$home/state/store.json" ] && ! output=$("$hex/bin/hex" store deploy 2>&1); then
+    printf '%s\n' "$output"
+    echo "but the store hex $before needs didn't deploy"
+    exit 1
+  fi
   exit 0
 fi
 if [ "$incoming" = "$(cat "$home/state/bad" 2>/dev/null || :)" ]; then

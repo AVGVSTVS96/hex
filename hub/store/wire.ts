@@ -36,6 +36,10 @@ const MethodValue = z.custom<Method>((value) => typeof value === "function");
 const HOME_FAILED = /SQLITE_(BUSY|LOCKED|IOERR|FULL|CANTOPEN|READONLY|CORRUPT|NOTADB)/u;
 const SqliteFailure = z.object({ code: z.string() });
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A schema that lacks what this hex's SQL names is a store that doesn't fit this hex, which no row of its own causes: every write would fail the same.
+const SCHEMA_FAILED = /no such (table|column|function|index)|has no column named/u;
+
 const NAMED = new Map<string, string[]>(Object.entries(METHODS));
 
 function methodsOf(domains: Domains): Map<string, Method> {
@@ -81,7 +85,9 @@ export function answering(domains: Domains): (call: string) => Reply {
       const said = error instanceof Error ? error.message : String(error);
       const { code = said } = SqliteFailure.safeParse(error).data ?? {};
 
-      return HOME_FAILED.test(code) ? { error: said, every: true } : { error: said };
+      return HOME_FAILED.test(code) || SCHEMA_FAILED.test(said)
+        ? { error: said, every: true }
+        : { error: said };
     }
   };
 }

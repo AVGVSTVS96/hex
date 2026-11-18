@@ -8,8 +8,9 @@ import { ahead } from "./ahead.ts";
 import { nightly } from "./backup.ts";
 import { besideOf } from "./beside.ts";
 import { clients, engine, free, listen, up } from "./hub.ts";
-import { answered, claimedAs, whenLost, whenMoved } from "./kept.ts";
-import { tellOwner } from "./notice.ts";
+import { answered, payOwedFacts, takeOver, whenLost, whenMoved } from "./kept.ts";
+import { cantStart } from "./notice.ts";
+import { queue } from "./observe.ts";
 import { hexDir, open, stateDir, syncInBackground } from "./store.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -49,6 +50,15 @@ const hangUpSignOffAndExit = (signal: NodeJS.Signals | "lost") =>
           }
         }),
       ),
+    )
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // A hub refused before any hub of its own read its spool still lands what it owed as fact.
+    .then(async () =>
+      signal === "lost"
+        ? await payOwedFacts(stateDir(), async (turn, store) => {
+            await queue(stateDir(), turn, store);
+          })
+        : true,
     )
     .then(() => process.exit(signal === "lost" ? LOST_HEX : 0)));
 
@@ -91,15 +101,9 @@ await answered(
   stateDir(),
   "this hub takes hex over",
   async (store) => {
-    claimedAs(await store.claim());
+    await takeOver(store);
   },
-  {
-    tell: (why) =>
-      void tellOwner(
-        `hex can't start on ${hostname()}: its store doesn't answer, so it waits for it (${why}).`,
-        { down: join(hexDir(), "state") },
-      ),
-  },
+  { tell: cantStart(stateDir()) },
 );
 
 await listen();

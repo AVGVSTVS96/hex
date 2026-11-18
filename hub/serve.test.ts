@@ -164,13 +164,15 @@ test("a hub that systemd started ahead of its turn tells it it's ready as it say
 function objectStore(claims: () => Response) {
   let reachable = false;
   const asked: string[] = [];
+  const bodies: string[] = [];
 
   const server = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: (request) => {
+    fetch: async (request) => {
       const route = new URL(request.url).pathname.split("/").slice(2).join("/");
       asked.push(route);
+      bodies.push(await request.text());
 
       if (!reachable) {
         return new Response("down", { status: 503 });
@@ -189,6 +191,7 @@ function objectStore(claims: () => Response) {
 
   return {
     asked,
+    bodies,
     up: () => {
       reachable = true;
     },
@@ -242,6 +245,59 @@ test("a hub whose claim another machine's newer one refuses stops as one that lo
   try {
     const { started } = serve(port);
     expect(await started.exited).toBe(3);
+  } finally {
+    await object.stop();
+  }
+});
+
+test("a hub refused as it claims hex still lands what it owed as fact before it stops", async () => {
+  const object = objectStore(() =>
+    Response.json({ error: "lease 7 is older than lease 8", lost: true }, { status: 409 }),
+  );
+
+  object.up();
+  writeFileSync(
+    join(dir, "state", "owed.telegram.json"),
+    `${JSON.stringify({
+      write: {
+        kind: "deliver",
+        row: { key: "telegram:1:90", to: "-100:7", from: "telegram", author: "hex", body: "on it" },
+        by: "s",
+      },
+      tenure: 3,
+    })}\n`,
+  );
+  const port = await freePort();
+
+  try {
+    const { started } = serve(port);
+    expect(await started.exited).toBe(3);
+    expect(object.bodies.some((body) => body.includes("telegram:1:90"))).toBe(true);
+    expect(existsSync(join(dir, "state", "owed.telegram.json"))).toBe(false);
+  } finally {
+    await object.stop();
+  }
+});
+
+test("a hub whose store runs another hex's code tells the owner at once that it needs a deploy, and waits", async () => {
+  const object = objectStore(() =>
+    Response.json(
+      {
+        error: "hex's store runs another hex's code (abc): deploy this hex's with hex store deploy",
+        other: true,
+      },
+      { status: 503 },
+    ),
+  );
+
+  object.up();
+  const port = await freePort();
+
+  try {
+    const { started, output } = serve(port);
+    await until(() => output.said.includes("hex can't start") || started.exitCode !== null);
+    expect(output.said).toContain("hex store deploy");
+    expect(started.exitCode).toBeNull();
   } finally {
     await object.stop();
   }

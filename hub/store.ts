@@ -26,7 +26,13 @@ import type { Client } from "./store/wire.ts";
 
 export { awayFile, unlease } from "./store/remote.ts";
 
-export { LostError, MovedError, RefusedError, UnreachedError } from "./store/errors.ts";
+export {
+  LostError,
+  MovedError,
+  OtherStoreError,
+  RefusedError,
+  UnreachedError,
+} from "./store/errors.ts";
 
 export type { MessageId } from "./store/db.ts";
 
@@ -392,7 +398,7 @@ export async function* messagesSince(store: Store, after = ""): AsyncGenerator<R
 
     const last = page.at(-1);
 
-    if (last === undefined || page.length < MESSAGES_AT_ONCE) {
+    if (last === undefined) {
       return;
     }
 

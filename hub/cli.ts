@@ -10,7 +10,15 @@ import { history } from "./loaded.ts";
 import { holds, keysOf, problems, verdict } from "./notes.ts";
 import { busy, running, served, serving } from "./running.ts";
 import type { Session } from "./running.ts";
-import { asked, awayFile, messagesSince, open as openStore, sent, unlease } from "./store.ts";
+import {
+  asked,
+  awayFile,
+  messagesSince,
+  open as openStore,
+  sent,
+  unclaimed,
+  unlease,
+} from "./store.ts";
 import type { Row, Status, Store, Task, Thread } from "./store.ts";
 import { entry, render, waiting } from "./tasks.ts";
 import { zoneOf } from "./zone.ts";
@@ -1045,7 +1053,7 @@ try {
               .flat()
               .toSorted((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
               .slice(last < 0 ? 0 : -last)
-          : (await Array.fromAsync(messagesSince(store, since))).flat();
+          : (await Array.fromAsync(messagesSince(unclaimed(state), since))).flat();
 
       await log(
         rows.filter((row) => row.at > since && (flags.taken !== true || row.taken !== undefined)),

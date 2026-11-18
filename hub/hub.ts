@@ -26,7 +26,7 @@ import type { Owing } from "./kept.ts";
 import { STARTUP } from "./loaded.ts";
 import { endpoint } from "./mcp.ts";
 import type { ChannelServer, Line, Permission, ToolArguments } from "./mcp.ts";
-import { tellOwner } from "./notice.ts";
+import { cantStart, tellOwner } from "./notice.ts";
 import { PASS, queue } from "./observe.ts";
 import { ordered } from "./ordered.ts";
 import { sessionPauses } from "./pauses.ts";
@@ -158,6 +158,9 @@ export type Limits = {
   connect: number;
   capacity: number;
   handoffAbove: number;
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // How long a hub waits for a store that doesn't answer as it starts before the owner hears.
+  tellAfter: number;
 };
 
 type Run = {
@@ -456,6 +459,7 @@ const LIMITS: Limits = {
   connect: 300_000,
   capacity: tokensFrom("HEX_CHAT_CAPACITY", 350_000),
   handoffAbove: tokensFrom("HEX_HANDOFF_ABOVE", 80_000),
+  tellAfter: 60_000,
 };
 
 function tokensFrom(name: string, fallback: number) {
@@ -591,10 +595,16 @@ export async function startHub({
   // The systemd journal General follows for units that keep restarting; a hub without one follows none.
   journal?: (() => string[]) | undefined;
 }) {
-  const { idleStop, cacheWarm, compactAbove, reconnect, connect, capacity, handoffAbove } = {
-    ...LIMITS,
-    ...limits,
-  };
+  const {
+    idleStop,
+    cacheWarm,
+    compactAbove,
+    reconnect,
+    connect,
+    capacity,
+    handoffAbove,
+    tellAfter,
+  } = { ...LIMITS, ...limits };
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The session that made the tool call in progress.
@@ -608,21 +618,30 @@ export async function startHub({
   let started = false;
 
   const owing = keeping(storeDir, {
-    spool: join(stateDir, `owed.${app}.json`),
+    spool: join(storeDir, `owed.${app}.json`),
+    earlier: stateDir === storeDir ? [] : [join(stateDir, `owed.${app}.json`)],
+    refused: join(storeDir, `refused.${app}.json`),
     letGo: (thread, rows) => {
       if (started) {
         heldLetGo(thread, rows);
       }
     },
-    queue: (turn) => queue(storeDir, turn),
-    tell: (why) =>
-      void tellOwner(
-        `hex's store refuses what hex writes, so the hub keeps it in memory and on disk until it doesn't: ${why}`,
-      ),
+    queue: (turn, store) => queue(storeDir, turn, store),
+    tell: (why) => void tellOwner(why),
   });
 
   const { kept, must } = owing;
-  const threads = await openThreads({ app, storeDir, owing, hexDir, link });
+
+  const threads = await openThreads({
+    app,
+    storeDir,
+    owing,
+    hexDir,
+    link,
+    tell: cantStart(storeDir),
+    tellAfter,
+  });
+
   started = true;
   const turns = sessionTurns({ overdue: (thread) => void letHeldGo(thread) });
   const waiting = messagesWaiting({ runs, kept, waits });

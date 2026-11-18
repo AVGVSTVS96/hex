@@ -18,7 +18,11 @@ type Version = { version: string | null; migrations: number | null; contract: st
 // Cloudflare's own edge answers 409 for some of its errors too (1001, 1004, 1018), so only the object's word, `lost`, says another hub holds hex.
 type Lost = { error: string; lost: true };
 
-const json = (body: Reply | Version | Lost, status = 200) => Response.json(body, { status });
+type Other = { error: string; every: true; other: true };
+
+const json = (body: Reply | Version | Lost | Other, status = 200) =>
+  Response.json(body, { status });
+
 const bytes = new TextEncoder();
 
 const digest = async (text: string) =>
@@ -85,7 +89,9 @@ export class Records extends DurableObject<Env> {
           ? json({ value: claimed.tenure })
           : "lost" in claimed
             ? json({ error: claimed.lost, lost: true }, 409)
-            : json({ error: claimed.empty, every: true }, 503);
+            : "other" in claimed
+              ? json({ error: claimed.other, every: true, other: true }, 503)
+              : json({ error: claimed.empty, every: true }, 503);
       }
 
       if (route === "lease/clear") {

@@ -1,11 +1,13 @@
 import {
   appendFileSync,
   existsSync,
+  readdirSync,
   readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { join } from "node:path";
 
 import { z } from "zod";
 
@@ -15,6 +17,7 @@ import {
   LostError,
   MovedError,
   open,
+  OtherStoreError,
   RefusedError,
   unclaimed,
   UnreachedError,
@@ -34,8 +37,16 @@ const TELL_AFTER_MS = 60_000;
 // The tenure this process's claim was given (serve.ts), which a spool records each write under, so a later hub can tell whether another held hex since.
 let tenure: number | undefined;
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A file home's claim is 0: one machine, one hub, so no tenure to tell hubs apart by.
 export function claimedAs(given: number | undefined) {
-  tenure = given;
+  tenure = given === undefined || given <= 0 ? undefined : given;
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// This process takes hex over: every hub that claimed the store before it is refused from then on.
+export async function takeOver(store: Store) {
+  claimedAs(await store.claim());
 }
 
 const ignore = (): void => undefined;
@@ -183,6 +194,22 @@ function standIns(owed: Owed, why: string): Owed[] {
     ...(owed.by !== undefined && { by: owed.by }),
   });
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A row the store refuses for what's in it, like its key, still leaves a note of its own the store takes, in the same thread, kept as taken so no session is given it.
+  const noteOfItsOwn: Owed = {
+    kind: "deliver",
+    by: "hub",
+    row: {
+      key: `hub:refused:${Bun.hash(row.key).toString(36)}`,
+      to: row.to,
+      from: "hub",
+      author: "prompt",
+      body: `${said}, so it keeps only this note of it, which hex keeps whole in its refused file; its session was given it.`,
+      meta: { refused: "aside", user: "hub" },
+      ...(row.at !== undefined && { at: row.at }),
+    },
+  };
+
   return [
     ...(bytes.length > MOST_KEPT_BYTES
       ? [
@@ -193,6 +220,7 @@ function standIns(owed: Owed, why: string): Owed[] {
         ]
       : []),
     instead(`${said}, so it keeps only this note of it; its session was given it.`, "true"),
+    noteOfItsOwn,
   ];
 }
 
@@ -339,7 +367,9 @@ export async function answered<T>(
         );
       }
 
-      if (!told && Date.now() - since >= tellAfter) {
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      // A store running another hex's code waits on a deploy, not a while, so the owner hears it at once.
+      if (!told && (error instanceof OtherStoreError || Date.now() - since >= tellAfter)) {
         told = true;
         tell(error.message);
       }
@@ -359,7 +389,19 @@ function owedIn(spool: string): Owed[] {
   const owed = new Map<string, Owed>();
 
   try {
-    for (const line of readFileSync(spool, "utf-8").split("\n")) {
+    const text = readFileSync(spool, "utf-8");
+
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // A spool hex wrote before its lines had a tenure is one JSON array of writes.
+    const asList = z
+      .array(z.unknown())
+      .safeParse(text.trimStart().startsWith("[") ? JSON.parse(text) : null);
+
+    const lines = asList.success
+      ? asList.data.map((write) => JSON.stringify({ write }))
+      : text.split("\n");
+
+    for (const line of lines) {
       if (line.trim() === "") {
         continue;
       }
@@ -419,7 +461,10 @@ function keepOwed(spool: string, owed: Owed[]) {
   });
 }
 
-type Doing = { letGo: (thread: string, rows: Row[]) => void; queue: (pass: Pass) => Promise<void> };
+type Doing = {
+  letGo: (thread: string, rows: Row[]) => void;
+  queue: (pass: Pass, store: Store) => Promise<void>;
+};
 
 async function madeOn(store: Store, write: Owed, { letGo, queue }: Doing): Promise<boolean> {
   switch (write.kind) {
@@ -448,7 +493,7 @@ async function madeOn(store: Store, write: Owed, { letGo, queue }: Doing): Promi
     }
 
     case "pass": {
-      await queue(write.pass);
+      await queue(write.pass, store);
 
       return true;
     }
@@ -457,9 +502,41 @@ async function madeOn(store: Store, write: Owed, { letGo, queue }: Doing): Promi
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The store while it opens and writes. What the hub must keep (must) and the store couldn't take is owed: kept on disk (spool), made again by its key, in the order it was first made and before anything after it, once the store answers, and until then nothing the hub was given is safe (synced); meanwhile the hub goes on from memory, so an outage never leaves hex deaf. What the store refuses outright is dropped, a message keeping a note in its place. A hex.db that moved is followed to where it went (open), and a store that says another machine holds hex stops the hub (lost).
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What a hub owes as it starts: its spool, then any an older hex kept elsewhere, then what was set aside as refused, tried again at each start so a store fixed since takes it; all of it in the spool from then on.
+function owedAtStart(spool: string, others: string[]) {
+  const owed = new Map<string, Owed>();
+
+  for (const write of [spool, ...others].flatMap(owedIn)) {
+    owed.set(keyOf(write), write);
+  }
+
+  keepOwed(spool, [...owed.values()]);
+
+  for (const other of others) {
+    spooled(other, () => {
+      rmSync(other, { force: true });
+    });
+  }
+
+  return owed.values();
+}
+
 export function keeping(
   storeDir: string,
-  { spool, letGo, queue, tell = ignore }: Doing & { spool: string; tell?: (why: string) => void },
+  {
+    spool,
+    earlier = [],
+    refused,
+    letGo,
+    queue,
+    tell = ignore,
+  }: Doing & {
+    spool: string;
+    earlier?: string[];
+    refused: string;
+    tell?: (why: string) => void;
+  },
 ) {
   const owed = new Map<string, Owed>();
   let home = open(storeDir);
@@ -480,11 +557,9 @@ export function keeping(
     return now;
   }
 
-  for (const write of owedIn(spool)) {
+  for (const write of owedAtStart(spool, [...earlier, refused])) {
     owed.set(keyOf(write), write);
   }
-
-  keepOwed(spool, [...owed.values()]);
 
   let refusal: LostError | undefined;
   let paying: Promise<void> | undefined;
@@ -527,6 +602,7 @@ export function keeping(
   async function attempt(
     write: Owed,
     instead?: Owed[],
+    first = write,
   ): Promise<{ answered: boolean; value?: boolean }> {
     try {
       return { answered: true, value: await made(write) };
@@ -543,18 +619,30 @@ export function keeping(
 
       const [next, ...rest] = instead ?? standIns(write, String(error));
 
-      if (next !== undefined) {
-        return await attempt(next, rest);
-      }
-
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-      // A message the store refused even as a note isn't the message's fault: the store refuses what hex writes, so the message is owed as in an outage, and the owner hears it once.
-      if (instead !== undefined && !told) {
-        told = true;
-        tell(String(error));
+      // A message the store won't take even under its own key is set aside, whole, in the refused file before its note of its own is tried, so what comes after it still lands and nothing is lost; the owner hears which, and that hex tries it again at its next start.
+      if (next?.kind === "deliver" && next.row.meta?.refused === "aside") {
+        setAside(first, String(error));
       }
 
-      return { answered: instead === undefined };
+      if (next !== undefined) {
+        return await attempt(next, rest, first);
+      }
+
+      return { answered: true };
+    }
+  }
+
+  function setAside(write: Owed, why: string) {
+    spooled(refused, () => {
+      appendFileSync(refused, lineOf(write));
+    });
+
+    if (!told) {
+      told = true;
+      tell(
+        `hex's store refused a message under its own key (${keyOf(write)}): ${why}. Its thread has a note of it, it's kept whole in ${refused}, and hex tries it again each time it starts.`,
+      );
     }
   }
 
@@ -693,3 +781,41 @@ export function keeping(
 }
 
 export type Owing = ReturnType<typeof keeping>;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What the hubs of a folder owed as fact, paid with no hub and no claim, through a client no tenure refuses, as a process that lost hex stops or never starts (bin/hex, hub/paid.ts): each spool keeps what's still owed. Whether nothing is.
+export async function payOwedFacts(
+  storeDir: string,
+  queue: (pass: Pass, store: Store) => Promise<void>,
+) {
+  let left = 0;
+
+  for (const name of (existsSync(storeDir) ? readdirSync(storeDir) : []).filter((each) =>
+    /^owed\..+\.json$/u.test(each),
+  )) {
+    const spool = join(storeDir, name);
+    const owed = owedIn(spool).filter(isFact);
+    const still: Owed[] = [];
+
+    for (const write of owed) {
+      try {
+        if (still.length === 0) {
+          await madeOn(unclaimed(storeDir), write, { letGo: ignore, queue });
+          continue;
+        }
+      } catch (error) {
+        if (!(error instanceof UnreachedError)) {
+          process.stderr.write(`hub: hex's store refused what it was owed: ${String(error)}\n`);
+          continue;
+        }
+      }
+
+      still.push(write);
+    }
+
+    keepOwed(spool, still);
+    left += still.length;
+  }
+
+  return left === 0;
+}

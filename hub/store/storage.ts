@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { eachVariable, onlyReading } from "./db.ts";
 import type { Core } from "./db.ts";
-import { domains, migrate } from "./domains.ts";
+import { CONTRACT, domains, migrate } from "./domains.ts";
 import type { Domains } from "./domains.ts";
 import { answering } from "./wire.ts";
 import type { Reply } from "./wire.ts";
@@ -26,6 +26,7 @@ const HomeRow = z
 
 const Claim = z.object({
   claimant: z.string().min(1).max(100),
+  contract: z.string().optional(),
   lease: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
 });
 
@@ -278,9 +279,17 @@ export function recordsIn(storage: Storage, dir = "") {
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // A hub taking over gets the next tenure, so every hub that claimed before it is refused from then on. A process's claim that arrives again gets its tenure again while it still holds hex, and is refused once another has claimed since, so a claim the network held back never takes hex from a later one. A lease tool's number, when one passes hex between machines, can't go back: a hub on a lower lease than one seen is refused, one on the same lease (its machine's hub restarted) isn't. A hub with no lease runs hex outside any lease from then on, so a hex can stop using a lease tool.
-    claim(body: string): { tenure: number } | { lost: string } | { empty: string } {
-      const { claimant, lease } = Claim.parse(JSON.parse(body));
+    claim(
+      body: string,
+    ): { tenure: number } | { lost: string } | { empty: string } | { other: string } {
+      const { claimant, lease, contract } = Claim.parse(JSON.parse(body));
       const now = home();
+
+      if (contract !== undefined && contract !== CONTRACT) {
+        return {
+          other: `hex's store runs another hex's code (${CONTRACT}, this hex's is ${contract}): deploy this hex's with hex store deploy`,
+        };
+      }
 
       if (now === undefined || records === undefined) {
         return { empty: "hex's store is empty: hex store move brings a hex.db into it" };

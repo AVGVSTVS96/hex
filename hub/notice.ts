@@ -47,3 +47,10 @@ export async function tellOwner(
     return false;
   }
 }
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What the owner hears when a hub waits for a store that doesn't answer it as it starts: why, and that it starts once the store does.
+export const cantStart = (state: string) => (why: string) =>
+  void tellOwner(`hex can't start on ${hostname()}: ${why}. It starts once its store answers.`, {
+    down: state,
+  });

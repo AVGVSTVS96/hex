@@ -199,7 +199,17 @@ case "${1:-}" in
     lost="$home/state/lost"
     if [ -e "$lost" ]; then
       under=$(head -n 1 "$lost")
-      if [ -n "$lease" ] && { [ -z "$under" ] || [ "$lease" -gt "$under" ]; }; then rm -f "$lost"; else tail -n +2 "$lost" >&2; exit 3; fi
+      if [ -n "$lease" ] && { [ -z "$under" ] || [ "$lease" -gt "$under" ]; }; then
+        rm -f "$lost"
+      else
+        tail -n +2 "$lost" >&2
+        # What this machine's hubs owed goes to the store all the same, since no hub starts here to pay it.
+        for owed in "$home"/state/owed.*.json; do
+          [ ! -e "$owed" ] || (. "$hex/bin/settings"; bun "$hex/hub/paid.ts" "$home/state") || :
+          break
+        done
+        exit 3
+      fi
     fi
     export HEX_DIR="$home" HEX_LAUNCHER="$hex/bin/session" HEX_NAME="${HEX_NAME:-hex}"
     # The hex whose plugin and launcher sessions start from: a change to what they read only at start renews them at their next rest.
@@ -372,9 +382,6 @@ case "${1:-}" in
       where=$(elsewhere) || moved=$?
       [ "$moved" != 2 ] || { echo "hex is moving between machines: move its records once it's done, from where it runs" >&2; exit 1; }
       [ "$moved" != 0 ] || { echo "hex runs on $where, whose records are the newest: stop it there and move them from there" >&2; exit 1; }
-      # A file kept from an earlier move stays, under the time this one set it aside.
-      kept="$home/state/hex.db.moved"
-      [ ! -e "$kept" ] || mv "$kept" "$kept.$(date +%Y%m%d%H%M%S)"
       # The key `hex store deploy` made is in .env, as HEX_STORE_KEY.
       . "$hex/bin/settings"
       exec bun "$hex/hub/store/move.ts" "$home/state" "${3:-}" "${4:-}"

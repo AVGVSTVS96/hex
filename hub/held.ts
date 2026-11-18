@@ -28,10 +28,9 @@ function tag(row: Row, zone: string) {
 }
 
 const TRIES = 3;
-const BETWEEN_TRIES_MS = 1000;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The store marks what it gives taken before it answers, so a take whose answer was lost is asked again under the same time, which gives what that take took. One the store still doesn't answer is left to the hub, which gives what it held from memory once the turn ends.
+// The store marks what it gives taken before it answers, so a take whose answer was lost is asked again at once under the same time, which gives what that take took; a store that's down fails each at once, so a tool call never waits on it. One the store still doesn't answer is left to the hub, which gives what it held from memory once the turn ends.
 async function takeHeld(thread: string, session: string) {
   const at = new Date().toISOString();
 
@@ -49,8 +48,6 @@ async function takeHeld(thread: string, session: string) {
 
         return [];
       }
-
-      await Bun.sleep(BETWEEN_TRIES_MS);
     }
   }
 }

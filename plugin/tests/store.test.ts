@@ -6,7 +6,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -295,6 +294,23 @@ test("an update deploys the store the new hex is built with, with the token in t
   expect(deploys()).toHaveLength(1);
 }, 60_000);
 
+test("an update that finds hex up to date still deploys the store it's built with, as after a takeover that pulled hex ahead of its store", async () => {
+  published();
+  const head = commit("one");
+  push();
+  pointed();
+  writeFileSync(join(root, "deployed"), "the store before");
+
+  const update = await run(join(hex, "bin/update"), "--now");
+  expect(update.code).toBe(0);
+  expect(update.out).toContain(`up to date at ${head.slice(0, 7)}`);
+  expect(deploys()).toHaveLength(1);
+  expect(read(join(root, "deployed"))).toMatch(new RegExp(`@${head}@\\d+$`, "u"));
+
+  expect((await run(join(hex, "bin/update"), "--now")).code).toBe(0);
+  expect(deploys()).toHaveLength(1);
+}, 60_000);
+
 test("an update whose deployed store isn't the one hex points at, or doesn't answer as it, puts the store before it back and doesn't ship", async () => {
   published();
   const before = commit("one");
@@ -315,22 +331,6 @@ test("an update whose deployed store isn't the one hex points at, or doesn't ans
   expect(read(join(root, "deployed"))).toBe("the store before");
   expect(git("rev-parse", "HEAD")).toBe(before);
 }, 60_000);
-
-test("a move keeps the file an earlier move left, under the time it was set aside", async () => {
-  writeFileSync(
-    join(hex, "hub/store/move.ts"),
-    `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(join(root, "moves"))}, process.argv.slice(3).join(" ") + "\\n");\n`,
-  );
-  writeFileSync(join(home, "state/hex.db.moved"), "an earlier move's file");
-
-  const moved = await run(join(hex, "bin/hex"), "store", "move", WORKERS_DEV, "restored");
-  const kept = readdirSync(join(home, "state")).filter((name) => name.startsWith("hex.db.moved."));
-
-  expect(moved.code).toBe(0);
-  expect(read(join(root, "moves"))).toBe(`${WORKERS_DEV} restored\n`);
-  expect(kept).toHaveLength(1);
-  expect(read(join(home, "state", kept[0] ?? ""))).toBe("an earlier move's file");
-});
 
 test("hex status says whether the store hex points at answers", async () => {
   pointed();

@@ -6,11 +6,12 @@ import { z } from "zod";
 import { bring } from "./carry.ts";
 import { fromJson } from "./db.ts";
 import type { Bound } from "./db.ts";
-import { LostError, UnreachedError } from "./errors.ts";
+import { CONTRACT } from "./domains.ts";
+import { LostError, OtherStoreError, UnreachedError } from "./errors.ts";
 import { client, decode } from "./wire.ts";
 import type { Client } from "./wire.ts";
 
-export { LostError, MovedError, RefusedError, UnreachedError } from "./errors.ts";
+export { LostError, MovedError, OtherStoreError, RefusedError, UnreachedError } from "./errors.ts";
 
 const ON_THIS_MACHINE = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -35,6 +36,16 @@ const LostReply = z.object({ error: z.string(), lost: z.literal(true) });
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // What the object said when it refused this process's tenure, if this is the object's word: any other 409, like one Cloudflare's edge sends for its own errors, isn't.
+const OtherReply = z.object({ error: z.string(), other: z.literal(true) });
+
+function otherIn(text: string): string | null {
+  try {
+    return OtherReply.parse(JSON.parse(text)).error;
+  } catch {
+    return null;
+  }
+}
+
 function lostIn(text: string): string | null {
   try {
     return LostReply.parse(JSON.parse(text)).error;
@@ -272,6 +283,12 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
       throw new LostError(lostTo);
     }
 
+    const other = response.status === 503 ? otherIn(text) : null;
+
+    if (other !== null) {
+      throw new OtherStoreError(other);
+    }
+
     if (
       response.status >= 500 ||
       [401, 404, 409, 429].includes(response.status) ||
@@ -372,7 +389,11 @@ export function remote(dir: string, times = TIMES, shared = true): (Client & Hom
       throw new LostError(`HEX_STORE_LEASE is ${JSON.stringify(lease)}, not a whole number`);
     }
 
-    const asked = { claimant, ...(leased !== undefined && { lease: leased }) };
+    const asked = {
+      claimant,
+      contract: CONTRACT,
+      ...(leased !== undefined && { lease: leased }),
+    };
 
     return await inTurn(async () => {
       const { value } = Claimed.parse(JSON.parse(await guarded("claim", JSON.stringify(asked))));

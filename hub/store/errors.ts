@@ -7,6 +7,12 @@ export class UnreachedError extends Error {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The object runs another hex's store, older or newer than this hex's: it answers, but not as this hex calls it, until the store this hex needs is deployed.
+export class OtherStoreError extends UnreachedError {
+  override name = "OtherStoreError";
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The store ran this one call and said no: nothing of it landed, and the same call never will.
 export class RefusedError extends Error {
   override name = "RefusedError";

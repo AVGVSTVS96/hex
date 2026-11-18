@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { existsSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { z } from "zod";
@@ -253,6 +253,7 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
     db.run(`pragma busy_timeout = ${CHECKPOINT_WITHIN}`);
     db.run("pragma wal_checkpoint(truncate)");
     db.close();
+    setAside(dir);
     renameSync(file, join(dir, MOVED));
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -270,6 +271,24 @@ export async function move(dir: string, to: Away, say: (line: string) => void, t
 
     throw error;
   }
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A file kept from an earlier move stays, its WAL with it, under the time this move set it aside, and its shared-memory index goes: a kept file read through another's WAL breaks both.
+function setAside(dir: string) {
+  const kept = join(dir, MOVED);
+  const stamp = new Date().toISOString().replaceAll(/\D/gu, "").slice(0, 14);
+
+  for (const [from, to] of [
+    [kept, `${kept}.${stamp}`],
+    [`${kept}-wal`, `${kept}.${stamp}-wal`],
+  ] as const) {
+    if (existsSync(from)) {
+      renameSync(from, to);
+    }
+  }
+
+  rmSync(`${kept}-shm`, { force: true });
 }
 
 async function send(

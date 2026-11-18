@@ -167,3 +167,19 @@ test("what a session's hooks can't keep while hex's store is unreachable goes to
     hub.close();
   }
 });
+
+test("a tool call doesn't wait on a store that's down to give the words held for its turn", async () => {
+  writeFileSync(
+    join(dir, "store.json"),
+    JSON.stringify({ url: "http://127.0.0.1:1", name: "gone", key: "k".repeat(32) }),
+  );
+  const began = Date.now();
+
+  const run = Bun.spawn([process.execPath, join(import.meta.dir, "held.ts")], {
+    stdin: new Blob([JSON.stringify({ session_id: "s", hook_event_name: "PostToolUse" })]),
+    env: { ...process.env, HEX_STORE: dir, HEX_THREAD: "dm", HEX_HUB: "" },
+  });
+
+  expect(await run.exited).toBe(0);
+  expect(Date.now() - began).toBeLessThan(1500);
+});

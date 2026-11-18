@@ -55,18 +55,27 @@ export async function openThreads({
   owing,
   hexDir,
   link,
+  tell,
+  tellAfter,
 }: {
   app: string;
   storeDir: string;
   owing: Owing;
   hexDir: string;
   link: ((thread: string) => string | undefined) | undefined;
+  tell?: (why: string) => void;
+  tellAfter?: number;
 }) {
-  const listed = await answered(storeDir, `the ${app} hub starts`, async (store) => {
-    await owing.settled();
+  const listed = await answered(
+    storeDir,
+    `the ${app} hub starts`,
+    async (store) => {
+      await owing.settled();
 
-    return await store.threads.list({ app, open: true });
-  });
+      return await store.threads.list({ app, open: true });
+    },
+    { ...(tell !== undefined && { tell }), ...(tellAfter !== undefined && { tellAfter }) },
+  );
 
   const saved = new Map<string, Saved>(
     listed.map(({ app: _app, open: _open, link: _link, thread, model, ...known }) => [

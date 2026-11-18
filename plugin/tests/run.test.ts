@@ -95,10 +95,22 @@ beforeEach(() => {
   git("init", "-q", "-b", "main");
 });
 
+const leftIn = (folder: string) =>
+  Bun.spawnSync(["pgrep", "-f", folder]).stdout.toString().trim().split("\n").filter(Boolean);
+
 afterEach(async () => {
   loop?.kill("SIGTERM");
   await loop?.exited;
   loop = undefined;
+
+  for (const signal of ["TERM", "KILL"]) {
+    Bun.spawnSync(["pkill", `-${signal}`, "-f", home]);
+
+    for (let waited = 0; waited < 50 && leftIn(home).length > 0; waited += 1) {
+      await Bun.sleep(100);
+    }
+  }
+
   rmSync(home, { recursive: true, force: true });
   delete process.env.XDG_STATE_HOME;
 });
@@ -336,6 +348,22 @@ test("a hub that lost hex to another machine stays stopped: hex exits with its c
   expect(await Bun.spawn([join(hex, "bin/hex"), "stop"]).exited).toBe(0);
 });
 
+test("a machine hex was lost on pays what its hubs owed to the store, though no hub starts there", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  writeFileSync(
+    join(hex, "hub/paid.ts"),
+    `import { appendFileSync } from 'fs'\nappendFileSync(process.argv[2] + '/hubs', 'paid\\n')\n`,
+  );
+  writeFileSync(join(home, "state/lost"), "7\nhex stopped here\n");
+
+  expect(await run().exited).toBe(3);
+  expect(hubs()).toEqual([]);
+
+  writeFileSync(join(home, "state/owed.telegram.json"), "");
+  expect(await run().exited).toBe(3);
+  expect(hubs()).toEqual(["paid"]);
+});
+
 test("a HEX_STORE_LEASE that isn't a whole number stops hex as failed before any hub starts, and says so", async () => {
   commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
 
@@ -437,7 +465,8 @@ test("where hex.service runs this folder's hex, a stop and a start go through it
 const MOVE_THAT_RUNS_UNTIL_TOLD = `import { appendFileSync, existsSync } from 'fs'
 const [state] = process.argv.slice(2)
 appendFileSync(state + '/hubs', 'moving\\n')
-while (!existsSync(state + '/moved')) await Bun.sleep(20)
+const giveUp = Date.now() + 60_000
+while (!existsSync(state + '/moved') && Date.now() < giveUp) await Bun.sleep(20)
 appendFileSync(state + '/hubs', 'moved\\n')
 `;
 

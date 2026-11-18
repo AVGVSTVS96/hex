@@ -39,7 +39,7 @@ import {
   writable,
 } from "./hub.ts";
 import type { Call, ChannelServer, Hub, HubLine, Message, Permission } from "./hub.ts";
-import { claimedAs, landed, whenLost, whenMoved } from "./kept.ts";
+import { claimedAs, landed, takeOver, whenLost, whenMoved } from "./kept.ts";
 import { pictureId } from "./pictures.ts";
 import { stamp } from "./start.ts";
 import * as stores from "./store.ts";
@@ -54,12 +54,15 @@ const CHANNEL = "plugin:telegram@hex";
 // The store open() hands a hub, which a test can make answer as a home across the network does when it can't take anything (unreached), or once it refuses the hub's tenure (lost), or refuse a message over a size (refusing), or answer as a hex.db whose records moved to the folder movedTo (moved).
 let outage: "unreached" | "lost" | "moved" | undefined;
 let refusingOver: number | undefined;
+let refusingKey: string | undefined;
 let movedTo: string | undefined;
 
 const openedFirst = stores.open;
 const outages = new Map<string, Store>();
 
-const MessageArgs = z.tuple([z.looseObject({ body: z.string().optional() })]).rest(z.unknown());
+const MessageArgs = z
+  .tuple([z.looseObject({ body: z.string().optional(), key: z.string().optional() })])
+  .rest(z.unknown());
 
 function refusal(name: string | symbol, args: unknown[]) {
   if (outage === "unreached") {
@@ -74,9 +77,13 @@ function refusal(name: string | symbol, args: unknown[]) {
     return new MovedError("hex's records moved");
   }
 
-  const body = name === "deliver" ? MessageArgs.safeParse(args).data?.[0].body : undefined;
+  const row = name === "deliver" ? MessageArgs.safeParse(args).data?.[0] : undefined;
 
-  return refusingOver !== undefined && body !== undefined && body.length > refusingOver
+  if (refusingKey !== undefined && row?.key === refusingKey) {
+    return new RefusedError("CHECK constraint failed: key");
+  }
+
+  return refusingOver !== undefined && row?.body !== undefined && row.body.length > refusingOver
     ? new RefusedError("the row is over the store's limit")
     : undefined;
 }
@@ -144,6 +151,9 @@ await mock.module("./notice.ts", () => ({
     toldOwner.push(text);
 
     return Promise.resolve(true);
+  },
+  cantStart: () => (why: string) => {
+    toldOwner.push(`can't start: ${why}`);
   },
 }));
 
@@ -271,6 +281,7 @@ afterEach(() => {
   toldOwner.length = 0;
   claimedAs(undefined);
   refusingOver = undefined;
+  refusingKey = undefined;
   movedTo = undefined;
 
   for (const socket of sockets.splice(0)) {
@@ -324,6 +335,7 @@ async function start(
     fresh?: (thread: string) => boolean;
     capacity?: number;
     startup?: string[];
+    tellAfter?: number;
   } = {},
 ) {
   const {
@@ -333,6 +345,7 @@ async function start(
     reconnect,
     connect: connectWait = 0,
     capacity,
+    tellAfter,
   } = options;
 
   if (options.registry) {
@@ -396,6 +409,7 @@ async function start(
         reconnect,
         connect: connectWait,
         capacity,
+        tellAfter,
       }).filter(([, value]) => value !== undefined),
     ),
     launcher: options.launcher,
@@ -6118,20 +6132,67 @@ test("what a hub owed from before another hub held hex keeps its facts and lets 
   expect(registry()).toEqual({ "chat:7": { name: "Desk anchors", session: "newer" } });
 });
 
-test("a message hex's store refuses even as a note is owed, not dropped, and the owner hears once that the store refuses what hex writes", async () => {
+test("a message hex's store refuses for what's in it is set aside whole, what comes after it lands, the owner hears which, and it lands at a start once the store takes it", async () => {
   const { received } = await onCall();
-  refusingOver = 0;
+  refusingKey = "telegram:1:82";
 
   await hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:82" });
   await hub.deliver("chat:7", "Desk anchors", { ...message, content: "again", key: "1:83" });
-  await until(() => heard(received).some(({ content }) => content === "again"));
-  expect(await settles(hub.synced())).toMatchObject({ status: "rejected" });
-  expect(toldOwner).toHaveLength(1);
-  expect(toldOwner[0]).toContain("refuses what hex writes");
-
-  refusingOver = undefined;
+  await until(() => heard(received).some(({ content }) => content === "hi"));
   await hub.synced();
-  expect(keysKept()).toEqual(["telegram:1:82", "telegram:1:83"]);
+  expect(keysKept()).toEqual([matching(/^hub:refused:/u), "telegram:1:83"]);
+  expect(toldOwner).toHaveLength(1);
+  expect(toldOwner[0]).toContain("telegram:1:82");
+  expect(toldOwner[0]).toContain("tries it again each time it starts");
+
+  hub.close();
+  hangUpAll();
+  refusingKey = undefined;
+  await start();
+  await hub.synced();
+  expect(keysKept()).toContain("telegram:1:82");
+  expect(existsSync(join(dir, "refused.telegram.json"))).toBe(false);
+});
+
+test("a hub that waits a while for its store as it starts tells the owner", async () => {
+  outage = "unreached";
+  const starting = start({ tellAfter: 0 });
+  await until(() => toldOwner.some((told) => told.startsWith("can't start")));
+
+  outage = undefined;
+  await starting;
+});
+
+test("a file hex restarted while its disk can't take anything keeps the thread changes it owed, through the claim a hub makes as it takes hex over", async () => {
+  await takeOver(stores.open(dir));
+  await onCall();
+  outage = "unreached";
+  hub.register("chat:9", "New topic");
+  await settled();
+  hub.close();
+  hangUpAll();
+
+  outage = undefined;
+  await takeOver(stores.open(dir));
+  await start();
+  await hub.synced();
+  expect(registry()["chat:9"]).toMatchObject({ name: "New topic" });
+});
+
+test("a spool the hex before this one wrote, as one list, is still paid", async () => {
+  writeFileSync(
+    join(dir, "owed.telegram.json"),
+    JSON.stringify([
+      {
+        kind: "deliver",
+        row: { key: "telegram:1:88", to: "chat:7", from: "telegram", author: "owner", body: "hi" },
+      },
+    ]),
+  );
+
+  await start();
+  await hub.synced();
+  expect(keysKept()).toEqual(["telegram:1:88"]);
 });
 
 test("the owner's words a hook took for the session without the session hearing them go to it from memory as the turn ends", async () => {

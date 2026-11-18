@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   utimesSync,
@@ -14,6 +15,7 @@ import { join } from "node:path";
 
 import type { DurableObject, Namespace } from "cloudflare:workers";
 
+import { backup } from "../backup.ts";
 import { File, file as fileIn, messagesSince, open, unclaimed } from "../store.ts";
 import type { NewRow } from "../store.ts";
 import { until } from "../until.ts";
@@ -23,7 +25,15 @@ import { CONTRACT } from "./domains.ts";
 import { objectStorage } from "./fake.ts";
 import { appendOnlyMigrations } from "./migrations.ts";
 import { move, MOVED } from "./move.ts";
-import { LostError, MovedError, RefusedError, remote, UnreachedError, unlease } from "./remote.ts";
+import {
+  LostError,
+  MovedError,
+  OtherStoreError,
+  RefusedError,
+  remote,
+  UnreachedError,
+  unlease,
+} from "./remote.ts";
 import { recordsIn } from "./storage.ts";
 import type { Storage } from "./storage.ts";
 import { answering, client } from "./wire.ts";
@@ -1421,4 +1431,139 @@ test("a table of large rows is read a page of about 4 MB at a time", async () =>
 
   const sizes = (await Array.fromAsync(pages(read, table))).map((page) => page.length);
   expect(sizes).toEqual([3, 3, 3, 3]);
+});
+
+test("a hub on a store that runs another hex's code is told so at its claim, apart from an outage", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage);
+  expect(
+    JSON.stringify(
+      recordsIn(storage, dir).claim(JSON.stringify({ claimant: "a", contract: "older" })),
+    ),
+  ).toContain("runs another hex's code");
+
+  const object = served(storage);
+
+  const front = Bun.serve({
+    port: 0,
+    fetch: async (request) => {
+      const { pathname } = new URL(request.url);
+      const body = await request.text();
+
+      return await fetch(new URL(pathname, object.url), {
+        method: request.method,
+        headers: request.headers,
+        body: pathname.endsWith("/claim") ? body.replace(CONTRACT, "older") : body,
+      });
+    },
+  });
+
+  pointedAt(dir, front.url.origin);
+
+  try {
+    const refused = await thrown(remote(dir, quick)?.claim() ?? never);
+    expect(refused).toBeInstanceOf(OtherStoreError);
+    expect(refused).toBeInstanceOf(UnreachedError);
+    expect(String(refused)).toContain("deploy this hex's with hex store deploy");
+  } finally {
+    await front.stop(true);
+    await object.stop();
+  }
+});
+
+test("a store whose schema lacks what this hex's SQL names refuses every write, apart from a row that's bad for its own content", async () => {
+  const file = new File(dir);
+  file.db.run("drop index if exists untaken");
+  file.db.run("alter table messages drop column held_for");
+  await file.store.messages.deliver(message);
+  expect(await thrown(file.store.messages.hold(message.key, "s-1"))).toBeInstanceOf(UnreachedError);
+  expect(await thrown(file.store.messages.deliver({ ...message, key: "42" }))).toBeInstanceOf(
+    RefusedError,
+  );
+});
+
+test("a second move sets the file an earlier one kept aside with its WAL, and each reads whole", async () => {
+  const first = filled(dir);
+  first.db.close();
+  let reader = new Database(join(dir, "hex.db"), { readonly: true });
+  reader.run("begin");
+  reader.query("select count(*) from messages").get();
+  const object = served();
+
+  try {
+    await move(dir, { url: object.url, name: "hex", key: KEY }, hear);
+    reader.run("commit");
+    reader.close();
+    expect(existsSync(join(dir, `${MOVED}-wal`))).toBe(true);
+
+    rmSync(join(dir, "store.json"));
+    const again = new File(join(dir, "again"));
+    again.messages.deliver({ ...message, key: "telegram:-100:7", body: "only in the second" });
+    again.db.close();
+    writeFileSync(join(dir, "hex.db"), readFileSync(join(dir, "again", "hex.db")));
+    reader = new Database(join(dir, "hex.db"), { readonly: true });
+    reader.run("begin");
+    reader.query("select count(*) from messages").get();
+    await move(dir, { url: object.url, name: "restored", key: KEY }, hear);
+  } finally {
+    reader.close();
+    await object.stop();
+  }
+
+  const aside = readdirSync(dir).filter((name) => /^hex\.db\.moved\.\d{14}$/u.test(name));
+  expect(aside).toHaveLength(1);
+
+  const count = (name: string) => {
+    const kept = new Database(join(dir, name), { readonly: true });
+
+    const read = [
+      kept.query("pragma integrity_check").get(),
+      kept.query("select count(*) as n from messages").get(),
+    ];
+
+    kept.close();
+
+    return read;
+  };
+
+  expect(count(aside[0] ?? "")).toEqual([{ integrity_check: "ok" }, { n: 1202 }]);
+  expect(count(MOVED)).toEqual([{ integrity_check: "ok" }, { n: 1 }]);
+});
+
+test("every message is read in pages of about 4 MB, so a log of large messages never comes back in one reply", async () => {
+  const file = new File(dir);
+
+  for (let n = 0; n < 10; n += 1) {
+    file.messages.deliver({ ...message, key: `telegram:-100:${n}`, body: "a".repeat(1_000_000) });
+  }
+
+  const read = await Array.fromAsync(messagesSince(file.store));
+  expect(read.map((page) => page.length)).toEqual([3, 3, 3, 1]);
+  expect(read.flat().map((row) => row.key)).toEqual(file.messages.since().map((row) => row.key));
+});
+
+test("a backup reads through a client of its own: another process's word that the object is down doesn't stop it, and its own failure tells no one", async () => {
+  const storage = objectStorage();
+  startedEmpty(storage).call(raw("messages", "deliver", [message]));
+  const object = served(storage);
+  pointedAt(dir, object.url);
+  writeFileSync(join(dir, "store.down"), "another process found it down\n");
+
+  try {
+    expect(await thrown(remote(dir, quick)?.messages.untaken() ?? never)).toBeInstanceOf(
+      UnreachedError,
+    );
+    await backup(dir, "2026-11-17");
+    const copy = new Database(join(dir, "backups", "hex-2026-11-17.db"), { readonly: true });
+    expect(copy.query("select key from messages").all()).toEqual([{ key: message.key }]);
+    copy.close();
+  } finally {
+    await object.stop();
+  }
+
+  rmSync(join(dir, "store.down"));
+  const gone = join(dir, "gone");
+  pointedAt(gone, "http://127.0.0.1:9");
+  expect(await thrown(unclaimed(gone).messages.untaken())).toBeInstanceOf(UnreachedError);
+  expect(existsSync(join(gone, "store.down"))).toBe(false);
 });
