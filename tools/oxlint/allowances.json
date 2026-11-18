@@ -28,7 +28,7 @@
     "channels/voice/activity.ts": 5,
     "channels/voice/app.ts": 4,
     "channels/voice/board.test.ts": 1,
-    "channels/voice/board.ts": 8,
+    "channels/voice/board.ts": 7,
     "channels/voice/call.ts": 2,
     "channels/voice/changes.ts": 1,
     "channels/voice/chat.test.ts": 1,

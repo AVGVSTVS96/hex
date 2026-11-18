@@ -620,7 +620,7 @@ export class Board extends Changes {
       session,
       ...ownership(session, held, this.sessions, {
         owners: known,
-        boundary: t3Boundary((id) => this.links.runs(id)),
+        boundary: (id) => this.links.runs(id),
         display: shownAt,
       }),
     }));
@@ -1754,10 +1754,4 @@ function hasTime(ms: number | undefined): ms is number {
 
 function earliest(times: string[]) {
   return times.toSorted()[0];
-}
-
-function t3Boundary(runsOnT3: (id: string) => boolean) {
-  // SAFETY: ownership only tests boundary's result for truth; hub/running.ts infers `false` from its default.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- until hub/running.ts types boundary as returning boolean
-  return runsOnT3 as (id: string) => false;
 }
