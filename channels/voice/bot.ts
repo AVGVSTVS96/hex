@@ -32,19 +32,22 @@ const handlers: Handlers<typeof tools> = {
 
 const eachCallGetsAFreshSessionThatReadsTheCallChat = () => true;
 
+let onCall = false;
+
 const hub = await startHub({
   stateDir,
   channel: process.env.VOICE_CHANNEL ?? "plugin:voice@hex",
   server,
-  main: THREAD,
-  mainName: THREAD,
   hexDir: hexDir(),
   fresh: eachCallGetsAFreshSessionThatReadsTheCallChat,
   limits: { capacity: 0 },
   ...(process.env.HEX_LAUNCHER !== undefined && { launcher: process.env.HEX_LAUNCHER }),
   call: dispatch(tools, handlers),
-  // oxlint-disable-next-line eslint/no-empty-function -- the voice hub shows no session status anywhere
-  state: () => {},
+  state: (thread, busy, background) => {
+    if (!busy && !background && !onCall) {
+      void hub.stop(thread);
+    }
+  },
   failed: (_, reason, turn) => {
     const what = turn === true ? "its request to Claude failed" : "its session couldn't start";
     process.stderr.write(`voice hub: ${what}: ${reason}\n`);
@@ -65,9 +68,12 @@ serve(
             : "prompt",
       });
     },
-    keep: () => hub.keep(THREAD),
+    keep: async () => {
+      onCall = true;
+      await hub.keep(THREAD);
+    },
     renew: () => {
-      hub.renew(THREAD);
+      onCall = false;
     },
     adrift: (away) => {
       hub.adrift(THREAD, away);
