@@ -78,13 +78,11 @@ export class Pins {
     );
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A status post's new words are kept only while it is still the post that was rewritten, with the note it had: one pinned or noted since keeps its own.
-  repinned(pin: Pick<Pin, "app" | "thread" | "message" | "text" | "note">, was: string) {
+  repinned(pin: Pick<Pin, "app" | "thread" | "message" | "text" | "note">, noteItHad: string) {
     this.write(() => {
       const still = this.get(pin.app, pin.thread);
 
-      if (still?.message === pin.message && still.note === was) {
+      if (still?.message === pin.message && still.note === noteItHad) {
         this.pinned(pin);
       }
     });

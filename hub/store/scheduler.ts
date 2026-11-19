@@ -89,8 +89,6 @@ export class Scheduler {
     );
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A run of the schedule waits to be taken, or the session that took one is still in its turn.
   running(schedule: string, alive: string[]): boolean {
     return (
       this.db
@@ -103,8 +101,6 @@ export class Scheduler {
     );
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A minute's check in one write: every due slot fires, a schedule fires on the signals it listens for unless a run of it is still going, a signal no schedule waits on is taken, and the minute is checked.
   tick(minute: number, due: Due[], listening: Listening[], alive: string[]) {
     this.write(() => {
       for (const { name, minute: slot, to, body } of due) {
@@ -140,8 +136,6 @@ export class Scheduler {
     });
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // One run for every signal heard since the schedule last ran, each taken by it.
   fireOn(schedule: string, heard: Row[], to: string, body: string): boolean {
     const [first] = heard;
 

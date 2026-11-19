@@ -2,8 +2,6 @@ import { z } from "zod";
 
 export type Bound = string | number | bigint | boolean | null;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The SQLite a store's home gives it: a file through bun:sqlite, or a Durable Object's own (store/object.ts). changes counts the rows a statement's triggers wrote too, as Bun's does.
 /* oxlint-disable anti-slop/no-unknown-returns -- rows as SQLite gives them, which each domain parses where it reads them */
 export type Sql = {
   query: (text: string) => {
@@ -52,8 +50,6 @@ const QUOTED = new Map([
   ["[", /\[[^\]]*\]?/suy],
 ]);
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// SQL as SQLite reads its words and punctuation: what its strings, quoted names and comments say is blanked, every character keeping its place.
 export function bare(text: string): string {
   let out = "";
 
@@ -110,8 +106,6 @@ const PRAGMAS_THAT_READ = new Set([
   "module_list",
 ]);
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A statement with each of its variables (?, ?NNN) written as `as` says, numbered as SQLite numbers them, and the highest number.
 export function eachVariable(statement: string, as: (index: number) => string) {
   let text = "";
   let from = 0;
@@ -131,8 +125,6 @@ const PRAGMA = /^pragma\s+(?:\w+\s*\.\s*)?(\w+)\s*(\([^()]*\))?$/iu;
 const READS = new Set(["select", "with", "values"]);
 const STATEMENTS = new Set(["select", "values", "insert", "update", "delete", "replace"]);
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a statement that starts with `with` does once its common tables are named: the first word outside every bracket that begins a statement.
 function mainOf(statement: string) {
   let depth = 0;
 
@@ -148,8 +140,6 @@ function mainOf(statement: string) {
   return "";
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A query for `hex sql`, refused unless it only reads: one statement, a select (with or values) or a pragma that reads, either of them explained or not. A home undoes whatever a query writes, but a pragma's setting outlives that.
 export function onlyReading(text: string): string {
   const statements = bare(text)
     .split(";")
