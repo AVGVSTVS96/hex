@@ -377,3 +377,28 @@ test("a restart doesn't wait on a call its engine can't reach, and waits again o
   hub.renew("voice");
   await until(() => freed);
 });
+
+test("a hub with no main thread starts no session until a call, and a call after a stop gets a new one", async () => {
+  await start({ fresh: () => true, capacity: 0 });
+  await settled();
+  expect(calls().some((each) => each[0] === "--bg")).toBe(false);
+
+  await hub.keep("voice");
+  await hub.deliver("voice", "voice", { author: "prompt", content: "A call started.", meta: {} });
+  await launched();
+  const first = await session("voice");
+  await until(() => heard(first.received).find((payload) => payload.content === "A call started."));
+  said(20_000);
+  await first.send({ type: "state", thread: "voice", busy: false });
+  void hub.stop("voice");
+  await until(() => calls().find((each) => each[0] === "stop"));
+  first.close();
+  writeFileSync(join(dir, "agents"), "[]");
+
+  await hub.keep("voice");
+  await hub.deliver("voice", "voice", { author: "prompt", content: "Next call.", meta: {} });
+  const next = await until(() => calls().filter((each) => each[0] === "--bg")[1]);
+  expect(next).not.toContain("--resume");
+  const second = await session("voice", "0a1b2c3d-0000-4000-8000-000000000009");
+  await until(() => heard(second.received).find((payload) => payload.content === "Next call."));
+});
