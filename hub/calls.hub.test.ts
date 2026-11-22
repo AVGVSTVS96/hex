@@ -408,3 +408,18 @@ test("a hub with no main thread starts no session until a call, and a call after
   const second = await session("voice", "0a1b2c3d-0000-4000-8000-000000000009");
   await until(() => heard(second.received).find((payload) => payload.content === "Next call."));
 });
+
+test("a call that hangs up without renewing its session frees a restart", async () => {
+  await start({ fresh: () => true, capacity: 0 });
+  let freed = false;
+  await hub.keep("voice");
+  await hub.deliver("voice", "voice", { author: "prompt", content: "A call started.", meta: {} });
+  await launched();
+  await session("voice");
+  void free().then(() => (freed = true));
+  await time.advance(50);
+  expect(freed).toBe(false);
+  hub.hangUp("voice");
+  await until(() => freed);
+  expect(calls().filter((each) => each[0] === "--bg")).toHaveLength(1);
+});
