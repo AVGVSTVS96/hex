@@ -983,3 +983,24 @@ test("a hub that can't start, with no earlier hex to go back to, stops hex as fa
   expect(await run({ PATH }).exited).toBe(1);
   expect(read()).toContain("its hub exited three times within a minute");
 });
+
+test("a stop that comes while a restart in place runs the login shell again stops hex as any stop does", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  const restarted = join(home, "restarted");
+  const shell = join(home, "shell-slow-after-a-restart");
+
+  writeFileSync(
+    shell,
+    `#!/bin/sh\n[ ! -e "${restarted}" ] || { echo >> "${home}/shells"; sleep 2; }\necho\necho hex-path\nenv\n`,
+    { mode: 0o755 },
+  );
+
+  const running = run({ SHELL: shell });
+  await until(() => existsSync(join(home, "state/hub.pid")));
+  writeFileSync(restarted, "");
+  Bun.spawnSync([join(hex, "bin/hex"), "restart"]);
+  await until(() => existsSync(join(home, "shells")));
+  expect(await Bun.spawn([join(hex, "bin/hex"), "stop"]).exited).toBe(0);
+  expect(await running.exited).toBe(0);
+  expect(existsSync(join(home, "state/hub.pid"))).toBe(false);
+});
