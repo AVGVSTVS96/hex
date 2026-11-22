@@ -3,7 +3,7 @@ import { z } from "zod";
 import { KeyValues, now, TextOrAbsent, TextOrNull } from "./db.ts";
 import type { Core, Sql, Write } from "./db.ts";
 import { MessageRows } from "./messages.ts";
-import type { Messages, Row } from "./messages.ts";
+import type { Messages, NewRow, Row } from "./messages.ts";
 
 const TurnRow = z
   .object({ began: TextOrAbsent, ended: TextOrAbsent, handled: TextOrAbsent })
@@ -18,6 +18,8 @@ const UnfinishedTurnRows = z.array(
 );
 
 const RepliesRow = z.object({ replies: z.number() });
+
+export type Cut = { given: string[]; waited: boolean };
 
 const TURNS = 30 * 24 * 60 * 60 * 1000;
 
@@ -101,37 +103,44 @@ export class Turns {
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A turn that ended with agents still working answered what it took, as any turn that ends does, so a session cut short gives back only what it took since, however often it is cut. waited: one of them had started agents, and any still working ended with it.
-  cut(thread: string, session?: string, at = now()): { given: string[]; waited: boolean } {
+  // Every session of a thread that was cut short mid-turn, or after a turn that ended with its agents still working, gives back what it took and never answered, as of then (at). A cut made late, one a hub owed while the store didn't answer, so leaves what came since: a turn begun, agents started and messages taken after it, by the thread's next session or by the same one resumed. A turn that ended with agents still working answered what it took, as any turn that ends does, so its session gives back only what it took since, however often it is cut. waited: one of them had started agents, and any still working ended with it, which the thread's next session is told by the note, kept in the same write.
+  cut(thread: string, session?: string, at = now(), note?: NewRow): Cut {
     return this.write(() => {
-      const cutShort = UnfinishedTurnRows.parse(
+      const cuts = UnfinishedTurnRows.parse(
         this.db
           .query(
             `select session, handled, waiting from turns where (began is not null and ended is null or waiting is not null) and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null and author <> 'hex'))`,
           )
           .all(thread, session ?? null),
-      );
-
-      const given = cutShort.flatMap(({ session: died, handled, waiting }) => {
-        const lastTurnEnded =
-          waiting !== null && (handled === null || waiting > handled) ? waiting : handled;
-
+      ).map(({ session: died, handled, waiting }) => {
+        const waited = waiting !== null && waiting <= at;
+        const lastTurnEnded = waited && (handled === null || waiting > handled) ? waiting : handled;
         this.turned(died, false, at);
 
-        this.db
-          .query("update turns set waiting = null, handled = ? where session = ?")
-          .run(lastTurnEnded, died);
+        if (waited) {
+          this.db
+            .query("update turns set waiting = null, handled = ? where session = ?")
+            .run(lastTurnEnded, died);
+        }
 
-        return KeyValues.parse(
+        const given = KeyValues.parse(
           this.db
             .query(
-              `update messages set taken_by = null, taken_at = null where taken_by = ? and author <> 'hex' and "from" <> 'terminal' and taken_at > ? returning key`,
+              `update messages set taken_by = null, taken_at = null where taken_by = ?1 and author <> 'hex' and "from" <> 'terminal' and taken_at > ?2 and taken_at <= ?3 returning key`,
             )
-            .values(died, lastTurnEnded),
+            .values(died, lastTurnEnded, at),
         ).map(([key]) => key);
+
+        return { given, waited };
       });
 
-      return { given, waited: cutShort.some(({ waiting }) => waiting !== null) };
+      const waited = cuts.some((each) => each.waited);
+
+      if (waited && note !== undefined) {
+        this.messages.deliver(note);
+      }
+
+      return { given: cuts.flatMap(({ given }) => given), waited };
     });
   }
 

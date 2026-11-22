@@ -22,7 +22,16 @@ import {
   unclaimed,
   UnreachedError,
 } from "./store.ts";
-import type { Author, Kept, NewQuestion, NewRow as NewRowType, Row, Store, Told } from "./store.ts";
+import type {
+  Author,
+  Cut,
+  Kept,
+  NewQuestion,
+  NewRow as NewRowType,
+  Row,
+  Store,
+  Told,
+} from "./store.ts";
 import { AnswerJson } from "./store/questions.ts";
 
 export type Keep = <T>(use: (store: Store) => Promise<T> | T, otherwise: T) => Promise<T>;
@@ -127,6 +136,13 @@ export const OwedWrite = z.discriminatedUnion("kind", [
     threads: z.custom<Record<string, Kept>>((value) => AnyKept.safeParse(value).success),
   }),
   z.object({ kind: z.literal("letHeldGo"), thread: z.string() }),
+  z.object({
+    kind: z.literal("cut"),
+    thread: z.string(),
+    session: z.string().optional(),
+    at: z.string(),
+    note: OwedRow,
+  }),
   z.object({ kind: z.literal("pass"), pass: PASS }),
   z.object({
     kind: z.literal("operation"),
@@ -156,7 +172,7 @@ export type Owed = z.infer<typeof OwedWrite>;
 export type Note = Extract<Owed, { kind: "asked" | "replied" }>;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What stays true whoever holds hex: a message, a take, a turn's memory pass, a tap's answer, a tool call's record, a question hex asked and a reply to one question, each landing once by its key. A whole snapshot of an app's threads and the release of what was held for a turn are this hub's own state, worth nothing once another hub held hex. So is a reply's note of every question the owner had open (replied, with no to): the store marks the ones open as it lands, so once another hub has held hex it would mark what the owner asked since.
+// What stays true whoever holds hex: a message, a take, a session cut short, a turn's memory pass, a tap's answer, a tool call's record, a question hex asked and a reply to one question, each landing once by its key. A whole snapshot of an app's threads and the release of what was held for a turn are this hub's own state, worth nothing once another hub held hex. So is a reply's note of every question the owner had open (replied, with no to): the store marks the ones open as it lands, so once another hub has held hex it would mark what the owner asked since.
 const isFact = (write: Owed) =>
   write.kind !== "threads" &&
   write.kind !== "letHeldGo" &&
@@ -183,6 +199,10 @@ function keyOf(owed: Owed) {
 
     case "letHeldGo": {
       return `held:${owed.thread}`;
+    }
+
+    case "cut": {
+      return `cut:${owed.thread}:${owed.session ?? ""}`;
     }
 
     case "pass": {
@@ -222,6 +242,7 @@ function asOf(owed: Owed, at: string): Owed {
 
     case "threads":
     case "letHeldGo":
+    case "cut":
     case "pass":
     case "operation":
     case "replied": {
@@ -532,10 +553,11 @@ function keepOwed(spool: string, owed: Owed[]) {
 
 type Doing = {
   letGo: (thread: string, rows: Row[]) => void;
+  cut: (thread: string, cut: Cut) => void;
   queue: (pass: Pass, store: Store) => Promise<void>;
 };
 
-async function madeOn(store: Store, write: Owed, { letGo, queue }: Doing): Promise<boolean> {
+async function madeOn(store: Store, write: Owed, { letGo, cut, queue }: Doing): Promise<boolean> {
   switch (write.kind) {
     case "deliver": {
       return await store.messages.deliver(write.row, write.by);
@@ -557,6 +579,12 @@ async function madeOn(store: Store, write: Owed, { letGo, queue }: Doing): Promi
 
     case "letHeldGo": {
       letGo(write.thread, await store.messages.letHeldGo(write.thread));
+
+      return true;
+    }
+
+    case "cut": {
+      cut(write.thread, await store.turns.cut(write.thread, write.session, write.at, write.note));
 
       return true;
     }
@@ -684,21 +712,22 @@ function operationsOwed({
 export function keeping(
   storeDir: string,
   {
-    spool,
+    app,
     earlier = [],
-    refused,
     letGo,
+    cut,
     queue,
     tell = ignore,
     lost: lostAlready,
   }: Doing & {
-    spool: string;
+    app: string;
     earlier?: string[];
-    refused: string;
     tell?: (why: string) => void;
     lost?: LostError;
   },
 ) {
+  const spool = join(storeDir, `owed.${app}.json`);
+  const refused = join(storeDir, `refused.${app}.json`);
   const owed = new Map<string, Owed>();
   let home = open(storeDir);
 
@@ -732,8 +761,8 @@ export function keeping(
   // Once another hub holds hex, what this one owes as fact goes through a client that never claimed, which no tenure refuses, and the rest is let go; a turn's memory pass is only queued in the store, for the machine that holds hex to run.
   const made = async (write: Owed) =>
     await (refusal === undefined
-      ? madeOn(current(), write, { letGo, queue })
-      : madeOn(unclaimed(storeDir), write, { letGo, queue: queuedOnly }));
+      ? madeOn(current(), write, { letGo, cut, queue })
+      : madeOn(unclaimed(storeDir), write, { letGo, cut, queue: queuedOnly }));
 
   // oxlint-disable-next-line anti-slop/no-unknown-parameters -- whatever a store call threw
   const failed = (error: unknown): "lost" | "unreached" | "refused" => {
@@ -948,10 +977,10 @@ export async function payOwedFacts(storeDir: string, tell?: (why: string) => voi
 
   for (const app of apps) {
     const owing = keeping(storeDir, {
-      spool: join(storeDir, `owed.${app}.json`),
+      app,
       earlier: [join(storeDir, app, `owed.${app}.json`)],
-      refused: join(storeDir, `refused.${app}.json`),
       letGo: ignore,
+      cut: ignore,
       queue: queuedOnly,
       ...(tell !== undefined && { tell }),
       lost: new LostError("this process lost hex, or never held it"),

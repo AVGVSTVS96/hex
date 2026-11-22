@@ -63,6 +63,8 @@ export type { NewTask, Status, Task, TaskChange, Words } from "./store/tasks.ts"
 
 export type { Kept, LaunchStamp, Thread } from "./store/threads.ts";
 
+export type { Cut } from "./store/turns.ts";
+
 export { MARKS, NOTHING } from "./store/transcripts.ts";
 
 export type { End, Mark, Piece } from "./store/transcripts.ts";
