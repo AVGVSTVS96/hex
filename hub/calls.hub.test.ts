@@ -390,10 +390,16 @@ test("a hub with no main thread starts no session until a call, and a call after
   await until(() => heard(first.received).find((payload) => payload.content === "A call started."));
   said(20_000);
   await first.send({ type: "state", thread: "voice", busy: false });
+  const old = Bun.spawn(["sleep", "30"]);
+  writeFileSync(
+    join(dir, "agents"),
+    JSON.stringify([{ sessionId: SESSION, pid: old.pid, status: "idle", startedAt: 1 }]),
+  );
   void hub.stop("voice");
   await until(() => calls().find((each) => each[0] === "stop"));
-  first.close();
   writeFileSync(join(dir, "agents"), "[]");
+  first.close();
+  old.kill();
 
   await hub.keep("voice");
   await hub.deliver("voice", "voice", { author: "prompt", content: "Next call.", meta: {} });
