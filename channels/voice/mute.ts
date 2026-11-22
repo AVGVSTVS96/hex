@@ -21,7 +21,8 @@ export type Muting = ReturnType<typeof muting>;
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* Speech recognition hands over a sentence a few words at a time, and "can we make it so you mute
    yourself" reads as a command until the rest arrives, so each answer stands only until Jev has
-   read more of the same sentence; taking one back says so (`second`). */
+   read more of the same sentence; taking one back says so (`second`), and only once Jev is as sure
+   it isn't a command as it was that it is, since "Mute Mute" scores just under SURE. */
 export function muting(
   judge: Judge,
   flip: (muted: boolean, second: boolean) => void,
@@ -33,8 +34,9 @@ export function muting(
   let end = Number.NEGATIVE_INFINITY;
   let asking = false;
 
-  const settle = (wants: boolean) => {
-    const now = wants !== before;
+  const settle = (wants: number) => {
+    const flipped = muted !== before;
+    const now = (flipped ? wants > 1 - SURE : wants >= SURE) !== before;
 
     if (now !== muted) {
       muted = now;
@@ -48,7 +50,7 @@ export function muting(
     }
 
     if (!COULD_BE_ABOUT_MUTING.test(said)) {
-      settle(false);
+      settle(0);
 
       return;
     }
@@ -68,7 +70,7 @@ export function muting(
     }
 
     if (said === asked) {
-      settle(wants >= SURE);
+      settle(wants);
     } else {
       await decide();
     }
