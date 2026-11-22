@@ -6,12 +6,14 @@ import { muting } from "./mute.ts";
 
 function judge(wants: (said: string, muted: boolean) => number) {
   const asked: string[] = [];
+  const answered: string[] = [];
   const flips: string[] = [];
 
   const mute = muting(
     async ({ said = "" }, question) => {
       asked.push(said);
       await Bun.sleep(5);
+      answered.push(said);
 
       return wants(said, question.startsWith("hex is muted"));
     },
@@ -23,7 +25,7 @@ function judge(wants: (said: string, muted: boolean) => number) {
     },
   );
 
-  return { mute, asked, flips };
+  return { mute, asked, answered, flips };
 }
 
 const command = (said: string) => (/^ ?(mute|unmute)\b/iu.test(said) ? 0.9 : 0.1);
@@ -62,6 +64,21 @@ test("Jev reads only words that could be about muting, and only the newest of a 
   mute.heard(" now", 5400, 5600);
   await until(() => flips.length === 1);
   expect(asked).toEqual(["Mute", "Mute yourself now"]);
+});
+
+test('a mute stays while more of the same breath leaves Jev unsure, as "Mute Mute" does', async () => {
+  const { mute, answered, flips } = judge((said) =>
+    said === "Mute" ? 0.86 : said === "Mute Mute" ? 0.67 : 0.92,
+  );
+
+  mute.heard("Mute", 0, 200);
+  await until(() => flips.length === 1);
+  mute.heard(" Mute", 200, 400);
+  await until(() => answered.includes("Mute Mute"));
+  mute.heard(" yourself", 400, 600);
+  await until(() => answered.includes("Mute Mute yourself"));
+  expect(flips).toEqual(["muted"]);
+  expect(mute.muted).toBe(true);
 });
 
 test("Jev failing leaves the voice as it was", async () => {
