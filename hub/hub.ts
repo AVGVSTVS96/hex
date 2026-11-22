@@ -559,6 +559,7 @@ export async function startHub({
       await owing.synced();
     },
     renew: renewals.renewAsked,
+    hangUp: calls.hangUp,
     session: threads.current,
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // A turn cut short, which runs no Stop hook, queues its memory pass here.

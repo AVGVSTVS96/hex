@@ -74,6 +74,7 @@ serve(
     },
     renew: () => {
       onCall = false;
+      hub.hangUp(THREAD);
     },
     adrift: (away) => {
       hub.adrift(THREAD, away);
