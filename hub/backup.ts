@@ -126,8 +126,6 @@ export function nightly(storeDir: string, hexDir: string, main: string): () => v
       } catch (error) {
         const body = `[backup] hex couldn't back up its records for ${day}: ${error instanceof Error ? error.message : String(error)}. The next try is at 3:00.`;
 
-        // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-        // The store that couldn't be copied may not take the notice either, so it goes to the hub's log then.
         try {
           await open(storeDir).messages.deliver({
             key: `backup:failed@${day}`,

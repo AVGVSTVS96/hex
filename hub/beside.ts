@@ -5,8 +5,6 @@ import { contained, inherited } from "./claude.ts";
 import type { Row } from "./store.ts";
 import { tag } from "./tag.ts";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Where hex's own work for a thread goes: a timer, an alarm, a job's report. A session of its own takes each, beside the thread's conversation, and speaks in its chat; one that took a row is reached again at its own session id.
 const BESIDE = "beside:";
 
 export const besideOf = (thread: string) => `${BESIDE}${thread}`;
@@ -22,8 +20,6 @@ export function prompt(app: string, row: Row, zone: string) {
   return tag(app, { key: row.key, ...shown, ts: row.at }, row.body, zone);
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a run printed last, where an API error says why it failed, and the log it was in is gone.
 export function lastWords(log: string) {
   try {
     return readFileSync(log, "utf-8").trim().slice(-WORDS_KEPT);
@@ -37,8 +33,6 @@ export function lastWords(log: string) {
 export const jobOf = (row: Row) =>
   row.meta?.schedule ?? row.meta?.job ?? row.meta?.user ?? "beside";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Runs a session to its end the way the hub runs every session it starts (contained), so it outlives a hub restart, with background agents it starts let finish. What it prints goes to log.
 export function run(
   command: string[],
   { cwd, env, log }: { cwd: string; env: Record<string, string>; log: string },

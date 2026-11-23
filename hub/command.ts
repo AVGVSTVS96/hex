@@ -119,8 +119,6 @@ export async function show(hex: Hex<{ json: { type: "boolean" } }>, tasks: Task[
   );
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// every --json output names a thread one way, as <app>:<key>: a thread's id, and threadId on what belongs to one.
 export async function withThread<T>(hex: Hex, rows: T[], key: (row: T) => string) {
   const ids = await hex.store.threads.ids();
 

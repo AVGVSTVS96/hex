@@ -166,8 +166,6 @@ test("the main thread compacts a big conversation before its cache goes cold, an
   expect(states.filter(([, busy]) => busy)).toEqual([]);
 });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The line Claude Code writes when /compact fails, like with every account of the pool out of usage.
 function failedCompaction(at = clock.now()) {
   const project = join(dir, "projects", join(dir, "hex").replaceAll(/[^a-zA-Z0-9]/gu, "-"));
 

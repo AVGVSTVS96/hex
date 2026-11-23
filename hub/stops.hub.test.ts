@@ -40,8 +40,6 @@ test("stopping a thread ends its session now, and its next message resumes it", 
   expect(registry()["chat:7"]).toEqual({ name: "Desk anchors", session: SESSION });
 });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The session's conversation as Claude Code keeps it, for a thread working in hex's folder.
 function conversation() {
   const path = join(
     dir,
@@ -56,8 +54,6 @@ function conversation() {
   return () => readFileSync(path, "utf-8");
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A session Claude's daemon lists as working, as it does through a turn and while background agents run.
 function working() {
   const process = Bun.spawn(["sleep", "60"]);
   sleepers.push(process);

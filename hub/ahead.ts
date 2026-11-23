@@ -5,8 +5,7 @@ import { ready } from "./ready.ts";
 
 const transpiler = new Bun.Transpiler({ loader: "ts" });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The packages a module imports, itself or through the modules of its own it imports, as the files they resolve to. Bun's scanner takes no #! line.
+// WARNING: Bun's import scanner fails on a #! line.
 function packages(file: string, seen = new Set<string>()): string[] {
   if (seen.has(file)) {
     return [];
@@ -47,8 +46,6 @@ export function gone(file: string): Promise<void> {
   });
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// hex started ahead of its turn, while it still runs on another machine that's handing it over, gets ready to take over without touching hex.db or any channel: it loads the packages its channels import (their own modules start them, so they wait), runs each channel's ahead.ts, which may open its connections, says "ready" in the file HEX_AHEAD names and to the service manager running it, and waits until that file is gone. A hub whose code won't load here never says it's ready.
 export async function ahead(file: string, channels: string[]) {
   await Promise.all(
     channels.flatMap((channel) => {
@@ -64,12 +61,11 @@ export async function ahead(file: string, channels: string[]) {
 
   try {
     writeFileSync(file, "ready\n", { flag: "r+" });
-    ready();
   } catch {
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // Already gone: the handover came first.
+    return;
   }
 
+  ready();
   await gone(file);
 }
 

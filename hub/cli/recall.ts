@@ -7,8 +7,6 @@ import { holds, keysOf, problems, verdict } from "../notes.ts";
 export default command({
   usage: "hex recall <regex, in any case>",
   flags: {
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // recall takes -i and ignores it, since memo recall already ignores case.
     "ignore-case": { type: "boolean", short: "i" },
   },
   wordsBeforeFlags: () => 1,

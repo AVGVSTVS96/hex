@@ -9,9 +9,9 @@ export const PROFILE =
 
 export const MEMORY = "Your memory, oldest first:";
 
+// WARNING: Claude Code follows @imports at most five hops deep: https://code.claude.com/docs/en/memory#import-additional-files
 const IMPORT_HOPS = 5;
 
-// https://code.claude.com/docs/en/memory#import-additional-files
 export function loaded(
   file: string,
   seen = new Set<string>(),
@@ -43,12 +43,10 @@ export function loaded(
   return [[file, text], ...imports.flatMap((target) => loaded(target, seen, depth + 1, read))];
 }
 
-// Plugin files edited on disk, like hooks, reach a running session only on restart or /reload-plugins: https://code.claude.com/docs/en/plugins/cli-reference#reload-plugins
+// WARNING: plugin files edited on disk, like hooks, reach a running session only on restart or /reload-plugins: https://code.claude.com/docs/en/plugins/cli-reference#reload-plugins
 export const STARTUP = {
   hooks: "plugin/hooks/hooks.json",
   skills: "plugin/skills",
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The flags hex's launcher works out for a session take effect only as its process starts, so a restart or resume picks up a change and compacting doesn't.
   launcher: [
     "bin/session",
     "bin/identity.ts",

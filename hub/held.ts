@@ -15,8 +15,6 @@ const ToolUse = z.object({
   agent_id: z.string().optional().catch(undefined),
 });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A store already known down fails the take at once, unasked, so a tool call never waits on it. What the store doesn't answer is left to the hub, which gives what it held from memory once the turn ends.
 async function takeHeld(thread: string, session: string) {
   try {
     return await followed(
@@ -40,8 +38,6 @@ if (HEX_THREAD !== undefined && HEX_THREAD !== "" && session_id !== "" && agent_
   const rows = await takeHeld(HEX_THREAD, session_id);
 
   if (rows.length > 0 && HEX_HUB !== undefined && HEX_HUB !== "") {
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // The hub keeps the words it had held in memory, for a turn that ends while the store can't let them go: these no longer wait.
     const line: HubLine = {
       type: "tookHeld",
       thread: HEX_THREAD,

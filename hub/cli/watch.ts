@@ -7,8 +7,6 @@ import type { Store } from "../store.ts";
 
 export default command({
   usage: "hex watch",
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // While hex's records are in hex.db, watch opens no store, so a restore can replace hex.db underneath it.
   async run(hex) {
     await (existsSync(awayFile(hex.state))
       ? followAway(hex.store)
@@ -36,7 +34,7 @@ function follow(bell: string): Promise<never> {
         process.exit("code" in error && error.code === "EPIPE" ? 0 : 1);
       }
     });
-    // Bun's fs.watch can drop a change right after the last one: https://github.com/oven-sh/bun/issues/45954
+    // WARNING: Bun's fs.watch can drop a change right after the last one: https://github.com/oven-sh/bun/issues/45954
     timer = setTimeout(check, 50);
   };
 
@@ -48,8 +46,6 @@ function follow(bell: string): Promise<never> {
   });
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Records that live in an object ring over its socket, once as it connects and after every write.
 function followAway(away: Store): Promise<never> {
   return new Promise(() => {
     away.watch(() => {

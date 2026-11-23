@@ -2,8 +2,6 @@ import type { Runs } from "./runs.ts";
 
 type VoiceCall = { adrift: boolean; readonly on: boolean };
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A voice call runs in this process (its call engine holds the caller's audio), so a restart waits for every thread on a call to hang up. A call whose engine has lost its link to it runs nothing here, and the next hub's engine picks it back up, so a restart doesn't wait on it.
 const onCall = new Set<VoiceCall>();
 const hungUp: (() => void)[] = [];
 

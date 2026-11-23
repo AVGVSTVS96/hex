@@ -14,8 +14,6 @@ import { join } from "node:path";
 import { listen } from "./listen.ts";
 import { until } from "./until.ts";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A hub a stop left running, finishing a call, as KillMode=process left one: it holds the port until it exits.
 const OLD_HUB_FINISHING_A_CALL_HOLDS_THE_PORT = `const listener = Bun.serve({ hostname: '127.0.0.1', port: 0, idleTimeout: 0, fetch: () => new Response('old hub') })
 console.log(listener.port)
 setInterval(() => {}, 1000)`;
@@ -64,8 +62,6 @@ function fakeSystemdNotify() {
   return { PATH: `${bin}:${process.env.PATH}`, told: join(dir, "told") };
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A hub of its own, with no channel's token, so each channel that starts says it can't.
 function serve(port: number, extra: Record<string, string> = {}) {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
@@ -159,8 +155,6 @@ test("a hub that systemd started ahead of its turn tells it it's ready as it say
   expect(started.exitCode).toBeNull();
 });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A store across the network the hub's state/store.json names: until up() it answers as one that can't be reached, then claims as claims says.
 function objectStore(claims: () => Response) {
   let reachable = false;
   const asked: string[] = [];

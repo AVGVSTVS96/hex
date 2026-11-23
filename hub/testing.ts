@@ -24,8 +24,6 @@ const Notification = z.object({
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Claude Code's side of a session's channel to a hub, for tests: it initializes, opens the stream its messages arrive on, lists the tools, and lists them again when told they changed. deaf: how many tools/list_changed it drops, as a session starting cold does before it listens.
 export type Session = ReturnType<typeof http>;
 
 let ids = 0;
@@ -38,8 +36,7 @@ export function port() {
   return listener.port;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a request nobody awaits failed with, kept for the wait it was sent for to throw (check). Once that wait is over, as when a test ends and its bot is stopped with the request still on its way, nothing checks, so it fails no test: left unhandled, Bun fails whichever test runs next.
+// WARNING: Bun fails whichever test runs next on a rejection nobody handled, so a request nobody awaits keeps its failure for check().
 export function unawaited() {
   let failed: Error | undefined;
 
@@ -62,8 +59,6 @@ export function hangUpAll() {
   }
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A client's bot.ts run in its own process the way serve.ts runs it, behind a listener on a free port, which the hub reads from HEX_PORT as it loads.
 export async function service(bot: string, env: Record<string, string | undefined>) {
   const listening = JSON.stringify(join(import.meta.dir, "listen.ts"));
 
@@ -98,8 +93,6 @@ await import(${JSON.stringify(bot)})`;
   return { process: child, port: Number(out.split("\n")[0]) };
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// at: the port of a hub in another process; this process's own listener by default.
 export function http({
   stateDir,
   path,
@@ -144,8 +137,6 @@ export function http({
       body: JSON.stringify({ jsonrpc: "2.0", ...body }),
     });
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A list counts once the hub has answered it, so whatever the list set off on its side is done.
   // oxlint-disable-next-line typescript/no-explicit-any -- tests read the hub's replies as raw JSON, and each test's expect() checks them
   const rpc = async (method: string, params: ToolArguments = {}): Promise<any> => {
     const reply: unknown = await (await post({ id: ++ids, method, params })).json();
