@@ -1,4 +1,3 @@
-// The part of Cloudflare's Durable Object API the store's object uses (https://developers.cloudflare.com/durable-objects/api/), declared here so hex checks without Cloudflare's packages.
 declare module "cloudflare:workers" {
   type State = {
     // oxlint-disable-next-line typescript/consistent-type-imports -- an ambient module's declarations can't import by a relative path, and a top-level import would make this file a module that augments instead of declares

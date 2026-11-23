@@ -38,8 +38,6 @@ export type Job = z.infer<typeof JobRow>;
 
 const SELECT = "select unit, machine, run, spec, stopped, stopped_at from jobs";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The jobs hex answers for, each by the run it last started and the machine that runs it. A row goes once its run ends; one that stopped without ending says why, for the next resume to carry it on.
 export class Jobs {
   private readonly db: Sql;
   private readonly write: Write;

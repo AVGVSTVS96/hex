@@ -75,8 +75,6 @@ const QuestionRow = z
 
 const QuestionRows = z.array(QuestionRow);
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a message can tell of: a question's answer, or its answer taken back (with label, only while that is its answer).
 export type Told = (
   | { answered: { message: MessageId; label: string; via: string; again?: boolean } }
   | { reopened: { message: MessageId; label?: string } }
@@ -93,8 +91,6 @@ export class Questions {
     this.messages = messages;
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A change to a question and the message that tells its thread land in one write, so both do or neither does; a change that changes nothing tells nothing, unless it is told always, as a vote is.
   told(app: string, thread: string, change: Told, row: NewRow): boolean {
     return this.write(() =>
       ("answered" in change
@@ -128,8 +124,6 @@ export class Questions {
     answer,
     settled,
   }: NewQuestion) {
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // An older hex's questions, brought in by steps before the asker, shots and attached columns exist, are hex's and fill only the columns they had.
     const row = {
       ...(asker !== undefined && { asker }),
       app,

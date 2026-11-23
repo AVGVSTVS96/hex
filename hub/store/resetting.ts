@@ -3,8 +3,6 @@ import type { Socket } from "node:net";
 
 import { z } from "zod";
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A front for tests that passes every connection through to a store's address, and once armed resets the connection the next request arrives on, as a line that drops one call does: before the call reaches the store, or once the store has answered it, so the call landed and only its reply was lost.
 export async function resetting(upstream: string) {
   const { hostname, port } = new URL(upstream);
   const open = new Set<Socket>();

@@ -25,8 +25,6 @@ const quoted = (names: string[]) => names.map((name) => `"${name}"`).join(", ");
 const references = (sql: string, name: string) =>
   new RegExp(`references\\s+"?${name}"?\\s*\\(`, "iu").test(sql);
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Tables in an order where each comes before every table it references, and otherwise as they were made. hex never deletes a row another names, so a row written while a copy is read names only rows of tables read after it.
 function referencingFirst<T extends { name: string; sql: string }>(made: T[]): T[] {
   const ordered: T[] = [];
   const left = [...made];
@@ -48,8 +46,6 @@ function referencingFirst<T extends { name: string; sql: string }>(made: T[]): T
   return ordered;
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A database's tables as they travel, each before the tables it references. Rows keep their rowid, which words' and task_agents' triggers and every autoincrement count on.
 export async function layout(read: Read) {
   const objects = Objects.parse(
     await read(
@@ -95,8 +91,6 @@ export async function layout(read: Read) {
   };
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A page is up to 500 rows and about 4 MB, its sizes read first, so a table of large rows never comes back in one reply too big to answer in time.
 async function page(read: Read, { name, columns }: Table, after: number) {
   const sizes = Sizes.parse(
     await read(
@@ -171,8 +165,6 @@ export function batches<T>(rows: T[]): T[][] {
   return out.filter((batch) => batch.length > 0);
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Writes the records a store's home holds as a SQLite file a hex can run on, or writes no file: the nightly backup of a store that lives in an object, and the way back from one. The counters are read after the rows, so none is behind a row it counted.
 export async function bring(read: Read, to: string) {
   const part = `${to}.part`;
   rmSync(part, { force: true });
@@ -197,9 +189,9 @@ export async function bring(read: Read, to: string) {
       }
     }
 
-    const { indexesAndTriggers, setCounters } = await layout(read);
+    const { indexesAndTriggers, setCounters: countersReadAfterTheRows } = await layout(read);
 
-    for (const statement of [...setCounters, ...indexesAndTriggers]) {
+    for (const statement of [...countersReadAfterTheRows, ...indexesAndTriggers]) {
       db.run(statement);
     }
 
@@ -225,8 +217,6 @@ export async function bring(read: Read, to: string) {
   }
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// How one copy of hex's records differs from another, in words, or nothing when every table, row, column type and autoincrement counter is the same.
 export async function difference(
   here: Read,
   there: Read,
@@ -260,11 +250,11 @@ export async function difference(
       return `${table.name} has more rows in one than the other`;
     }
 
-    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // JSON reads 7 and 7.0 alike, so each column's types are counted too.
-    const types = `select ${table.columns.map((column) => `typeof("${column}")`).join(" || ',' || ")} as types, count(*) as n from "${table.name}" group by 1 order by 1`;
+    const typesPerColumn = `select ${table.columns.map((column) => `typeof("${column}")`).join(" || ',' || ")} as types, count(*) as n from "${table.name}" group by 1 order by 1`;
 
-    if (JSON.stringify(await here(types)) !== JSON.stringify(await there(types))) {
+    if (
+      JSON.stringify(await here(typesPerColumn)) !== JSON.stringify(await there(typesPerColumn))
+    ) {
       return `${table.name} holds values of other types`;
     }
 

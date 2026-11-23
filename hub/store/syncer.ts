@@ -40,12 +40,13 @@ function fsyncFile(file: string) {
   }
 }
 
+// WARNING: closing any descriptor of the shm drops SQLite's WAL locks on it, so this one stays open: https://www.sqlite.org/howtocorrupt.html#_posix_advisory_locks_canceled_by_a_separate_thread_doing_close_
 let shm: number | undefined;
 
-// The wal-index header's mxFrame, the frames now in the WAL: https://www.sqlite.org/walformat.html#the_wal_index_file_format
-// Closing any descriptor of a file cancels every lock the process holds on it, and SQLite's WAL locks are on this file, so the one descriptor stays open: https://www.sqlite.org/howtocorrupt.html#_posix_advisory_locks_canceled_by_a_separate_thread_doing_close_
+const WAL_INDEX_MX_FRAME_AT = 16;
+
 function framesInWal() {
-  const header = new Uint8Array(20);
+  const header = new Uint8Array(WAL_INDEX_MX_FRAME_AT + 4);
 
   try {
     shm ??= openSync(`${path}-shm`, "r");
@@ -53,8 +54,8 @@ function framesInWal() {
     return 0;
   }
 
-  return readSync(shm, header, 0, 20, 0) === 20
-    ? new DataView(header.buffer).getUint32(16, true)
+  return readSync(shm, header, 0, header.length, 0) === header.length
+    ? new DataView(header.buffer).getUint32(WAL_INDEX_MX_FRAME_AT, true)
     : 0;
 }
 
@@ -70,7 +71,7 @@ function checkpointed() {
   return busy === 0 && copied === log;
 }
 
-// The first write after a whole checkpoint starts the WAL over and fsyncs its header (sqlite3WalFrames: https://sqlite.org/src/file?name=src/wal.c), so this thread makes that write.
+// WARNING: the first write after a whole checkpoint starts the WAL over and fsyncs its header (sqlite3WalFrames: https://sqlite.org/src/file?name=src/wal.c), so this thread makes that write, not the hub's.
 function restartWal() {
   db.transaction(() => {
     const { user_version: version } = UserVersion.parse(db.query("pragma user_version").get());
